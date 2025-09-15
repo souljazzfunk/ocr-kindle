@@ -1,0 +1,52 @@
+# Configuration files with sensitive data
+config.env
+
+# Service account keys
+*.json
+service-account*.json
+credentials/
+
+# Output folders
+Kindle_Screenshots_*/
+Kindle_Test_*/
+Kindle_Window_*/
+Kindle_FullScreen_*/
+Kindle_Simple_*/
+
+# Temporary files
+*.tmp
+*.temp
+ocr_script.py
+error_log.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# Test files
+test_*
+debug_*
