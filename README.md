@@ -11,7 +11,10 @@ Automatically capture screenshots from Kindle app, perform OCR using Google Gemi
 - ✅ **Fault tolerant** - Individual OCR files for each page, automatic recovery
 - ✅ **Smart filenames** - Generated from book content using AI
 - ✅ **Google Drive sync** - Simple file copying to synced folder
-- ✅ **Multi-language support** - Auto-detects page direction based on locale
+- ✅ **Window capture** - Captures only Kindle window, not full screen
+- ✅ **Margin cropping** - Configurable header/footer removal
+- ✅ **Continue mode** - Resume long books from where you left off
+- ✅ **Page direction control** - Manual left/right page navigation
 - ✅ **Reliable page ordering** - Zero-padded filenames and numeric sorting
 - ✅ **Clean modular architecture** - Separate AppleScript, Python components
 
@@ -48,8 +51,11 @@ Automatically capture screenshots from Kindle app, perform OCR using Google Gemi
 
 ### Quick Start
 ```bash
-# First, set the number of pages in the AppleScript
-# Edit line 6 in kindle2img.applescript: set MAX_PAGES to 50
+# First, configure the AppleScript settings
+# Edit kindle2img.applescript:
+#   - set MAX_PAGES to 100 (or your book length)
+#   - set PAGE_DIRECTION to "LEFT" or "RIGHT"
+#   - Adjust TOP_MARGIN/BOTTOM_MARGIN if needed (70/40 are good defaults)
 
 # Step 1: Capture screenshots
 osascript kindle2img.applescript
@@ -64,8 +70,27 @@ python3 txt2md.py /path/to/screenshots/ocr_output.txt
 python3 process_kindle.py /path/to/screenshots
 ```
 
+### Continue Mode for Long Books
+```bash
+# If your book is longer than MAX_PAGES, use continue mode:
+
+# 1. After first run completes, edit kindle2img.applescript:
+#    - set CONTINUE_MODE to true
+#    - set CONTINUE_FOLDER_PATH to "/path/to/existing/folder/"
+
+# 2. Run again to continue from where you left off:
+osascript kindle2img.applescript
+
+# The script will automatically detect the last screenshot number
+# and continue numbering from there
+```
+
 ### Screenshot Capture Only
 ```bash
+# Capture new book (creates new folder)
+osascript kindle2img.applescript
+
+# Continue capturing long book (edit CONTINUE_MODE and CONTINUE_FOLDER_PATH first)
 osascript kindle2img.applescript
 ```
 
@@ -105,6 +130,35 @@ python3 txt2md.py /path/to/ocr_output.txt \
 
 ## Configuration
 
+### AppleScript Configuration
+
+Edit the top of `kindle2img.applescript` to configure screenshot capture:
+
+```applescript
+-- CONFIGURATION: Set the number of pages to capture
+set MAX_PAGES to 100
+
+-- CONFIGURATION: Set page direction
+-- "LEFT" for left-to-right languages (English, etc.)
+-- "RIGHT" for right-to-left languages (Japanese, Arabic, etc.)
+set PAGE_DIRECTION to "RIGHT"
+
+-- CONFIGURATION: Set margin offsets to crop header/footer (in pixels)
+set TOP_MARGIN to 70
+set BOTTOM_MARGIN to 40
+set LEFT_MARGIN to 0
+set RIGHT_MARGIN to 0
+
+-- CONFIGURATION: Continue mode - set to true to continue in existing folder
+set CONTINUE_MODE to false
+
+-- CONFIGURATION: Folder path for continue mode
+-- Example: "/Users/username/Downloads/Kindle_Screenshots_20251013_203858/"
+set CONTINUE_FOLDER_PATH to ""
+```
+
+### Python Configuration
+
 Edit `config.env`:
 
 ```bash
@@ -113,9 +167,6 @@ GEMINI_API_KEY="your_gemini_api_key_here"
 
 # Google Drive sync folder path
 GOOGLE_DRIVE_FOLDER="/Users/username/Library/CloudStorage/GoogleDrive-email/My Drive/Kindle_md"
-
-# Maximum pages (edit in AppleScript)
-MAX_PAGES=500
 ```
 
 ## Output Files
@@ -140,9 +191,12 @@ Kindle_Screenshots_20250915_155310/
 
 1. **AppleScript** (`kindle2img.applescript`):
    - Activates Kindle app
+   - Captures only the Kindle window (not full screen)
+   - Applies margin cropping to remove headers/footers
    - Takes screenshots with zero-padded names (001, 002, 003...)
-   - Automatically navigates pages using smart page direction detection
+   - Supports manual page direction configuration
    - Uses configurable page count (no infinite loops)
+   - Continue mode for resuming long books
 
 2. **Python OCR** (`img2txt.py`):
    - Processes each screenshot individually with Google Gemini AI
@@ -243,6 +297,10 @@ python3 img2txt.py /path/to/screenshots \
 
 Recent major enhancements:
 
+- ✅ **Window-only capture** - Captures Kindle window only, not full screen
+- ✅ **Margin cropping** - Configurable offsets to remove headers/footers
+- ✅ **Continue mode** - Resume capturing long books across multiple sessions
+- ✅ **Manual page direction** - Configure left/right navigation instead of auto-detect
 - ✅ **Google Gemini AI** - Replaced Google Vision API with more intelligent processing
 - ✅ **Individual OCR files** - Fault tolerance and recovery capabilities
 - ✅ **Smart filename generation** - AI-generated descriptive names

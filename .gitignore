@@ -48,5 +48,5 @@ Icon?
 *.log
 
 # Test files
-test_*
-debug_*
+test*
+debug*
