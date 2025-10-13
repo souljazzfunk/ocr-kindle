@@ -7,8 +7,8 @@ set -e  # Exit on any error
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APPLESCRIPT="$SCRIPT_DIR/kindle_automation.applescript"
-PYTHON_SCRIPT="$SCRIPT_DIR/kindle_ocr.py"
+APPLESCRIPT="$SCRIPT_DIR/kindle2img.applescript"
+PYTHON_SCRIPT="$SCRIPT_DIR/img2txt.py"
 CONFIG_FILE="$SCRIPT_DIR/config.env"
 
 # Default values
