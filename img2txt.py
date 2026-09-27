@@ -1,229 +1,164 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
-Kindle OCR Processing Script
+Turn a folder of captured Kindle pages into one Markdown book.
 
-Processes screenshots from Kindle app using Google Gemini API for OCR.
+Each page is `<prefix>_<number>.png` with an optional sibling `.txt` holding that page's Markdown.
+The Chrome extension's ZIP carries the `.txt` from Cloud Reader's text layer. Pages without one are OCRed
+with Gemini, so re-running only touches pages that are still missing text.
 """
 
-import sys
 import argparse
-import base64
+import os
+import re
+import shutil
+import sys
+import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import google.generativeai as genai
+
+from google import genai
+from google.genai import types
+
+CONFIG_PATH = Path(os.environ.get('KINDLE_OCR_CONFIG', Path(__file__).with_name('config.env')))
+# Most accurate first. The free tier allows gemini-3.8-flash only 20 requests a day, so the lite model takes over.
+DEFAULT_MODELS = 'gemini-3.8-flash,gemini-3.5-flash-lite'
+WORKERS = 4
+PAGE_NUMBER = re.compile(r'_(\d+)\.png$')
+SENTENCE_END = tuple('。．.!?！？」』）)')
+MIN_BODY_CHARS = 100
+
+OCR_PROMPT = """Transcribe the book text on this Kindle page image exactly as printed.
+
+- Copy the text verbatim. Never summarize, paraphrase, translate, correct, or add text.
+- Japanese vertical text (縦書き) reads top to bottom, columns from right to left.
+- Skip running headers, page numbers, reading progress ("位置", "%", "minutes left") and app UI.
+- Output Markdown: `#`/`##` for chapter and section titles, a blank line between paragraphs.
+- Keep a leading full-width space (　) where a paragraph starts with an indent.
+- Drop furigana (ruby). For a figure or photo without text write `[図: short description]`.
+- If the page has no text, output nothing."""
 
 
-def load_config(config_path='config.env'):
-    """Load configuration from config.env file."""
+def load_config():
+    if not CONFIG_PATH.exists():
+        return {}
     config = {}
-    config_file = Path(config_path)
-
-    if not config_file.exists():
-        return config
-
-    try:
-        with open(config_file, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#') and '=' in line:
-                    key, value = line.split('=', 1)
-                    # Remove quotes if present
-                    value = value.strip().strip('"').strip("'")
-                    config[key.strip()] = value
-    except Exception as e:
-        print(f"Warning: Could not read config file {config_path}: {e}")
-
+    for line in CONFIG_PATH.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith('#') and '=' in line:
+            key, value = line.split('=', 1)
+            config[key.strip()] = value.strip().strip('"').strip("'")
     return config
 
 
-def setup_gemini_client(api_key):
-    """Set up Google Gemini client."""
-    if not api_key:
-        raise ValueError("Gemini API key is required")
-
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-2.5-flash-preview-05-20')
-    return model
+def page_images(folder):
+    pages = [p for p in folder.glob('*.png') if PAGE_NUMBER.search(p.name)]
+    return sorted(pages, key=lambda p: int(PAGE_NUMBER.search(p.name).group(1)))
 
 
-def perform_ocr(gemini_model, image_path, save_individual=True):
-    """Perform OCR on a single image using Gemini and optionally save individual file."""
-    try:
-        with open(image_path, 'rb') as image_file:
-            image_data = image_file.read()
-
-        # Encode image to base64
-        image_b64 = base64.b64encode(image_data).decode()
-
-        # Create image part for Gemini
-        image_part = {
-            'mime_type': 'image/png',
-            'data': image_b64
-        }
-
-        # Prompt for OCR - focus on main content, ignore system UI, fix spacing
-        prompt = """Extract only the main book/document content from this Kindle app screenshot.
-
-        IGNORE:
-        - System toolbar, menu bar, status bar
-        - Time, date, battery indicators
-        - Window controls, buttons
-        - File menu items (File, Edit, View, etc.)
-        - Any UI elements outside the main reading area
-
-        EXTRACT ONLY:
-        - The actual book text content
-        - Chapter titles, headings
-        - Main body text, paragraphs
-        - Any text that is part of the actual book/document being read
-
-        IMPORTANT FORMATTING:
-        - Fix any unnecessary spacing between characters in words
-        - Ensure proper word spacing and sentence flow
-        - Join fragmented words that should be together
-        - Maintain natural paragraph breaks
-        - Keep the text readable and properly formatted
-
-        Return only the clean, properly-spaced text content without OCR artifacts or formatting instructions."""
-
-        response = gemini_model.generate_content([prompt, image_part])
-
-        text_content = response.text.strip() if response.text else ''
-
-        # Save individual OCR file if requested
-        if save_individual and text_content:
-            image_path_obj = Path(image_path)
-            # Create individual OCR filename: screenshot_001.png -> ocr_001.txt or screenshot_1.png -> ocr_1.txt
-            ocr_filename = image_path_obj.stem.replace('screenshot_', 'ocr_') + '.txt'
-            ocr_path = image_path_obj.parent / ocr_filename
-
-            with open(ocr_path, 'w', encoding='utf-8') as ocr_file:
-                ocr_file.write(text_content)
-            print(f'Individual OCR saved: {ocr_filename}')
-
-        return text_content
-    except Exception as e:
-        print(f'Error processing {image_path}: {e}')
-        # Still create an empty individual file to maintain sequence
-        if save_individual:
-            image_path_obj = Path(image_path)
-            ocr_filename = image_path_obj.stem.replace('screenshot_', 'ocr_') + '.txt'
-            ocr_path = image_path_obj.parent / ocr_filename
-            with open(ocr_path, 'w', encoding='utf-8') as ocr_file:
-                ocr_file.write('')
-            print(f'Empty OCR file created due to error: {ocr_filename}')
-        return ''
+def has_text(image):
+    text_path = image.with_suffix('.txt')
+    return text_path.exists() and text_path.stat().st_size > 0
 
 
-def merge_ocr_files(folder_path):
-    """Merge individual OCR files into a single ocr_output.txt file."""
-    folder = Path(folder_path)
-    ocr_files = list(folder.glob('ocr_*.txt'))
-
-    # Sort OCR files by number to maintain order
-    def extract_number(filename):
-        import re
-        match = re.search(r'ocr_(\d+)\.txt', filename.name)
-        return int(match.group(1)) if match else 0
-
-    ocr_files.sort(key=extract_number)
-
-    if not ocr_files:
-        print("No individual OCR files found to merge")
-        return '', None
-
-    print(f"Merging {len(ocr_files)} OCR files...")
-
-    merged_text = ''
-    ocr_output_file = folder / 'ocr_output.txt'
-
-    with open(ocr_output_file, 'w', encoding='utf-8') as output:
-        for ocr_file in ocr_files:
-            try:
-                with open(ocr_file, 'r', encoding='utf-8') as f:
-                    content = f.read().strip()
-                    if content:
-                        merged_text += content + '\n'
-                        output.write(content + '\n')
-                print(f"Merged: {ocr_file.name}")
-            except Exception as e:
-                print(f"Error reading {ocr_file.name}: {e}")
-
-    print(f"Merged OCR saved to: {ocr_output_file}")
-    return merged_text, ocr_output_file
+def ocr_page(client, models, image):
+    errors = []
+    for model in models:
+        try:
+            return transcribe(client, model, image)
+        except Exception as e:
+            errors.append(f'{model}: {e}')
+    raise RuntimeError(' | '.join(errors))
 
 
-def process_images(folder_path, gemini_model):
-    """Process all screenshot images in the folder, creating individual OCR files."""
-    folder = Path(folder_path)
-    image_files = list(folder.glob('screenshot_*.png'))
+def transcribe(client, model, image):
+    response = client.models.generate_content(
+        model=model,
+        contents=[types.Part.from_bytes(data=image.read_bytes(), mime_type='image/png'), OCR_PROMPT],
+        config=types.GenerateContentConfig(
+            temperature=0, automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)),
+    )
+    text = (response.text or '').strip('\n ')
+    reason = response.candidates[0].finish_reason if response.candidates else 'no candidates'
+    if reason != types.FinishReason.STOP:
+        raise RuntimeError(f'finish_reason={reason}')
+    # A blank page still gets a non-empty file so later runs treat it as done.
+    image.with_suffix('.txt').write_text(text or ' ', encoding='utf-8')
+    return f'{len(text)} chars ({model})'
 
-    # Sort numerically by extracting number from filename
-    def extract_screenshot_number(filepath):
-        import re
-        match = re.search(r'screenshot_(\d+)\.png', filepath.name)
-        return int(match.group(1)) if match else 0
 
-    image_files.sort(key=extract_screenshot_number)  # Numeric ordering
-
-    if not image_files:
-        raise ValueError(f"No screenshot images found in {folder_path}")
-
-    print(f"Found {len(image_files)} images to process")
-
-    # Process each image individually, saving separate OCR files
-    for i, image_path in enumerate(image_files, 1):
-        print(f'Processing image {i}/{len(image_files)}: {image_path.name}')
-        perform_ocr(gemini_model, str(image_path), save_individual=True)
-
-    print("Individual OCR processing completed")
-
-    # Now merge all individual OCR files
-    return merge_ocr_files(folder_path)
+def join_pages(texts):
+    """Concatenate pages, gluing a sentence that runs over a page break back together."""
+    book = ''
+    previous_len = 0
+    for text in texts:
+        text = text.strip('\n')
+        if not text.strip():
+            continue
+        # Title pages and colophons are short and end without punctuation, but never continue.
+        continues = (previous_len >= MIN_BODY_CHARS and not book.rstrip().endswith(SENTENCE_END)
+                     and not text.startswith(('　', '#', '[')))
+        if continues:
+            book = book.rstrip() + (' ' if book.rstrip()[-1].isascii() else '') + text.lstrip()
+        else:
+            book = (book.rstrip() + '\n\n' if book else '') + text
+        previous_len = len(text)
+    return book + '\n'
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Process Kindle screenshots with OCR')
-    parser.add_argument('folder_path', help='Path to folder containing screenshots')
-    parser.add_argument('--gemini-api-key', required=False,
-                       help='Google Gemini API key (defaults to config.env)')
-
+    parser = argparse.ArgumentParser(description='OCR captured Kindle pages and assemble one Markdown file')
+    parser.add_argument('folder', type=Path, help='<book>.zip from the extension, or a folder of screenshot_001.png from AppleScript')
+    parser.add_argument('--title', help='Output file name without extension (default: folder name)')
+    parser.add_argument('--model', help=f'Comma-separated Gemini models tried in order (default: GEMINI_MODEL in config.env or {DEFAULT_MODELS})')
+    parser.add_argument('--force', action='store_true', help='Re-OCR pages that already have text')
     args = parser.parse_args()
+    config = load_config()
+    if args.folder.suffix == '.zip':
+        folder = args.folder.with_suffix('')
+        zipfile.ZipFile(args.folder).extractall(folder)
+        args.folder = folder
 
-    try:
-        # Load configuration
-        config = load_config()
+    images = page_images(args.folder)
+    if not images:
+        sys.exit(f'No page images found in {args.folder}')
+    todo = [img for img in images if args.force or not has_text(img)]
+    print(f'{len(images)} pages, {len(images) - len(todo)} already have text, {len(todo)} to OCR')
 
-        # Setup
-        folder_path = Path(args.folder_path)
-        if not folder_path.exists():
-            raise FileNotFoundError(f"Folder not found: {folder_path}")
-
-        print(f"Processing folder: {folder_path}")
-
-        # Get API key from args or config
-        api_key = args.gemini_api_key or config.get('GEMINI_API_KEY')
+    if todo:
+        api_key = config.get('GEMINI_API_KEY')
         if not api_key:
-            raise ValueError("Gemini API key is required. Set it in config.env or use --gemini-api-key")
+            sys.exit(f'GEMINI_API_KEY is not set in {CONFIG_PATH}')
+        models = (args.model or config.get('GEMINI_MODEL') or DEFAULT_MODELS).split(',')
+        client = genai.Client(api_key=api_key, http_options=types.HttpOptions(
+            retry_options=types.HttpRetryOptions(attempts=3, initial_delay=2, max_delay=30)))
 
-        # Initialize Google Gemini API
-        gemini_model = setup_gemini_client(api_key)
+        def run(image):
+            try:
+                return image, ocr_page(client, models, image), None
+            except Exception as e:
+                return image, 0, e
 
-        # Process images with OCR
-        ocr_text, ocr_output_file = process_images(folder_path, gemini_model)
+        failed = []
+        with ThreadPoolExecutor(WORKERS) as pool:
+            for done, (image, result, error) in enumerate(pool.map(run, todo), 1):
+                status = f'error: {error}' if error else result
+                print(f'[{done}/{len(todo)}] {image.name} {status}', flush=True)
+                if error:
+                    failed.append(image)
+        if failed:
+            sys.exit(f'{len(failed)} pages failed. Re-run the same command to retry only those pages.')
 
-        if not ocr_text.strip():
-            print("Warning: No text extracted from images")
-            return
+    book = join_pages(img.with_suffix('.txt').read_text(encoding='utf-8') for img in images)
+    title = args.title or args.folder.resolve().name
+    output = args.folder / f'{title}.md'
+    output.write_text(book, encoding='utf-8')
+    print(f'Wrote {output} ({len(book)} chars)')
 
-        print(f"\nOCR processing completed successfully!")
-        print(f"Merged OCR file: {ocr_output_file}")
-        print(f"Individual OCR files saved in: {folder_path}")
-
-    except Exception as e:
-        print(f"Error: {e}")
-        sys.exit(1)
+    drive_folder = config.get('GOOGLE_DRIVE_FOLDER')
+    if drive_folder and Path(drive_folder).is_dir():
+        shutil.copy2(output, drive_folder)
+        print(f'Copied to {drive_folder}')
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

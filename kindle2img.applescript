@@ -6,8 +6,8 @@
 set MAX_PAGES to 100
 
 -- CONFIGURATION: Set page direction
--- "LEFT" for left-to-right languages (English, etc.)
--- "RIGHT" for right-to-left languages (Japanese, Arabic, etc.)
+-- "LEFT" for left-to-right books (English, etc.): next page is the right arrow
+-- "RIGHT" for right-to-left books (vertical Japanese, Arabic, etc.): next page is the left arrow
 set PAGE_DIRECTION to "RIGHT"
 
 -- CONFIGURATION: Set margin offsets to crop header/footer (in pixels)
@@ -18,7 +18,7 @@ set LEFT_MARGIN to 0
 set RIGHT_MARGIN to 0
 
 -- CONFIGURATION: Continue mode - set to true to continue in existing folder
-set CONTINUE_MODE to true
+set CONTINUE_MODE to false
 
 -- CONFIGURATION: Folder path for continue mode (only used when CONTINUE_MODE is true)
 -- Example: "/Users/username/Downloads/Agile_Data_Warehouse_Design"
@@ -130,10 +130,10 @@ end if
 
 -- Set page direction based on configuration
 if PAGE_DIRECTION = "RIGHT" then
-	set keychar to (ASCII character 29) -- Right arrow
+	set keyCodeNext to 123 -- Left arrow
 	set directionText to "Right direction"
 else
-	set keychar to (ASCII character 28) -- Left arrow
+	set keyCodeNext to 124 -- Right arrow
 	set directionText to "Left direction"
 end if
 log "Page direction: " & directionText
@@ -178,7 +178,7 @@ repeat with i from startNumber to endNumber
 	if pageCount < maxPages then
 		log "Turning to next page..."
 		tell application "System Events"
-			keystroke keychar
+			key code keyCodeNext
 			delay 0.5 -- Stabilization time after page turn
 		end tell
 	end if
