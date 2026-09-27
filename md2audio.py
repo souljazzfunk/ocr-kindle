@@ -10,7 +10,7 @@ Usage:
     python3 md2audio.py "/path/to/book.md"                 # full book
     python3 md2audio.py book.md --max-chapters 2           # quick test
     python3 md2audio.py book.md --out ~/Music/Kindle_audio # custom output root
-    python3 md2audio.py book.md --voice Kyoko --rate 210
+    python3 md2audio.py book.md --voice Kyoko --rate 0      # standard voice, its own speed
 
 Output: <out>/<book title>/<book title>.m4a  (+ chapters/NN.m4a kept for resume)
 Default <out> is the sibling folder "Kindle_audio" next to GOOGLE_DRIVE_FOLDER
@@ -161,8 +161,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("md_file", help="Markdown produced by img2txt.py (its file name is the book title)")
     ap.add_argument("--out", help="Output root folder (default: <GOOGLE_DRIVE_FOLDER>/../Kindle_audio)")
-    ap.add_argument("--voice", default="Kyoko", help="macOS voice (default: Kyoko)")
-    ap.add_argument("--rate", type=int, default=0, help="Speech rate in wpm (0 = voice default)")
+    ap.add_argument("--voice", default="Kyoko (Enhanced)", help="macOS voice (default: Kyoko (Enhanced); download it in System Settings > Accessibility > Spoken Content)")
+    ap.add_argument("--rate", type=int, default=220, help="Speech rate in wpm (default: 220; 0 = voice default)")
     ap.add_argument("--max-chapters", type=int, default=0, help="Only synthesize the first N chapters (test runs)")
     ap.add_argument("--min-chars", type=int, default=80, help="Merge chapters shorter than this into the next one")
     ap.add_argument("--force", action="store_true", help="Re-synthesize chapters that already exist")
