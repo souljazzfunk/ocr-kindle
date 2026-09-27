@@ -9,6 +9,7 @@ service-account*.json
 credentials/
 
 # Output folders
+cache/
 Kindle_Screenshots_*/
 Kindle_Test_*/
 Kindle_Window_*/
