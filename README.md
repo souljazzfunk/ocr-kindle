@@ -32,6 +32,16 @@ The script extracts the ZIP into `~/Downloads/<book title>/`, prints how many pa
 
 If any page fails (quota, network), the script exits with an error and keeps the pages that succeeded. Run the same command again on the folder to retry only the missing pages. `--force` re-OCRs everything, `--model` picks another Gemini model, and `--title` sets the output name.
 
+## Audiobook
+
+`md2audio.py` reads the Markdown aloud with the macOS `say` voice Kyoko and writes one `.m4a` with a chapter marker per chapter. It needs `ffmpeg` (`brew install ffmpeg`) and nothing from `venv`.
+
+```bash
+python3 md2audio.py ~/Downloads/<book title>/<book title>.md
+```
+
+The file name is the book title. Chapters split at the shallowest heading level that appears more than once, and a chapter under 80 characters (`--min-chars`) is merged into the next one. Output goes to `Kindle_audio/<book title>/` next to `GOOGLE_DRIVE_FOLDER`, so it syncs to Drive, or to `--out`. Each chapter is kept as `chapters/NNN.m4a`, so an interrupted run resumes where it stopped. `--max-chapters 2` makes a quick sample, `--rate` changes the speed, and `--force` re-synthesizes.
+
 ## Kindle for Mac fallback
 
 Some books do not open in Cloud Reader. For those, `kindle2img.applescript` drives the Kindle for Mac app with arrow keys and `screencapture`. Edit `MAX_PAGES`, `PAGE_DIRECTION` and the margins at the top of the script, then run `osascript kindle2img.applescript`. The app running `osascript` needs Screen Recording and Accessibility permission (System Settings → Privacy & Security), and must be restarted after granting them. Without Screen Recording the captures show only the desktop; without Accessibility the page turns fail. It writes `~/Downloads/Kindle_Screenshots_<timestamp>/screenshot_001.png`, which `img2txt.py` accepts as is. Every page goes through OCR on this path, and the script does not detect the end of the book.
