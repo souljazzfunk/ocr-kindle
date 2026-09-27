@@ -4,6 +4,7 @@ config.env
 
 # Service account keys
 *.json
+!extension/manifest.json
 service-account*.json
 credentials/
 
@@ -31,6 +32,9 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+venv/
+env/
+.venv/
 
 # macOS
 .DS_Store
@@ -51,3 +55,5 @@ Icon?
 # Test files
 test*
 debug*
+!test_*.py
+

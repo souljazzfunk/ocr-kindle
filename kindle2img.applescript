@@ -18,7 +18,7 @@ set LEFT_MARGIN to 0
 set RIGHT_MARGIN to 0
 
 -- CONFIGURATION: Continue mode - set to true to continue in existing folder
-set CONTINUE_MODE to true
+set CONTINUE_MODE to false
 
 -- CONFIGURATION: Folder path for continue mode (only used when CONTINUE_MODE is true)
 -- Example: "/Users/username/Downloads/Agile_Data_Warehouse_Design"

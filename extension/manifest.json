@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Kindle Cloud Reader Capture",
+  "version": "1.0",
+  "description": "Saves every Kindle Cloud Reader page image and text layer of a book as <book title>.zip for img2txt.py.",
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Start / stop capture" },
+  "content_scripts": [{
+    "matches": [
+      "https://read.amazon.com/*", "https://read.amazon.co.jp/*", "https://read.amazon.co.uk/*",
+      "https://read.amazon.de/*", "https://read.amazon.fr/*", "https://read.amazon.es/*",
+      "https://read.amazon.it/*", "https://read.amazon.ca/*", "https://read.amazon.com.au/*",
+      "https://read.amazon.in/*", "https://read.amazon.com.br/*", "https://read.amazon.com.mx/*"
+    ],
+    "js": ["content.js"]
+  }]
+}
