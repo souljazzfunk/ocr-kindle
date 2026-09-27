@@ -10,7 +10,9 @@ Usage:
     python3 md2audio.py "/path/to/book.md"                 # full book
     python3 md2audio.py book.md --max-chapters 2           # quick test
     python3 md2audio.py book.md --out ~/Music/Kindle_audio # custom output root
-    python3 md2audio.py book.md --voice Kyoko --rate 0      # standard voice, its own speed
+    python3 md2audio.py book.md --voice Kyoko --rate 0      # another voice at its own speed
+
+The voice follows the book's language: Kyoko (Enhanced) for Japanese, Ava (Premium) for English.
 
 Output: <out>/<book title>/<book title>.m4a  (+ chapters/NN.m4a kept for resume)
 Default <out> is the sibling folder "Kindle_audio" next to GOOGLE_DRIVE_FOLDER
@@ -25,6 +27,20 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+
+# voice: default `say` voice; stop: spoken after a chapter title so it ends with a pause; opening: title of the
+# text before the first chapter.
+LANGUAGES = {
+    "ja": {"voice": "Kyoko (Enhanced)", "stop": "。", "opening": "冒頭"},
+    "en": {"voice": "Ava (Premium)", "stop": ".", "opening": "Opening"},
+}
+
+
+def language_of(md):
+    """'ja' when kana and kanji outnumber English words, else 'en'. Words, not letters, so that a Japanese book
+    full of names like iPhone still reads as Japanese."""
+    cjk = len(re.findall(r"[\u3040-\u30ff\u4e00-\u9fff]", md))
+    return "ja" if cjk > len(re.findall(r"[A-Za-z]+", md)) else "en"
 
 
 def load_config(path=HERE / "config.env"):
@@ -61,7 +77,7 @@ def clean_text(md):
     return t.strip()
 
 
-def split_chapters(md, min_chars=80):
+def split_chapters(md, min_chars=80, lang="ja"):
     """Split on the shallowest heading level used more than once; return [(chapter_title, text), ...].
 
     A single top-level heading is the book title, so it never counts as a chapter level.
@@ -85,9 +101,9 @@ def split_chapters(md, min_chars=80):
         if ct is None:
             if not body:
                 continue
-            ct, spoken = "冒頭", body
+            ct, spoken = LANGUAGES[lang]["opening"], body
         else:
-            spoken = f"{ct}。\n\n{body}".rstrip()
+            spoken = f"{ct}{LANGUAGES[lang]['stop']}\n\n{body}".rstrip()
         text = carry + spoken
         if len(text) < min_chars:
             carry = text + "\n\n"
@@ -162,7 +178,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("md_file", help="Markdown produced by img2txt.py (its file name is the book title)")
     ap.add_argument("--out", help="Output root folder (default: <GOOGLE_DRIVE_FOLDER>/../Kindle_audio)")
-    ap.add_argument("--voice", default="Kyoko (Enhanced)", help="macOS voice (default: Kyoko (Enhanced); download it in System Settings > Accessibility > Spoken Content)")
+    ap.add_argument("--voice", help="macOS voice (default: Kyoko (Enhanced) for Japanese, Ava (Premium) for English; "
+                                    "download it in System Settings > Accessibility > Spoken Content)")
     ap.add_argument("--rate", type=int, default=220, help="Speech rate in wpm (default: 220; 0 = voice default)")
     ap.add_argument("--max-chapters", type=int, default=0, help="Only synthesize the first N chapters (test runs)")
     ap.add_argument("--min-chars", type=int, default=80, help="Merge chapters shorter than this into the next one")
@@ -176,7 +193,9 @@ def main():
     md_path = Path(args.md_file).expanduser()
     md = md_path.read_text(encoding="utf-8")
     book_title = md_path.stem
-    chapters = split_chapters(md, min_chars=args.min_chars)
+    lang = language_of(md)
+    voice = args.voice or LANGUAGES[lang]["voice"]
+    chapters = split_chapters(md, min_chars=args.min_chars, lang=lang)
     if not chapters:
         sys.exit("error: no text found")
     if args.max_chapters:
@@ -194,7 +213,7 @@ def main():
 
     total_chars = sum(len(t) for _, t in chapters)
     print(f"book: {book_title}")
-    print(f"chapters: {len(chapters)}  chars: {total_chars:,}  voice: {args.voice}")
+    print(f"chapters: {len(chapters)}  chars: {total_chars:,}  language: {lang}  voice: {voice}")
     print(f"out: {book_dir}")
 
     files, titles = [], []
@@ -204,7 +223,7 @@ def main():
             print(f"  [{i:03d}/{len(chapters)}] skip (exists) {ct}")
         else:
             print(f"  [{i:03d}/{len(chapters)}] {ct} ({len(text):,} chars)", flush=True)
-            synthesize_chapter(text, out_m4a, args.voice, args.rate)
+            synthesize_chapter(text, out_m4a, voice, args.rate)
         files.append(out_m4a)
         titles.append(ct)
 
