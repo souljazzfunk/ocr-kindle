@@ -12,7 +12,20 @@ property RIGHT_MARGIN : 0
 -- Safety cap; capture normally stops when a page turn no longer changes the screen.
 property MAX_PAGES : 3000
 
+-- The capture is a screen region, so another window in front would be captured and would take the arrow key.
+on focusKindle()
+	tell application "System Events" to if frontmost of process "Kindle" then return
+	tell application "Amazon Kindle" to activate
+	repeat 40 times
+		delay 0.25
+		tell application "System Events" to if frontmost of process "Kindle" then exit repeat
+	end repeat
+	tell application "System Events" to if not (frontmost of process "Kindle") then error "Kindle did not come to the front"
+	delay 0.5 -- let the window finish drawing over the previous app
+end focusKindle
+
 on takeScreenshot(savePath)
+	focusKindle()
 	tell application "System Events" to tell process "Kindle"
 		set {x1, y1} to position of window 1
 		set {w, h} to size of window 1
@@ -46,8 +59,8 @@ on run argv
 	if lastNumber is "" then set lastNumber to "0"
 	set pageNumber to (lastNumber as integer)
 
-	tell application "Amazon Kindle" to activate
-	delay 2
+	focusKindle()
+	delay 1
 
 	set previousPath to ""
 	repeat MAX_PAGES times
@@ -62,7 +75,7 @@ on run argv
 			end if
 		end if
 		set previousPath to screenshotPath
-		tell application "Amazon Kindle" to activate
+		focusKindle()
 		tell application "System Events" to key code keyCodeNext
 		delay 1
 	end repeat

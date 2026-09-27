@@ -57,7 +57,7 @@ venv/bin/python img2txt.py ~/Downloads/"<book title>"
 
 The two apps break pages in different places, so the first Mac capture usually repeats the last paragraphs of the Cloud Reader part. After OCR, delete the repeated text from its `.txt` and run `img2txt.py` again to rebuild the Markdown without new OCR requests. Every Mac page goes through OCR.
 
-The app running `osascript` needs Screen Recording and Accessibility permission (System Settings → Privacy & Security), and must be restarted after granting them. Without Screen Recording the captures show only the desktop; without Accessibility the page turns fail. Leave the Kindle window in front while it runs.
+The app running `osascript` needs Screen Recording and Accessibility permission (System Settings → Privacy & Security), and must be restarted after granting them. Without Screen Recording the captures show only the desktop; without Accessibility the page turns fail. The script brings Kindle back to the front before every capture and page turn, so switching apps while it runs does not put another window into the captures.
 
 ## Tests
 
