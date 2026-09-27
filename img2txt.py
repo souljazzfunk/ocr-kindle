@@ -4,7 +4,7 @@ Turn a folder of captured Kindle pages into one Markdown book.
 
 Each page is `<prefix>_<number>.png` with an optional sibling `.txt` holding that page's Markdown.
 The Chrome extension's ZIP carries the `.txt` from Cloud Reader's text layer. Pages without one are OCRed
-with Gemini, so re-running only touches pages that are still missing text.
+with Gemini, falling back to macOS Vision, so re-running only touches pages that are still missing text.
 """
 
 import argparse
@@ -15,13 +15,17 @@ import sys
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from statistics import median
 
 from google import genai
 from google.genai import types
 
 CONFIG_PATH = Path(os.environ.get('KINDLE_OCR_CONFIG', Path(__file__).with_name('config.env')))
 # Most accurate first. The free tier allows gemini-3.8-flash only 20 requests a day, so the lite model takes over.
-DEFAULT_MODELS = 'gemini-3.8-flash,gemini-3.5-flash-lite'
+# Gemini refuses well-known books with RECITATION; local Vision OCR has no such filter but loses heading marks.
+DEFAULT_MODELS = 'gemini-3.8-flash,gemini-3.5-flash-lite,vision'
+VISION = 'vision'
+VISION_INDENT = 0.015
 WORKERS = 4
 PAGE_NUMBER = re.compile(r'_(\d+)\.png$')
 SENTENCE_END = tuple('。．.!?！？」』）)')
@@ -64,10 +68,52 @@ def ocr_page(client, models, image):
     errors = []
     for model in models:
         try:
-            return transcribe(client, model, image)
+            text = vision_transcribe(image) if model == VISION else transcribe(client, model, image)
         except Exception as e:
             errors.append(f'{model}: {e}')
+            continue
+        # A blank page still gets a non-empty file so later runs treat it as done.
+        image.with_suffix('.txt').write_text(text or ' ', encoding='utf-8')
+        return f'{len(text)} chars ({model})'
     raise RuntimeError(' | '.join(errors))
+
+
+def vision_transcribe(image):
+    import Vision
+    from Foundation import NSURL
+    request = Vision.VNRecognizeTextRequest.alloc().init()
+    request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
+    request.setAutomaticallyDetectsLanguage_(True)
+    handler = Vision.VNImageRequestHandler.alloc().initWithURL_options_(NSURL.fileURLWithPath_(str(image)), None)
+    ok, error = handler.performRequests_error_([request], None)
+    if not ok:
+        raise RuntimeError(error)
+    lines = []
+    for result in request.results():
+        box = result.boundingBox()  # normalized, origin at bottom left
+        lines.append((box.origin.x, 1 - box.origin.y - box.size.height, result.topCandidates_(1)[0].string()))
+    # Vision finds nothing in vertical Japanese, so an empty result must not mark the page done.
+    if not lines:
+        raise RuntimeError('no text found')
+    return vision_markdown(lines)
+
+
+def vision_markdown(lines):
+    """Rebuild paragraphs from (left, top, text) line boxes: an indented line or a wide gap starts a new one."""
+    lines = sorted(lines, key=lambda line: line[1])
+    margin = min(left for left, _, _ in lines)
+    pitch = median([b[1] - a[1] for a, b in zip(lines, lines[1:])] or [1])
+    paragraphs = []
+    previous_top = None
+    for left, top, text in lines:
+        if previous_top is None or left - margin > VISION_INDENT or top - previous_top > 1.5 * pitch:
+            paragraphs.append(text)
+        elif paragraphs[-1].endswith('-') and text[:1].islower():
+            paragraphs[-1] = paragraphs[-1][:-1] + text
+        else:
+            paragraphs[-1] += (' ' if paragraphs[-1][-1].isascii() else '') + text
+        previous_top = top
+    return '\n\n'.join(paragraphs)
 
 
 def transcribe(client, model, image):
@@ -77,13 +123,10 @@ def transcribe(client, model, image):
         config=types.GenerateContentConfig(
             temperature=0, automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)),
     )
-    text = (response.text or '').strip('\n ')
     reason = response.candidates[0].finish_reason if response.candidates else 'no candidates'
     if reason != types.FinishReason.STOP:
         raise RuntimeError(f'finish_reason={reason}')
-    # A blank page still gets a non-empty file so later runs treat it as done.
-    image.with_suffix('.txt').write_text(text or ' ', encoding='utf-8')
-    return f'{len(text)} chars ({model})'
+    return (response.text or '').strip('\n ')
 
 
 def join_pages(texts):
@@ -109,7 +152,7 @@ def main():
     parser = argparse.ArgumentParser(description='OCR captured Kindle pages and assemble one Markdown file')
     parser.add_argument('folder', type=Path, help='<book>.zip from the extension, or a folder of captured page images')
     parser.add_argument('--title', help='Output file name without extension (default: folder name)')
-    parser.add_argument('--model', help=f'Comma-separated Gemini models tried in order (default: GEMINI_MODEL in config.env or {DEFAULT_MODELS})')
+    parser.add_argument('--model', help=f'Comma-separated models tried in order, Gemini names or "vision" (default: GEMINI_MODEL in config.env or {DEFAULT_MODELS})')
     parser.add_argument('--force', action='store_true', help='Re-OCR pages that already have text')
     args = parser.parse_args()
     config = load_config()
@@ -125,12 +168,14 @@ def main():
     print(f'{len(images)} pages, {len(images) - len(todo)} already have text, {len(todo)} to OCR')
 
     if todo:
-        api_key = config.get('GEMINI_API_KEY')
-        if not api_key:
-            sys.exit(f'GEMINI_API_KEY is not set in {CONFIG_PATH}')
         models = (args.model or config.get('GEMINI_MODEL') or DEFAULT_MODELS).split(',')
-        client = genai.Client(api_key=api_key, http_options=types.HttpOptions(
-            retry_options=types.HttpRetryOptions(attempts=3, initial_delay=2, max_delay=30)))
+        client = None
+        if models != [VISION]:
+            api_key = config.get('GEMINI_API_KEY')
+            if not api_key:
+                sys.exit(f'GEMINI_API_KEY is not set in {CONFIG_PATH}')
+            client = genai.Client(api_key=api_key, http_options=types.HttpOptions(
+                retry_options=types.HttpRetryOptions(attempts=3, initial_delay=2, max_delay=30)))
 
         def run(image):
             try:

@@ -4,7 +4,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-from img2txt import join_pages
+from img2txt import join_pages, vision_markdown
 
 SCRIPT = Path(__file__).with_name('img2txt.py')
 
@@ -26,6 +26,20 @@ def test_join_pages_english_and_blank_pages():
 
 def test_join_pages_keeps_short_title_pages_separate():
     assert join_pages(['筑摩ｅブックス', '〈お断り〉', '幻想1　アメリカ英語', '私たちの日常生活は']) == '筑摩ｅブックス\n\n〈お断り〉\n\n幻想1　アメリカ英語\n\n私たちの日常生活は\n'
+
+
+def test_vision_markdown_rebuilds_paragraphs_from_line_boxes():
+    lines = [
+        (0.121, 0.30, 'Apple II.'),
+        (0.121, 0.10, 'Mike Markkula'),
+        (0.152, 0.25, 'Bushnell suggested a former mar-'),
+        (0.121, 0.20, 'All of this required'),
+        (0.119, 0.275, 'keting manager at IBM-'),
+        (0.121, 0.225, 'money.'),
+    ]
+    assert vision_markdown(lines) == (
+        'Mike Markkula\n\nAll of this required money.\n\n'
+        'Bushnell suggested a former marketing manager at IBM- Apple II.')
 
 
 def test_assembles_without_api_when_every_page_has_text(tmp_path):
