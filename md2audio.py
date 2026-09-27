@@ -12,7 +12,7 @@ Usage:
     python3 md2audio.py book.md --out ~/Music/Kindle_audio # custom output root
     python3 md2audio.py book.md --voice Kyoko --rate 0      # another voice at its own speed
 
-The voice and speed follow the book's language: Kyoko (Enhanced) at 220 wpm for Japanese, Ava (Premium) at
+The voice and speed follow the book's language: Kyoko (Enhanced) at 220 wpm for Japanese, Zoe (Premium) at
 170 wpm for English.
 
 Output: <out>/<book title>/<book title>.m4a  (+ chapters/NN.m4a kept for resume)
@@ -33,7 +33,7 @@ HERE = Path(__file__).resolve().parent
 # with a pause; opening: title of the text before the first chapter.
 LANGUAGES = {
     "ja": {"voice": "Kyoko (Enhanced)", "rate": 220, "stop": "。", "opening": "冒頭"},
-    "en": {"voice": "Ava (Premium)", "rate": 170, "stop": ".", "opening": "Opening"},
+    "en": {"voice": "Zoe (Premium)", "rate": 170, "stop": ".", "opening": "Opening"},
 }
 
 
@@ -179,7 +179,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("md_file", help="Markdown produced by img2txt.py (its file name is the book title)")
     ap.add_argument("--out", help="Output root folder (default: <GOOGLE_DRIVE_FOLDER>/../Kindle_audio)")
-    ap.add_argument("--voice", help="macOS voice (default: Kyoko (Enhanced) for Japanese, Ava (Premium) for English; "
+    ap.add_argument("--voice", help="macOS voice (default: Kyoko (Enhanced) for Japanese, Zoe (Premium) for English; "
                                     "download it in System Settings > Accessibility > Spoken Content)")
     ap.add_argument("--rate", type=int, help="Speech rate in wpm (default: 220 for Japanese, 170 for English; 0 = voice default)")
     ap.add_argument("--max-chapters", type=int, default=0, help="Only synthesize the first N chapters (test runs)")
