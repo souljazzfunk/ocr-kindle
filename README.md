@@ -53,7 +53,7 @@ osascript kindle2img.applescript ltr ~/Downloads/"<book title>"
 venv/bin/python img2txt.py ~/Downloads/"<book title>"
 ```
 
-`ltr` turns pages with the right arrow (English etc.), `rtl` with the left arrow (vertical Japanese, the default). The script numbers its captures after the folder's highest page, so `page_0137.png` follows `page_0136.png`, and stops when a page turn leaves the window unchanged, which is the end of the book. Without a folder it writes to a new `~/Downloads/Kindle_Screenshots_<timestamp>/`, which is also how to capture a book that does not open in Cloud Reader at all. The margins that crop the header and footer are at the top of the script.
+`ltr` turns pages with the right arrow (English etc.), `rtl` with the left arrow (vertical Japanese, the default). The script numbers its captures after the folder's highest page, so `page_0137.png` follows `page_0136.png`, and stops when a page turn leaves the window unchanged, which is the end of the book. The last one or two captures show Kindle's end-of-book panel instead of text; delete them, or put a blank `.txt` next to them, before running `img2txt.py`. Without a folder it writes to a new `~/Downloads/Kindle_Screenshots_<timestamp>/`, which is also how to capture a book that does not open in Cloud Reader at all. The margins that crop the header and footer are at the top of the script.
 
 The two apps break pages in different places, so the first Mac capture usually repeats the last paragraphs of the Cloud Reader part. After OCR, delete the repeated text from its `.txt` and run `img2txt.py` again to rebuild the Markdown without new OCR requests. Every Mac page goes through OCR.
 
