@@ -8,7 +8,8 @@ Standard library only. Requires macOS `say` and `ffmpeg`/`ffprobe` on PATH.
 
 Usage:
     python3 md2audio.py "/path/to/book.md"                 # full book
-    python3 md2audio.py book.md --max-chapters 2           # quick test
+    python3 md2audio.py book.md --chapters 1-2             # quick test
+    python3 md2audio.py book.md --chapters 7-9,12          # only these chapters
     python3 md2audio.py book.md --out ~/Music/Kindle_audio # custom output root
     python3 md2audio.py book.md --voice Kyoko --rate 0      # another voice at its own speed
     python3 md2audio.py book.md --split                    # one file per chapter
@@ -123,6 +124,19 @@ def split_chapters(md, min_chars=80, lang="ja"):
     return out
 
 
+def parse_chapters(spec, count):
+    """'7-9,12' -> [7, 8, 9, 12]; '7-' runs to the last chapter. 1-based, like the file numbers."""
+    picked = set()
+    for part in spec.split(","):
+        lo, dash, hi = part.strip().partition("-")
+        first = int(lo)
+        last = (int(hi) if hi else count) if dash else first
+        if not 1 <= first <= last <= count:
+            raise ValueError(f"chapter range {part.strip()!r} is outside 1-{count}")
+        picked.update(range(first, last + 1))
+    return sorted(picked)
+
+
 # ---------- audio ----------
 
 def run(cmd, **kw):
@@ -206,7 +220,7 @@ def main():
     ap.add_argument("--voice", help="macOS voice (default: Kyoko (Enhanced) for Japanese, Zoe (Premium) for English; "
                                     "download it in System Settings > Accessibility > Spoken Content)")
     ap.add_argument("--rate", type=int, help="Speech rate in wpm (default: 220 for Japanese, 170 for English; 0 = voice default)")
-    ap.add_argument("--max-chapters", type=int, default=0, help="Only synthesize the first N chapters (test runs)")
+    ap.add_argument("--chapters", help="Only these chapters, 1-based, e.g. 7-9,12 or 7- (default: all)")
     ap.add_argument("--min-chars", type=int, default=80, help="Merge chapters shorter than this into the next one")
     ap.add_argument("--split", action="store_true", help="Write one file per chapter instead of one file for the book")
     ap.add_argument("--force", action="store_true", help="Re-synthesize chapters that already exist")
@@ -225,8 +239,12 @@ def main():
     chapters = split_chapters(md, min_chars=args.min_chars, lang=lang)
     if not chapters:
         sys.exit("error: no text found")
-    if args.max_chapters:
-        chapters = chapters[: args.max_chapters]
+    count = len(chapters)
+    try:
+        picked = parse_chapters(args.chapters, count) if args.chapters else range(1, count + 1)
+    except ValueError as e:
+        sys.exit(f"error: {e}")
+    chapters = [(i, *chapters[i - 1]) for i in picked]
 
     if args.out:
         root = Path(args.out).expanduser()
@@ -238,25 +256,25 @@ def main():
     ch_dir = book_dir / "chapters"
     ch_dir.mkdir(parents=True, exist_ok=True)
 
-    total_chars = sum(len(t) for _, t in chapters)
+    total_chars = sum(len(t) for _, _, t in chapters)
     print(f"book: {book_title}")
-    print(f"chapters: {len(chapters)}  chars: {total_chars:,}  language: {lang}  voice: {voice}  rate: {rate}")
+    print(f"chapters: {len(chapters)} of {count}  chars: {total_chars:,}  language: {lang}  voice: {voice}  rate: {rate}")
     print(f"out: {book_dir}")
 
     files, titles = [], []
-    for i, (ct, text) in enumerate(chapters, 1):
+    for i, ct, text in chapters:
         out_m4a = ch_dir / f"{i:03d}.m4a"
         if out_m4a.exists() and not args.force:
-            print(f"  [{i:03d}/{len(chapters)}] skip (exists) {ct}")
+            print(f"  [{i:03d}/{count}] skip (exists) {ct}")
         else:
-            print(f"  [{i:03d}/{len(chapters)}] {ct} ({len(text):,} chars)", flush=True)
+            print(f"  [{i:03d}/{count}] {ct} ({len(text):,} chars)", flush=True)
             synthesize_chapter(text, out_m4a, voice, rate)
         files.append(out_m4a)
         titles.append(ct)
 
     if args.split:
-        for i, (p, ct) in enumerate(zip(files, titles), 1):
-            tag_copy(p, book_dir / chapter_filename(i, len(files), ct), ct, book_title, f"{i}/{len(files)}")
+        for (i, ct, _), p in zip(chapters, files):
+            tag_copy(p, book_dir / chapter_filename(i, count, ct), ct, book_title, f"{i}/{count}")
         print(f"done: {book_dir}  ({len(files)} chapter files)")
         return
 
