@@ -13,7 +13,7 @@ Usage:
     python3 md2audio.py book.md --voice Kyoko --rate 0      # another voice at its own speed
 
 The voice and speed follow the book's language: Kyoko (Enhanced) at 220 wpm for Japanese, Ava (Premium) at
-150 wpm for English.
+170 wpm for English.
 
 Output: <out>/<book title>/<book title>.m4a  (+ chapters/NN.m4a kept for resume)
 Default <out> is the sibling folder "Kindle_audio" next to GOOGLE_DRIVE_FOLDER
@@ -33,7 +33,7 @@ HERE = Path(__file__).resolve().parent
 # with a pause; opening: title of the text before the first chapter.
 LANGUAGES = {
     "ja": {"voice": "Kyoko (Enhanced)", "rate": 220, "stop": "。", "opening": "冒頭"},
-    "en": {"voice": "Ava (Premium)", "rate": 150, "stop": ".", "opening": "Opening"},
+    "en": {"voice": "Ava (Premium)", "rate": 170, "stop": ".", "opening": "Opening"},
 }
 
 
@@ -181,7 +181,7 @@ def main():
     ap.add_argument("--out", help="Output root folder (default: <GOOGLE_DRIVE_FOLDER>/../Kindle_audio)")
     ap.add_argument("--voice", help="macOS voice (default: Kyoko (Enhanced) for Japanese, Ava (Premium) for English; "
                                     "download it in System Settings > Accessibility > Spoken Content)")
-    ap.add_argument("--rate", type=int, help="Speech rate in wpm (default: 220 for Japanese, 150 for English; 0 = voice default)")
+    ap.add_argument("--rate", type=int, help="Speech rate in wpm (default: 220 for Japanese, 170 for English; 0 = voice default)")
     ap.add_argument("--max-chapters", type=int, default=0, help="Only synthesize the first N chapters (test runs)")
     ap.add_argument("--min-chars", type=int, default=80, help="Merge chapters shorter than this into the next one")
     ap.add_argument("--force", action="store_true", help="Re-synthesize chapters that already exist")
