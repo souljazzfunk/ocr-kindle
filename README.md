@@ -53,11 +53,36 @@ osascript kindle2img.applescript ltr ~/Downloads/"<book title>"
 venv/bin/python img2txt.py ~/Downloads/"<book title>"
 ```
 
-`ltr` turns pages with the right arrow (English etc.), `rtl` with the left arrow (vertical Japanese, the default). The script numbers its captures after the folder's highest page, so `page_0137.png` follows `page_0136.png`, and stops when a page turn leaves the window unchanged, which is the end of the book. The last one or two captures show Kindle's end-of-book panel instead of text; delete them, or put a blank `.txt` next to them, before running `img2txt.py`. Without a folder it writes to a new `~/Downloads/Kindle_Screenshots_<timestamp>/`, which is also how to capture a book that does not open in Cloud Reader at all. The margins that crop the header and footer are at the top of the script.
+`ltr` turns pages with the right arrow (English etc.), `rtl` with the left arrow (vertical Japanese, the default). The script numbers its captures after the folder's highest page, so `page_0137.png` follows `page_0136.png`, and stops when a page turn leaves the window unchanged, which is the end of the book. The last one or two captures show Kindle's end-of-book panel instead of text, which `proofread.py` blanks. Without a folder it writes to a new `~/Downloads/Kindle_Screenshots_<timestamp>/`, which is also how to capture a book that does not open in Cloud Reader at all. The margins that crop the header and footer are at the top of the script.
 
-The two apps break pages in different places, so the first Mac capture usually repeats the last paragraphs of the Cloud Reader part. After OCR, delete the repeated text from its `.txt` and run `img2txt.py` again to rebuild the Markdown without new OCR requests. Every Mac page goes through OCR.
+The two apps break pages in different places, so the first Mac capture usually repeats the last paragraphs of the Cloud Reader part; `proofread.py` removes the repeat. Every Mac page goes through OCR.
 
 The app running `osascript` needs Screen Recording and Accessibility permission (System Settings → Privacy & Security), and must be restarted after granting them. Without Screen Recording the captures show only the desktop; without Accessibility the page turns fail. The script brings Kindle back to the front before every capture and page turn, so switching apps while it runs does not put another window into the captures.
+
+## Proofreading
+
+A book assembled from several readers carries errors typical of each, and of the switch between them. `proofread.py` finds every instance of each kind and fixes them all at once, after a look at a few samples:
+
+```bash
+venv/bin/python proofread.py ~/Downloads/"<book title>"                  # counts and proofread.html
+venv/bin/python proofread.py ~/Downloads/"<book title>" --apply all      # fix, then rebuild <book title>.md
+```
+
+| Kind | Error | Fix |
+| --- | --- | --- |
+| `duplicate_page` | The same page captured twice, when a page turn did not land | Blank the repeat |
+| `seam_overlap` | A page that starts by repeating the end of the one or two before it, where the Mac capture took over | Cut the repeat |
+| `foreign_page` | Another app captured over Kindle, or Kindle's end-of-book panel | Blank the page |
+| `hyphen_break` | A word split at a line end and never rejoined, like `Scul-ley` | Join it when the book spells it joined at least as often and the page image does not show the hyphen mid-line |
+| `dash_as_hyphen` | Vision reading an em dash as a hyphen, like `together-and` | Restore the em dash when a function word follows and the pair occurs once |
+| `homoglyph` | Cyrillic look-alike letters from Vision inside English, like `Не` | Map them to Latin |
+| `odd_case` | A casing that appears once while the book spells the word another way, like `iMAC` | Use the book's spelling |
+| `stray_symbol` | Kindle's page-turn chevron read as a `>` or `›` on its own | Remove it |
+| `cross_read` | With `--cross-read`, four or more words where a page from Gemini or the text layer and a second Vision reading of its image disagree | Report only |
+
+`proofread.html` shows up to six samples of each kind, spread evenly through the book, each with the line cut out of its page image. It also counts the hits on text-layer pages. That text is exact, so those hits are false positives and show how far a kind can be trusted. Apply only the kinds whose samples check out, e.g. `--apply seam_overlap,dash_as_hyphen`. Fixes rewrite the page `.txt` files, so a second run finds nothing more of the applied kinds. `img2txt.py` records in `ocr_sources.tsv` which reader produced each page.
+
+`--cross-read` runs Vision once more on every page that did not come from Vision and caches the result as `page_NNNN.vision.txt`, which takes about a second a page. On the Steve Jobs biography it found no invented or dropped text in the 263 Gemini pages. Every disagreement it found was a photo caption that one reader skipped.
 
 ## Tests
 
