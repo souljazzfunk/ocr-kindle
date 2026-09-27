@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import sys
+import threading
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -26,9 +27,11 @@ CONFIG_PATH = Path(os.environ.get('KINDLE_OCR_CONFIG', Path(__file__).with_name(
 DEFAULT_MODELS = 'gemini-3.8-flash,gemini-3.5-flash-lite,vision'
 VISION = 'vision'
 VISION_INDENT = 0.015
+LINE_END_HYPHEN = re.compile(r'([A-Za-z]+)-$')
+SPELL_LOCK = threading.Lock()
 WORKERS = 4
 PAGE_NUMBER = re.compile(r'_(\d+)\.png$')
-SENTENCE_END = tuple('。．.!?！？」』）)')
+SENTENCE_END = tuple('。．.!?！？」』）)”')
 MIN_BODY_CHARS = 100
 
 OCR_PROMPT = """Transcribe the book text on this Kindle page image exactly as printed.
@@ -108,12 +111,30 @@ def vision_markdown(lines):
     for left, top, text in lines:
         if previous_top is None or left - margin > VISION_INDENT or top - previous_top > 1.5 * pitch:
             paragraphs.append(text)
-        elif paragraphs[-1].endswith('-') and text[:1].islower():
-            paragraphs[-1] = paragraphs[-1][:-1] + text
         else:
-            paragraphs[-1] += (' ' if paragraphs[-1][-1].isascii() else '') + text
+            paragraphs[-1] = join_lines(paragraphs[-1], text)
         previous_top = top
     return '\n\n'.join(paragraphs)
+
+
+def join_lines(left, right):
+    """Join text broken at a line or page end, undoing a hyphenation unless it splits a compound (twenty-eight)."""
+    head = LINE_END_HYPHEN.search(left)
+    tail = re.match(r'[a-z]+', right)
+    if head and tail and is_word(head.group(1) + tail.group()):
+        return left[:-1] + right
+    if head:
+        return left + right
+    return left + ('' if not left[-1].isascii() and not right[0].isascii() else ' ') + right
+
+
+def is_word(word):
+    from AppKit import NSSpellChecker
+    from Foundation import NSNotFound
+    with SPELL_LOCK:  # NSSpellChecker is not thread-safe
+        found, _ = NSSpellChecker.sharedSpellChecker().checkSpellingOfString_startingAt_language_wrap_inSpellDocumentWithTag_wordCount_(
+            word, 0, 'en', False, 0, None)
+    return found.location == NSNotFound
 
 
 def transcribe(client, model, image):
@@ -138,10 +159,10 @@ def join_pages(texts):
         if not text.strip():
             continue
         # Title pages and colophons are short and end without punctuation, but never continue.
-        continues = (previous_len >= MIN_BODY_CHARS and not book.rstrip().endswith(SENTENCE_END)
-                     and not text.startswith(('　', '#', '[')))
+        continues = (previous_len >= MIN_BODY_CHARS and not text.startswith(('　', '#', '['))
+                     and (not book.rstrip().endswith(SENTENCE_END) or text[:1].islower()))
         if continues:
-            book = book.rstrip() + (' ' if book.rstrip()[-1].isascii() else '') + text.lstrip()
+            book = join_lines(book.rstrip(), text.lstrip())
         else:
             book = (book.rstrip() + '\n\n' if book else '') + text
         previous_len = len(text)
