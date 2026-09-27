@@ -34,7 +34,7 @@ If any page fails (quota, network), the script exits with an error and keeps the
 
 ## Audiobook
 
-`md2audio.py` reads the Markdown aloud with the macOS `say` voice Kyoko and writes one `.m4a` with a chapter marker per chapter. It needs `ffmpeg` (`brew install ffmpeg`) and nothing from `venv`.
+`md2audio.py` reads the Markdown aloud with the macOS `say` voice Kyoko (Enhanced) at 220 words per minute and writes one `.m4a` with a chapter marker per chapter. It needs `ffmpeg` (`brew install ffmpeg`) and nothing from `venv`. Download the voice once in System Settings → Accessibility → Spoken Content → System Voice → Manage Voices, or pass `--voice Kyoko` for the built-in one.
 
 ```bash
 python3 md2audio.py ~/Downloads/<book title>/<book title>.md
