@@ -11,11 +11,13 @@ Usage:
     python3 md2audio.py book.md --max-chapters 2           # quick test
     python3 md2audio.py book.md --out ~/Music/Kindle_audio # custom output root
     python3 md2audio.py book.md --voice Kyoko --rate 0      # another voice at its own speed
+    python3 md2audio.py book.md --split                    # one file per chapter
 
 The voice and speed follow the book's language: Kyoko (Enhanced) at 220 wpm for Japanese, Zoe (Premium) at
 170 wpm for English.
 
-Output: <out>/<book title>/<book title>.m4a  (+ chapters/NN.m4a kept for resume)
+Output: <out>/<book title>/<book title>.m4a  (+ chapters/NNN.m4a kept for resume)
+        with --split, <out>/<book title>/NN_<chapter title>.m4a instead of the single file
 Default <out> is the sibling folder "Kindle_audio" next to GOOGLE_DRIVE_FOLDER
 from config.env, so the audiobook syncs to Google Drive and plays on iPhone.
 """
@@ -82,6 +84,7 @@ def split_chapters(md, min_chars=80, lang="ja"):
     """Split on the shallowest heading level used more than once; return [(chapter_title, text), ...].
 
     A single top-level heading is the book title, so it never counts as a chapter level.
+    Headings with nothing between them (CHAPTER ONE / CHILDHOOD) form one chapter title.
     Sections shorter than min_chars are carried into the next one rather than dropped.
     """
     levels = [len(m.group(1)) for m in re.finditer(r"^(#{1,6})\s", md, flags=re.M)]
@@ -91,20 +94,24 @@ def split_chapters(md, min_chars=80, lang="ja"):
     sections = [(None, [])]
     for line in md.splitlines():
         m = heading.match(line) if heading else None
-        if m:
-            sections.append((m.group(1).strip(), []))
+        if m and sections[-1][0] and not "".join(sections[-1][1]).strip():
+            sections[-1][0].append(m.group(1).strip())
+        elif m:
+            sections.append(([m.group(1).strip()], []))
         else:
             sections[-1][1].append(line)
 
     out, carry = [], ""
-    for ct, body in sections:
+    for heads, body in sections:
         body = clean_text("\n".join(body))
-        if ct is None:
+        if heads is None:
             if not body:
                 continue
             ct, spoken = LANGUAGES[lang]["opening"], body
         else:
-            spoken = f"{ct}{LANGUAGES[lang]['stop']}\n\n{body}".rstrip()
+            ct = " ".join(heads)
+            spoken = "".join(f"{h}{LANGUAGES[lang]['stop']}\n\n" for h in heads) + body
+            spoken = spoken.rstrip()
         text = carry + spoken
         if len(text) < min_chars:
             carry = text + "\n\n"
@@ -141,6 +148,23 @@ def synthesize_chapter(text, out_m4a, voice, rate):
         cmd += ["-r", str(rate)]
     run(cmd)
     tmp.rename(out_m4a)
+
+
+def safe_name(s, limit):
+    return re.sub(r'[/\\:*?"<>|]', "_", s)[:limit].strip()
+
+
+def chapter_filename(i, count, title):
+    """NN_<title>.m4a, zero-padded to the chapter count so files sort in reading order."""
+    return f"{i:0{max(2, len(str(count)))}d}_{safe_name(title, 80)}.m4a"
+
+
+def tag_copy(src, dst, title, album, track):
+    tmp = dst.with_suffix(".part.m4a")
+    run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-map_metadata", "-1", "-c", "copy",
+         "-metadata", f"title={title}", "-metadata", f"album={album}", "-metadata", f"track={track}",
+         "-metadata", "artist=Kindle (OCR)", "-metadata", "genre=Audiobook", str(tmp)])
+    tmp.rename(dst)
 
 
 def ffmeta_escape(s):
@@ -184,6 +208,7 @@ def main():
     ap.add_argument("--rate", type=int, help="Speech rate in wpm (default: 220 for Japanese, 170 for English; 0 = voice default)")
     ap.add_argument("--max-chapters", type=int, default=0, help="Only synthesize the first N chapters (test runs)")
     ap.add_argument("--min-chars", type=int, default=80, help="Merge chapters shorter than this into the next one")
+    ap.add_argument("--split", action="store_true", help="Write one file per chapter instead of one file for the book")
     ap.add_argument("--force", action="store_true", help="Re-synthesize chapters that already exist")
     args = ap.parse_args()
 
@@ -208,7 +233,7 @@ def main():
     else:
         drive = load_config().get("GOOGLE_DRIVE_FOLDER")
         root = (Path(drive).expanduser().parent / "Kindle_audio") if drive else (HERE / "audio")
-    safe_title = re.sub(r'[/\\:*?"<>|]', "_", book_title)[:120]
+    safe_title = safe_name(book_title, 120)
     book_dir = root / safe_title
     ch_dir = book_dir / "chapters"
     ch_dir.mkdir(parents=True, exist_ok=True)
@@ -228,6 +253,12 @@ def main():
             synthesize_chapter(text, out_m4a, voice, rate)
         files.append(out_m4a)
         titles.append(ct)
+
+    if args.split:
+        for i, (p, ct) in enumerate(zip(files, titles), 1):
+            tag_copy(p, book_dir / chapter_filename(i, len(files), ct), ct, book_title, f"{i}/{len(files)}")
+        print(f"done: {book_dir}  ({len(files)} chapter files)")
+        return
 
     final = book_dir / f"{safe_title}.m4a"
     total = concat_with_chapters(files, titles, book_title, final)
