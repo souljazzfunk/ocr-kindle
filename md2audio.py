@@ -17,7 +17,7 @@ Usage:
 The voice and speed follow the book's language: Kyoko (Enhanced) at 220 wpm for Japanese, Zoe (Premium) at
 170 wpm for English.
 
-Output: <out>/<book title>/<book title>.m4a  (+ chapters/NNN.m4a kept for resume)
+Output: <out>/<book title>/<book title>.m4a  (chapters are cached in cache/<book title>/NNN.m4a for resume)
         with --split, <out>/<book title>/NN_<chapter title>.m4a instead of the single file
 Default <out> is the sibling folder "Kindle_audio" next to GOOGLE_DRIVE_FOLDER
 from config.env, so the audiobook syncs to Google Drive and plays on iPhone.
@@ -253,7 +253,8 @@ def main():
         root = (Path(drive).expanduser().parent / "Kindle_audio") if drive else (HERE / "audio")
     safe_title = safe_name(book_title, 120)
     book_dir = root / safe_title
-    ch_dir = book_dir / "chapters"
+    book_dir.mkdir(parents=True, exist_ok=True)
+    ch_dir = HERE / "cache" / safe_title
     ch_dir.mkdir(parents=True, exist_ok=True)
 
     total_chars = sum(len(t) for _, _, t in chapters)
