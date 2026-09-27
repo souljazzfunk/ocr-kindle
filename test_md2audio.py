@@ -1,4 +1,4 @@
-from md2audio import clean_text, language_of, split_chapters
+from md2audio import chapter_filename, clean_text, language_of, split_chapters
 
 
 def test_splits_on_repeated_level_under_a_single_title():
@@ -39,3 +39,17 @@ def test_english_book_gets_english_pauses_and_opening():
 
 def test_japanese_book_is_detected_despite_latin_words():
     assert language_of("# 第1章\n\nAppleのiPhoneは2007年に発表された。") == "ja"
+
+
+def test_stacked_headings_form_one_chapter_title():
+    md = "# CHAPTER ONE\n\n# CHILDHOOD\n\n# Abandoned and Chosen\n\n## School\n\nHe was bored.\n\n# CHAPTER TWO\n\nWoz.\n"
+    assert split_chapters(md, min_chars=0, lang="en") == [
+        ("CHAPTER ONE CHILDHOOD Abandoned and Chosen",
+         "CHAPTER ONE.\n\nCHILDHOOD.\n\nAbandoned and Chosen.\n\nSchool\n\nHe was bored."),
+        ("CHAPTER TWO", "CHAPTER TWO.\n\nWoz."),
+    ]
+
+
+def test_chapter_filenames_sort_in_reading_order():
+    assert chapter_filename(1, 49, "INTRODUCTION How/Why") == "01_INTRODUCTION How_Why.m4a"
+    assert chapter_filename(7, 120, "第7章") == "007_第7章.m4a"
