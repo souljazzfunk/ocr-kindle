@@ -23,5 +23,5 @@ def test_book_without_headings_is_one_chapter():
 
 
 def test_clean_text_drops_figure_notes_and_quote_marks():
-    md = "He smiled.\n\n[図: Jobs in 1982]\n\n> I called up Bill.\n\nThe end."
+    md = "He smiled.\n\n![Jobs in 1982]()\n\n> I called up Bill.\n\nThe end."
     assert clean_text(md) == "He smiled.\n\nI called up Bill.\n\nThe end."

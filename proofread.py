@@ -78,7 +78,7 @@ class Book:
 
 def words(text):
     """Words compared across readers: quotes unified, Markdown marks and Gemini's figure notes dropped."""
-    text = re.sub(r'\[図:[^\]]*\]', '', text.replace('’', "'").replace('“', '"').replace('”', '"'))
+    text = re.sub(r'!\[[^\]]*\]\([^)]*\)', '', text.replace('’', "'").replace('“', '"').replace('”', '"'))
     return re.sub(r'[#*_]', '', text).split()
 
 
