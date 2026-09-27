@@ -89,3 +89,8 @@ def test_accepts_extension_zip_and_names_output_after_it(tmp_path):
     result = run(archive)
     assert result.returncode == 0, result.stdout + result.stderr
     assert (tmp_path / '英語教育幻想' / '英語教育幻想.md').read_text() == '## はじめに\n\n　本文。\n'
+
+
+def test_join_pages_keeps_figure_notes_apart():
+    body = 'It was the best of times, it was the worst of times, it was the age of wisdom, it was the age of wisdom, it was the age of'
+    assert join_pages([body, '![Jobs in 1982]()', 'foolishness.']) == body + '\n\n![Jobs in 1982]()\n\nfoolishness.\n'

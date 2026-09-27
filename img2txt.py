@@ -44,7 +44,7 @@ OCR_PROMPT = """Transcribe the book text on this Kindle page image exactly as pr
 - Skip running headers, page numbers, reading progress ("位置", "%", "minutes left") and app UI.
 - Output Markdown: `#`/`##` for chapter and section titles, a blank line between paragraphs.
 - Keep a leading full-width space (　) where a paragraph starts with an indent.
-- Drop furigana (ruby). For a figure or photo without text write `[図: short description]`.
+- Drop furigana (ruby). For a figure or photo without text write `![short description in the book's language]()`.
 - If the page has no text, output nothing."""
 
 
@@ -191,7 +191,7 @@ def join_pages(texts):
         if not text.strip():
             continue
         # Title pages and colophons are short and end without punctuation, but never continue.
-        continues = (previous_len >= MIN_BODY_CHARS and not text.startswith(('　', '#', '['))
+        continues = (previous_len >= MIN_BODY_CHARS and not text.startswith(('　', '#', '[', '!['))
                      and (not book.rstrip().endswith(SENTENCE_END) or text[:1].islower()))
         if continues:
             book = join_lines(book.rstrip(), text.lstrip())
