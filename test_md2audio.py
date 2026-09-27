@@ -1,4 +1,4 @@
-from md2audio import split_chapters
+from md2audio import clean_text, split_chapters
 
 
 def test_splits_on_repeated_level_under_a_single_title():
@@ -20,3 +20,8 @@ def test_short_sections_are_merged_forward_not_dropped():
 
 def test_book_without_headings_is_one_chapter():
     assert split_chapters("ただの本文。\n", min_chars=0) == [("冒頭", "ただの本文。")]
+
+
+def test_clean_text_drops_figure_notes_and_quote_marks():
+    md = "He smiled.\n\n[図: Jobs in 1982]\n\n> I called up Bill.\n\nThe end."
+    assert clean_text(md) == "He smiled.\n\nI called up Bill.\n\nThe end."

@@ -49,6 +49,8 @@ def clean_text(md):
     t = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", t)            # images
     t = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", t)       # links → text
     t = re.sub(r"<[^>]+>", "", t)                          # html tags
+    t = re.sub(r"\[図:[^\]]*\]", "", t)                    # figure notes written by OCR
+    t = re.sub(r"^[ \t]{0,3}>[ \t]?", "", t, flags=re.M)  # blockquote marks
     t = re.sub(r"^\s{0,3}#{1,6}\s*", "", t, flags=re.M)   # heading marks
     t = re.sub(r"^\s*[-*+]\s+", "", t, flags=re.M)        # bullet marks
     t = re.sub(r"^\s*\d+\.\s+", "", t, flags=re.M)        # numbered marks

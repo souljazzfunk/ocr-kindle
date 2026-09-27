@@ -33,6 +33,9 @@ WORKERS = 4
 PAGE_NUMBER = re.compile(r'_(\d+)\.png$')
 SENTENCE_END = tuple('。．.!?！？」』）)”')
 MIN_BODY_CHARS = 100
+# Which reader produced each page's .txt, one `page<TAB>source` line per write; the last line for a page wins.
+SOURCES = 'ocr_sources.tsv'
+TEXT_LAYER = 'textlayer'
 
 OCR_PROMPT = """Transcribe the book text on this Kindle page image exactly as printed.
 
@@ -77,11 +80,12 @@ def ocr_page(client, models, image):
             continue
         # A blank page still gets a non-empty file so later runs treat it as done.
         image.with_suffix('.txt').write_text(text or ' ', encoding='utf-8')
-        return f'{len(text)} chars ({model})'
+        return model, len(text)
     raise RuntimeError(' | '.join(errors))
 
 
-def vision_transcribe(image):
+def vision_lines(image):
+    """Recognized lines as (left, top, height, text), normalized to the image with the origin at top left."""
     import Vision
     from Foundation import NSURL
     request = Vision.VNRecognizeTextRequest.alloc().init()
@@ -93,8 +97,13 @@ def vision_transcribe(image):
         raise RuntimeError(error)
     lines = []
     for result in request.results():
-        box = result.boundingBox()  # normalized, origin at bottom left
-        lines.append((box.origin.x, 1 - box.origin.y - box.size.height, result.topCandidates_(1)[0].string()))
+        box = result.boundingBox()  # origin at bottom left
+        lines.append((box.origin.x, 1 - box.origin.y - box.size.height, box.size.height, result.topCandidates_(1)[0].string()))
+    return lines
+
+
+def vision_transcribe(image):
+    lines = [(left, top, text) for left, top, _, text in vision_lines(image)]
     # Vision finds nothing in vertical Japanese, so an empty result must not mark the page done.
     if not lines:
         raise RuntimeError('no text found')
@@ -150,6 +159,29 @@ def transcribe(client, model, image):
     return (response.text or '').strip('\n ')
 
 
+def record_sources(folder, sources):
+    with open(folder / SOURCES, 'a', encoding='utf-8') as f:
+        f.writelines(f'{page}\t{source}\n' for page, source in sources)
+
+
+def read_sources(folder):
+    path = folder / SOURCES
+    if not path.exists():
+        return {}
+    return dict(line.split('\t') for line in path.read_text(encoding='utf-8').splitlines() if '\t' in line)
+
+
+def write_book(folder, title, config):
+    book = join_pages(img.with_suffix('.txt').read_text(encoding='utf-8') for img in page_images(folder))
+    output = folder / f'{title}.md'
+    output.write_text(book, encoding='utf-8')
+    print(f'Wrote {output} ({len(book)} chars)')
+    drive_folder = config.get('GOOGLE_DRIVE_FOLDER')
+    if drive_folder and Path(drive_folder).is_dir():
+        shutil.copy2(output, drive_folder)
+        print(f'Copied to {drive_folder}')
+
+
 def join_pages(texts):
     """Concatenate pages, gluing a sentence that runs over a page break back together."""
     book = ''
@@ -179,7 +211,9 @@ def main():
     config = load_config()
     if args.folder.suffix == '.zip':
         folder = args.folder.with_suffix('')
-        zipfile.ZipFile(args.folder).extractall(folder)
+        archive = zipfile.ZipFile(args.folder)
+        archive.extractall(folder)
+        record_sources(folder, [(Path(name).stem, TEXT_LAYER) for name in archive.namelist() if name.endswith('.txt')])
         args.folder = folder
 
     images = page_images(args.folder)
@@ -202,28 +236,22 @@ def main():
             try:
                 return image, ocr_page(client, models, image), None
             except Exception as e:
-                return image, 0, e
+                return image, None, e
 
         failed = []
         with ThreadPoolExecutor(WORKERS) as pool:
             for done, (image, result, error) in enumerate(pool.map(run, todo), 1):
-                status = f'error: {error}' if error else result
-                print(f'[{done}/{len(todo)}] {image.name} {status}', flush=True)
                 if error:
+                    print(f'[{done}/{len(todo)}] {image.name} error: {error}', flush=True)
                     failed.append(image)
+                    continue
+                model, chars = result
+                print(f'[{done}/{len(todo)}] {image.name} {chars} chars ({model})', flush=True)
+                record_sources(args.folder, [(image.stem, model)])
         if failed:
             sys.exit(f'{len(failed)} pages failed. Re-run the same command to retry only those pages.')
 
-    book = join_pages(img.with_suffix('.txt').read_text(encoding='utf-8') for img in images)
-    title = args.title or args.folder.resolve().name
-    output = args.folder / f'{title}.md'
-    output.write_text(book, encoding='utf-8')
-    print(f'Wrote {output} ({len(book)} chars)')
-
-    drive_folder = config.get('GOOGLE_DRIVE_FOLDER')
-    if drive_folder and Path(drive_folder).is_dir():
-        shutil.copy2(output, drive_folder)
-        print(f'Copied to {drive_folder}')
+    write_book(args.folder, args.title or args.folder.resolve().name, config)
 
 
 if __name__ == '__main__':
