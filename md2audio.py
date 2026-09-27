@@ -12,7 +12,8 @@ Usage:
     python3 md2audio.py book.md --out ~/Music/Kindle_audio # custom output root
     python3 md2audio.py book.md --voice Kyoko --rate 0      # another voice at its own speed
 
-The voice follows the book's language: Kyoko (Enhanced) for Japanese, Ava (Premium) for English.
+The voice and speed follow the book's language: Kyoko (Enhanced) at 220 wpm for Japanese, Ava (Premium) at
+150 wpm for English.
 
 Output: <out>/<book title>/<book title>.m4a  (+ chapters/NN.m4a kept for resume)
 Default <out> is the sibling folder "Kindle_audio" next to GOOGLE_DRIVE_FOLDER
@@ -28,11 +29,11 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
-# voice: default `say` voice; stop: spoken after a chapter title so it ends with a pause; opening: title of the
-# text before the first chapter.
+# voice: default `say` voice; rate: default words per minute; stop: spoken after a chapter title so it ends
+# with a pause; opening: title of the text before the first chapter.
 LANGUAGES = {
-    "ja": {"voice": "Kyoko (Enhanced)", "stop": "。", "opening": "冒頭"},
-    "en": {"voice": "Ava (Premium)", "stop": ".", "opening": "Opening"},
+    "ja": {"voice": "Kyoko (Enhanced)", "rate": 220, "stop": "。", "opening": "冒頭"},
+    "en": {"voice": "Ava (Premium)", "rate": 150, "stop": ".", "opening": "Opening"},
 }
 
 
@@ -180,7 +181,7 @@ def main():
     ap.add_argument("--out", help="Output root folder (default: <GOOGLE_DRIVE_FOLDER>/../Kindle_audio)")
     ap.add_argument("--voice", help="macOS voice (default: Kyoko (Enhanced) for Japanese, Ava (Premium) for English; "
                                     "download it in System Settings > Accessibility > Spoken Content)")
-    ap.add_argument("--rate", type=int, default=220, help="Speech rate in wpm (default: 220; 0 = voice default)")
+    ap.add_argument("--rate", type=int, help="Speech rate in wpm (default: 220 for Japanese, 150 for English; 0 = voice default)")
     ap.add_argument("--max-chapters", type=int, default=0, help="Only synthesize the first N chapters (test runs)")
     ap.add_argument("--min-chars", type=int, default=80, help="Merge chapters shorter than this into the next one")
     ap.add_argument("--force", action="store_true", help="Re-synthesize chapters that already exist")
@@ -195,6 +196,7 @@ def main():
     book_title = md_path.stem
     lang = language_of(md)
     voice = args.voice or LANGUAGES[lang]["voice"]
+    rate = LANGUAGES[lang]["rate"] if args.rate is None else args.rate
     chapters = split_chapters(md, min_chars=args.min_chars, lang=lang)
     if not chapters:
         sys.exit("error: no text found")
@@ -213,7 +215,7 @@ def main():
 
     total_chars = sum(len(t) for _, t in chapters)
     print(f"book: {book_title}")
-    print(f"chapters: {len(chapters)}  chars: {total_chars:,}  language: {lang}  voice: {voice}")
+    print(f"chapters: {len(chapters)}  chars: {total_chars:,}  language: {lang}  voice: {voice}  rate: {rate}")
     print(f"out: {book_dir}")
 
     files, titles = [], []
@@ -223,7 +225,7 @@ def main():
             print(f"  [{i:03d}/{len(chapters)}] skip (exists) {ct}")
         else:
             print(f"  [{i:03d}/{len(chapters)}] {ct} ({len(text):,} chars)", flush=True)
-            synthesize_chapter(text, out_m4a, voice, args.rate)
+            synthesize_chapter(text, out_m4a, voice, rate)
         files.append(out_m4a)
         titles.append(ct)
 
