@@ -1,4 +1,6 @@
-from md2audio import chapter_filename, clean_text, language_of, split_chapters
+import pytest
+
+from md2audio import chapter_filename, clean_text, language_of, parse_chapters, split_chapters
 
 
 def test_splits_on_repeated_level_under_a_single_title():
@@ -53,3 +55,14 @@ def test_stacked_headings_form_one_chapter_title():
 def test_chapter_filenames_sort_in_reading_order():
     assert chapter_filename(1, 49, "INTRODUCTION How/Why") == "01_INTRODUCTION How_Why.m4a"
     assert chapter_filename(7, 120, "第7章") == "007_第7章.m4a"
+
+
+def test_chapter_selection_keeps_book_numbers():
+    assert parse_chapters("7-9", 49) == [7, 8, 9]
+    assert parse_chapters("12, 3,2-3", 49) == [2, 3, 12]
+    assert parse_chapters("47-", 49) == [47, 48, 49]
+
+
+def test_chapter_selection_outside_the_book_is_rejected():
+    with pytest.raises(ValueError, match="outside 1-49"):
+        parse_chapters("48-50", 49)
