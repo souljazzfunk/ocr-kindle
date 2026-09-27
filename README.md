@@ -34,7 +34,7 @@ If any page fails (quota, network), the script exits with an error and keeps the
 
 ## Kindle for Mac fallback
 
-Some books do not open in Cloud Reader. For those, `kindle2img.applescript` drives the Kindle for Mac app with arrow keys and `screencapture`. Edit `MAX_PAGES`, `PAGE_DIRECTION` and the margins at the top of the script, then run `osascript kindle2img.applescript`. The terminal running it needs Screen Recording permission (System Settings → Privacy & Security), otherwise the captures show only the desktop. It writes `~/Downloads/Kindle_Screenshots_<timestamp>/screenshot_001.png`, which `img2txt.py` accepts as is. Every page goes through OCR on this path, and the script does not detect the end of the book.
+Some books do not open in Cloud Reader. For those, `kindle2img.applescript` drives the Kindle for Mac app with arrow keys and `screencapture`. Edit `MAX_PAGES`, `PAGE_DIRECTION` and the margins at the top of the script, then run `osascript kindle2img.applescript`. The app running `osascript` needs Screen Recording and Accessibility permission (System Settings → Privacy & Security), and must be restarted after granting them. Without Screen Recording the captures show only the desktop; without Accessibility the page turns fail. It writes `~/Downloads/Kindle_Screenshots_<timestamp>/screenshot_001.png`, which `img2txt.py` accepts as is. Every page goes through OCR on this path, and the script does not detect the end of the book.
 
 ## Tests
 
