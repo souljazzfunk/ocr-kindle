@@ -107,7 +107,7 @@ def join_pages(texts):
 
 def main():
     parser = argparse.ArgumentParser(description='OCR captured Kindle pages and assemble one Markdown file')
-    parser.add_argument('folder', type=Path, help='<book>.zip from the extension, or a folder of screenshot_001.png from AppleScript')
+    parser.add_argument('folder', type=Path, help='<book>.zip from the extension, or a folder of captured page images')
     parser.add_argument('--title', help='Output file name without extension (default: folder name)')
     parser.add_argument('--model', help=f'Comma-separated Gemini models tried in order (default: GEMINI_MODEL in config.env or {DEFAULT_MODELS})')
     parser.add_argument('--force', action='store_true', help='Re-OCR pages that already have text')
