@@ -1,4 +1,4 @@
-from md2audio import clean_text, split_chapters
+from md2audio import clean_text, language_of, split_chapters
 
 
 def test_splits_on_repeated_level_under_a_single_title():
@@ -25,3 +25,17 @@ def test_book_without_headings_is_one_chapter():
 def test_clean_text_drops_figure_notes_and_quote_marks():
     md = "He smiled.\n\n![Jobs in 1982]()\n\n> I called up Bill.\n\nThe end."
     assert clean_text(md) == "He smiled.\n\nI called up Bill.\n\nThe end."
+
+
+def test_english_book_gets_english_pauses_and_opening():
+    md = "Praise for the book.\n\n# CHAPTER ONE\n\nWhen Paul Jobs was mustered out.\n\n# CHAPTER TWO\n\nWoz.\n"
+    assert language_of(md) == "en"
+    assert split_chapters(md, min_chars=0, lang="en") == [
+        ("Opening", "Praise for the book."),
+        ("CHAPTER ONE", "CHAPTER ONE.\n\nWhen Paul Jobs was mustered out."),
+        ("CHAPTER TWO", "CHAPTER TWO.\n\nWoz."),
+    ]
+
+
+def test_japanese_book_is_detected_despite_latin_words():
+    assert language_of("# 第1章\n\nAppleのiPhoneは2007年に発表された。") == "ja"
