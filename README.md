@@ -29,7 +29,7 @@ Load the extension once. Open `chrome://extensions` (or `brave://extensions`), t
 venv/bin/python img2txt.py ~/Downloads/<book title>.zip
 ```
 
-The script extracts the ZIP into `~/Downloads/<book title>/`, prints how many pages already have text and how many it will OCR, runs 4 OCR requests in parallel, and writes `<book title>.md` into that folder. OCR tries the models in `GEMINI_MODEL` in order (default `gemini-3.8-flash`, then `gemini-3.5-flash-lite` once the free tier's 20 daily requests run out). If `GOOGLE_DRIVE_FOLDER` is set, the file is also copied there.
+The script extracts the ZIP into `~/Downloads/<book title>/`, prints how many pages already have text and how many it will OCR, runs 4 OCR requests in parallel, and writes `<book title>.md` into that folder. OCR tries the models in `GEMINI_MODEL` in order (default `gemini-3.8-flash`, then `gemini-3.5-flash-lite` once the free tier's 20 daily requests run out, then `vision`). `vision` is the macOS Vision framework, running locally with no quota. It catches the pages Gemini refuses with `RECITATION`, which happens on many pages of well-known books, but it outputs plain paragraphs without `#` heading marks. It reads horizontal text only, so vertical Japanese needs Gemini. If `GOOGLE_DRIVE_FOLDER` is set, the file is also copied there.
 
 If any page fails (quota, network), the script exits with an error and keeps the pages that succeeded. Run the same command again on the folder to retry only the missing pages. `--force` re-OCRs everything, `--model` picks another Gemini model, and `--title` sets the output name.
 
