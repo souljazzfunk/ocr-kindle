@@ -18,6 +18,8 @@ from img2txt import SOURCES, TEXT_LAYER, VISION, page_images, read_sources
 from proofread import Book, find_all, load_pages
 
 PROBE = 'dom-probe.json'
+POSITIONS = 'positions.json'
+POSITION = re.compile(r'(?:位置|ページ|Location|Page)\D{0,3}(\d+)\s*(?:/|of)\s*(\d+)')
 DEFAULT_TITLES = re.compile(r'^(kindle-book|[A-Z0-9]{10})$')
 DECORATIVE_HEADING = re.compile(r'(?m)^#+\s*(?:Chapter\s+|Part\s+)?[Z&]+\s*$', re.I)
 # Proofread kinds whose fix is safe without a look at samples; the others are reported for a human.
@@ -38,6 +40,37 @@ def markdown_file(folder, title=None):
     return folder / f'{title or folder.resolve().name}.md'
 
 
+def page_positions(folder):
+    """(screen index from 0, N, M) for each captured page whose reader footer showed "Page N of M".
+
+    positions.json (extension 1.3) has every page; older ZIPs have at most the dom-probe pages, which give the start.
+    Returns (positions, whether they cover every page).
+    """
+    path = folder / POSITIONS
+    if path.exists():
+        found = []
+        for name, text in json.loads(path.read_text(encoding='utf-8')).items():
+            m = re.search(r'(\d+)/(\d+)', text or '')
+            if m:
+                found.append((int(re.search(r'(\d+)$', name).group(1)) - 1, int(m.group(1)), int(m.group(2))))
+        return sorted(found), True
+    path = folder / PROBE
+    if not path.exists():
+        return [], False
+    probe = json.loads(path.read_text(encoding='utf-8'))
+    found = []
+    for entry in probe if isinstance(probe, list) else [probe]:
+        m = POSITION.search(json.dumps(entry, ensure_ascii=False))
+        if m and isinstance(entry, dict):
+            found.append((entry.get('page', 1) - 1, int(m.group(1)), int(m.group(2))))
+    return sorted(found), False
+
+
+def end_tolerance(total):
+    """Pages at the end the reader may not number (end matter), or the last turn may skip."""
+    return max(2, round(total * 0.02))
+
+
 def check_folder(folder, title=None):
     folder = Path(folder)
     images = page_images(folder)
@@ -51,6 +84,21 @@ def check_folder(folder, title=None):
     missing = [p.name for p in images if not p.with_suffix('.txt').exists()]
     checks.append(Check('text', not missing, f'{len(missing)} pages without text',
                         fix=['img2txt.py', str(folder)] if missing else None))
+
+    positions, complete = page_positions(folder)
+    first = positions[0] if positions else None
+    # A screen shows one page number or less, so page N cannot be reached in fewer than N - 1 screens.
+    late = first and first[1] - 1 > first[0]
+    checks.append(Check('start_position', not late,
+                        f'first numbered screen {first[0] + 1} shows page {first[1]} of {first[2]}' if first else 'start not recorded',
+                        fix=None))
+    last = positions[-1] if complete and positions else None
+    short = last and last[1] < last[2] - end_tolerance(last[2])
+    checks.append(Check('end_position', not short,
+                        f'last page {last[1]} of {last[2]}' if last else 'end not recorded', fix=None))
+    checks.append(Check('positions', complete, f'{POSITIONS} ' + ('present' if complete else
+                        'missing: a ZIP from extension 1.2 or older, so start and end were not fully checked'),
+                        blocking=False, fix=None))
 
     md = markdown_file(folder, title)
     checks.append(Check('title', bool(title) or not DEFAULT_TITLES.match(md.stem), f'output name "{md.stem}"', blocking=False,

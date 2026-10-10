@@ -19,7 +19,7 @@ from pathlib import Path
 import capture_book
 
 # A failure in these checks means the ZIP itself is unusable, so the book is captured again (once).
-CAPTURE_CHECKS = {'pages', 'text'}
+CAPTURE_CHECKS = {'pages', 'text', 'start_position', 'end_position'}
 RECAPTURES = 1
 
 
@@ -41,15 +41,18 @@ def decide(data, attempt):
     failures = data['blocking_failures']
     if not failures:
         return 'done'
-    if set(failures) <= CAPTURE_CHECKS and attempt <= RECAPTURES:
+    # A tab left open is recorded but is no reason to capture again.
+    capture = set(failures) - {'tab_closed'}
+    if capture and capture <= CAPTURE_CHECKS and attempt <= RECAPTURES:
         return 'recapture'
     return 'failed'
 
 
-def run_book(asin, title, options, convert=None):
+def run_book(asin, title, options, convert=None, again=False):
+    """again: an earlier run's capture was unusable, so the extension (which saved the ASIN) must capture it anew."""
     convert = convert or capture_book.convert
     for attempt in range(1, RECAPTURES + 2):
-        data = convert(asin, title, recapture=attempt > 1, **options)
+        data = convert(asin, title, recapture=again or attempt > 1, **options)
         verdict = decide(data, attempt)
         if verdict != 'recapture':
             return verdict, data
@@ -72,7 +75,8 @@ def main():
             continue
         print(f'=== {title or asin} ({asin})', flush=True)
         try:
-            verdict, data = run_book(asin, title, options)
+            again = bool(CAPTURE_CHECKS & set(progress.get(asin, {}).get('failures', [])))
+            verdict, data = run_book(asin, title, options, again=again)
         except Exception as e:  # a crash in one book must not stop the list, and must be in the summary
             verdict, data = 'failed', {'error': str(e), 'blocking_failures': ['crash'], 'warnings': []}
         progress[asin] = {'title': title, 'verdict': verdict, 'failures': data['blocking_failures'],

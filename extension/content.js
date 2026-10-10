@@ -1,6 +1,7 @@
 const PAGE_WAIT_MS = 3000;
 const NEXT_ATTEMPTS = 3;
 const FIRST_PAGE_WAIT_MS = 60000;
+const FALLBACK_SAVE_MS = 60000;
 // Heading-only pages keep part of their text in the image (e.g. layer "1" for a page reading "幻想1 アメリカ…"),
 // so short layers are left for img2txt.py to OCR.
 const MIN_TEXT_CHARS = 40;
@@ -13,12 +14,13 @@ function pageImage() {
 }
 
 function position() {
-  const m = document.body.innerText.match(/(?:位置|ページ|Location|Page)\D{0,3}(\d+)\s*(?:\/|of)\s*(\d+)/);
-  return m ? `${m[1]}/${m[2]}` : '';
+  const pos = parsePosition(document.body.innerText);
+  return pos ? `${pos.n}/${pos.m}` : '';
 }
 
 function bookTitle(asin) {
-  const element = document.querySelector('.book-title, [data-testid*="book-title" i], [class*="BookTitle"]');
+  // .fixed-book-title and .top-chrome__book-title are the full-book reader's (dom-probe.json, AI for Educators).
+  const element = document.querySelector('.book-title, .fixed-book-title, .top-chrome__book-title, [data-testid*="book-title" i], [class*="BookTitle"]');
   return pickTitle([element?.textContent, document.title], asin);
 }
 
@@ -33,8 +35,8 @@ function pageMarkdown() {
 }
 
 // The chevron ignores element.click(); it reacts to the full pointer sequence.
-function pressNext() {
-  const button = document.querySelector('[aria-label="Next page"]');
+function press(label) {
+  const button = document.querySelector(`[aria-label="${label}"]`);
   for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
     const Event = type.startsWith('pointer') ? PointerEvent : MouseEvent;
     button?.dispatchEvent(new Event(type, { bubbles: true, cancelable: true, view: window }));
@@ -60,19 +62,34 @@ async function waitForPage(prevSrc) {
 }
 
 // Cloud Reader occasionally ignores a turn request, so retry before concluding the book has ended.
-async function turnPage(prevSrc) {
+async function turnPage(prevSrc, label = 'Next page') {
   for (let i = 0; i < NEXT_ATTEMPTS; i++) {
-    pressNext();
+    press(label);
     const img = await waitForPage(prevSrc);
     if (img) return img;
   }
   return null;
 }
 
+// The reader reopens a book where it was last read (AI for Educators opened at page 75 of 120), so an automatic
+// capture pages back to the start first. Returns whether it got there.
+async function goToStart(isRunning) {
+  let img = pageImage();
+  const limit = (parsePosition(document.body.innerText)?.m || 2000) + 50;
+  for (let i = 0; img && i < limit && isRunning(); i++) {
+    if (parsePosition(document.body.innerText)?.n === 1) return true;
+    const back = await turnPage(img.src, 'Previous page');
+    if (!back) break;
+    img = back;
+  }
+  return atStart(parsePosition(document.body.innerText), false);
+}
+
 async function captureBook(save, isRunning) {
   let img = await waitForPage(null);
   let previous = '';
   let count = 0;
+  const positions = {};
   while (img && isRunning()) {
     const data = await toPng(img);
     if (data !== previous) {
@@ -84,13 +101,16 @@ async function captureBook(save, isRunning) {
         save('dom-probe.json', new TextEncoder().encode(JSON.stringify(probe, null, 1)), position());
       }
       const name = `page_${String(count).padStart(4, '0')}`;
-      save(`${name}.png`, Uint8Array.from(atob(data.split(',')[1]), (c) => c.charCodeAt(0)), position());
+      positions[name] = position();
+      save(`${name}.png`, Uint8Array.from(atob(data.split(',')[1]), (c) => c.charCodeAt(0)), positions[name]);
       const text = pageMarkdown();
-      if (text.length >= MIN_TEXT_CHARS) save(`${name}.txt`, new TextEncoder().encode(text), position());
+      if (text.length >= MIN_TEXT_CHARS) save(`${name}.txt`, new TextEncoder().encode(text), positions[name]);
       previous = data;
     }
     img = await turnPage(img.src);
   }
+  // Page N of M for every saved page, so check_book.py can tell a capture that missed the start or the end.
+  if (count) save('positions.json', new TextEncoder().encode(JSON.stringify(positions, null, 1)), '');
   return count;
 }
 
@@ -138,12 +158,28 @@ function zip(files) {
   return new Blob([...parts, ...central, new Uint8Array(end.buffer)], { type: 'application/zip' });
 }
 
-function download(blob, filename) {
+// The worker saves the ZIP with no dialog (download.js). Should that fail, the link click still saves it,
+// so a capture is never lost.
+async function download(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  let result;
+  try {
+    result = await chrome.runtime.sendMessage({ download: { url, filename } });
+  } catch (e) {
+    result = { ok: false, reason: String(e) };
+  }
+  if (result?.ok) {
+    URL.revokeObjectURL(url);
+    return 'complete';
+  }
+  console.log(`[kindle-capture] saving through the page instead, the worker could not: ${result?.reason}`);
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
+  a.href = url;
   a.download = filename;
   a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+  await sleep(FALLBACK_SAVE_MS); // the tab must stay open while the browser reads the blob
+  URL.revokeObjectURL(url);
+  return 'fallback';
 }
 
 let running = false;
@@ -163,6 +199,16 @@ async function startCapture(asin, auto, again = false) {
   }
   // Opened from a URL, the reader may still be loading its first page.
   for (let t = 0; auto && !pageImage() && t < FIRST_PAGE_WAIT_MS; t += 500) await sleep(500);
+  if (auto) {
+    chrome.runtime.sendMessage({ badge: 'back' });
+    if (!await goToStart(() => running)) {
+      running = false;
+      chrome.runtime.sendMessage({ finish: { asin, pages: 0 } });
+      chrome.runtime.sendMessage({ badge: 'skip' });
+      console.log(`[kindle-capture] not starting: could not page back to page 1 (still at ${position() || 'an unknown page'})`);
+      return;
+    }
+  }
   const files = [];
   const save = (name, bytes, pos) => {
     files.push({ name, bytes });
@@ -172,10 +218,11 @@ async function startCapture(asin, auto, again = false) {
   running = false;
   const textPages = files.filter((f) => f.name.endsWith('.txt')).length;
   console.log(`[kindle-capture] title "${bookTitle(asin)}", text layer on ${textPages} of ${count} pages`);
-  if (count) download(zip(files), `${bookTitle(asin)}.zip`);
-  chrome.runtime.sendMessage({ finish: { asin, pages: count } });
-  chrome.runtime.sendMessage({ badge: 'done' });
+  const saved = count ? await download(zip(files), `${bookTitle(asin)}.zip`) : 'none';
   console.log(`[kindle-capture] saved ${count} pages`);
+  chrome.runtime.sendMessage({ badge: 'done' });
+  // Sent last: for an automatic capture the worker closes this tab on it.
+  chrome.runtime.sendMessage({ finish: { asin, pages: count, auto, download: saved } });
 }
 
 chrome.runtime.onMessage.addListener((msg) => {

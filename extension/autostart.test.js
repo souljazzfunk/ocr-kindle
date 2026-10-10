@@ -1,7 +1,7 @@
 // Run: node --test
 const test = require('node:test');
 const assert = require('node:assert');
-const { readAutoStart, claimCapture, finishCapture } = require('./autostart.js');
+const { readAutoStart, claimCapture, finishCapture, tabToClose } = require('./autostart.js');
 
 const URL_WITH_MARKER = 'https://read.amazon.com/?asin=B07HNMJV57#autocapture';
 const empty = { active: null, saved: [] };
@@ -53,4 +53,12 @@ test('closing the capturing tab frees the lock; other tabs closing do not', () =
 
 test('auto start without an ASIN is refused, since it could not be deduplicated', () => {
   assert.strictEqual(claimCapture(empty, { tabId: 1, asin: '', auto: true }).ok, false);
+});
+
+test('an automatic capture closes its own tab once the ZIP is saved; a manual one leaves it open', () => {
+  assert.strictEqual(tabToClose({ tabId: 7, auto: true, download: 'complete' }), 7);
+  assert.strictEqual(tabToClose({ tabId: 7, auto: true, download: 'fallback' }), 7);
+  assert.strictEqual(tabToClose({ tabId: 7, auto: false, download: 'complete' }), null); // clicked by a person
+  assert.strictEqual(tabToClose({ tabId: 7, auto: true, download: 'none' }), null); // nothing saved, keep the console
+  assert.strictEqual(tabToClose({ tabId: 7, auto: true, download: undefined }), null); // not final yet
 });

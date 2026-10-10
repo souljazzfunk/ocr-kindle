@@ -48,4 +48,16 @@ function probePage(doc) {
   };
 }
 
-if (typeof module !== 'undefined') module.exports = { pickTitle, probePage };
+// "Page 75 of 120" (or 位置/ページ/Location) from the reader's footer as { n, m }, or null when it shows none.
+function parsePosition(text) {
+  const m = (text || '').match(/(?:位置|ページ|Location|Page)\D{0,3}(\d+)\s*(?:\/|of)\s*(\d+)/);
+  return m ? { n: Number(m[1]), m: Number(m[2]) } : null;
+}
+
+// Whether paging back has reached the start: the reader says page 1, or, when it shows no page number,
+// the previous-page button stopped turning.
+function atStart(pos, turned) {
+  return pos ? pos.n === 1 : !turned;
+}
+
+if (typeof module !== 'undefined') module.exports = { pickTitle, probePage, parsePosition, atStart };
