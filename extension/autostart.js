@@ -34,4 +34,10 @@ function finishCapture(state, { tabId, asin, pages }) {
   return { active: null, saved };
 }
 
-if (typeof module !== 'undefined') module.exports = { readAutoStart, claimCapture, finishCapture };
+// The tab to close when a capture finishes, or null. Only an automatic capture closes, only its own tab, and only
+// once its ZIP is saved: 'complete' from the worker's download, or 'fallback' after the page's own link saved it.
+function tabToClose({ tabId, auto, download }) {
+  return auto && (download === 'complete' || download === 'fallback') ? tabId : null;
+}
+
+if (typeof module !== 'undefined') module.exports = { readAutoStart, claimCapture, finishCapture, tabToClose };

@@ -60,3 +60,27 @@ def test_main_runs_the_rest_of_the_list_and_keeps_going_after_a_failure(tmp_path
     assert progress['B2']['verdict'] == 'failed' and progress['B2']['error'] == 'no ZIP'
     assert progress['B3']['verdict'] == 'done' and progress['B3']['warnings'] == ['title']
     assert exit_info.value.code == 1 and '2 done, 1 failed' in capsys.readouterr().out
+
+
+def test_a_capture_that_missed_the_start_or_end_is_redone_and_a_tab_left_open_is_not():
+    assert capture_books.decide(result(['start_position']), 1) == 'recapture'
+    assert capture_books.decide(result(['end_position', 'tab_closed']), 1) == 'recapture'
+    assert capture_books.decide(result(['tab_closed']), 1) == 'failed'
+
+
+def test_a_book_an_earlier_run_captured_badly_is_captured_anew_from_the_start(tmp_path, monkeypatch):
+    books = tmp_path / 'books.tsv'
+    books.write_text('B1\tOne\nB2\tTwo\n')
+    (tmp_path / 'books.progress.json').write_text(json.dumps({
+        'B1': {'title': 'One', 'verdict': 'pending', 'failures': ['start_position'], 'warnings': []}}))
+    calls = []
+
+    def convert(asin, title=None, recapture=False, **options):
+        calls.append((asin, recapture))
+        return result([])
+
+    monkeypatch.setattr(capture_books.capture_book, 'convert', convert)
+    monkeypatch.setattr(sys, 'argv', ['capture_books.py', str(books)])
+    with pytest.raises(SystemExit):
+        capture_books.main()
+    assert calls == [('B1', True), ('B2', False)]

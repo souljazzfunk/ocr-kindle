@@ -33,6 +33,7 @@ def by_name(checks):
 
 def test_clean_book_passes(tmp_path):
     folder = book(tmp_path, [BODY + 'First.', BODY2 + 'Second.'], sources='textlayer', md='# One\n\n' + BODY)
+    (folder / 'positions.json').write_text(json.dumps({'page_0001': '1/2', 'page_0002': '2/2'}))
     checks = by_name(check_folder(folder))
     assert all(c.ok for c in checks.values()), {k: c.detail for k, c in checks.items() if not c.ok}
 
@@ -114,3 +115,50 @@ def test_report_lists_failures_and_warnings(tmp_path):
     data = capture_book.report(folder, check_folder(folder), {'asin': 'X'})
     assert data['blocking_failures'] == ['headings'] and 'title' in data['warnings']
     assert json.loads((folder / 'report.json').read_text())['asin'] == 'X'
+
+
+def positions(folder, pairs):
+    (folder / 'positions.json').write_text(json.dumps({f'page_{i:04d}': p for i, p in enumerate(pairs, 1)}))
+
+
+def test_a_capture_that_began_mid_book_is_caught(tmp_path):
+    # AI for Educators: the reader reopened at page 75 of 120 and the capture ran from there to the end.
+    folder = book(tmp_path, [BODY] * 4, md='# A\n\n' + BODY)
+    positions(folder, ['75/120', '75/120', '76/120', '120/120'])
+    checks = by_name(check_folder(folder))
+    assert not checks['start_position'].ok and checks['start_position'].blocking
+    assert 'page 75 of 120' in checks['start_position'].detail
+    assert checks['end_position'].ok and checks['positions'].ok
+
+
+def test_a_capture_that_stopped_early_is_caught_but_end_matter_is_allowed(tmp_path):
+    folder = book(tmp_path, [BODY] * 3, md='# A\n\n' + BODY)
+    positions(folder, ['', '1/120', '60/120'])  # an unnumbered cover, then the book
+    checks = by_name(check_folder(folder))
+    assert checks['start_position'].ok and not checks['end_position'].ok
+    positions(folder, ['', '1/120', '118/120'])  # the last two pages are end matter the reader does not number
+    assert by_name(check_folder(folder))['end_position'].ok
+
+
+def test_without_positions_the_probe_gives_the_start_and_a_warning_remains(tmp_path):
+    folder = book(tmp_path, [BODY] * 3, md='# A\n\n' + BODY)
+    # dom-probe.json as extension-dom-probe wrote it: probes on pages 1 and 3 with the footer text.
+    (folder / 'dom-probe.json').write_text(json.dumps([
+        {'page': 1, 'titleCandidates': [{'class': 'footer-label position', 'text': 'Page 75 of 120\u2002●\u200259%'}]},
+        {'page': 3, 'titleCandidates': [{'class': 'footer-label position', 'text': 'Page 76 of 120\u2002●\u200260%'}]}]))
+    checks = by_name(check_folder(folder))
+    assert not checks['start_position'].ok
+    assert not checks['positions'].ok and not checks['positions'].blocking
+    assert checks['end_position'].ok and checks['end_position'].detail == 'end not recorded'
+
+
+def test_tab_left_open_is_closed_and_reported(tmp_path):
+    counts = iter([1, 0])
+    closed = []
+    assert capture_book.ensure_tab_closed('B1', count=lambda a: next(counts), close=closed.append, sleep=lambda s: None)
+    assert closed == ['B1']
+    closed.clear()
+    assert not capture_book.ensure_tab_closed('B1', count=lambda a: 1, close=closed.append, sleep=lambda s: None)
+    assert closed == ['B1'] * capture_book.TAB_TRIES
+    # Brave could not be asked: nothing is closed blindly, and the tab is not reported closed.
+    assert not capture_book.ensure_tab_closed('B1', count=lambda a: None, close=closed.append, sleep=lambda s: None)

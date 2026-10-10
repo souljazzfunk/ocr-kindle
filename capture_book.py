@@ -22,12 +22,13 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
-from check_book import check_folder
+from check_book import Check, check_folder
 
 BRAVE = 'Brave Browser'
 ROUNDS = 3
 ZIP_WAIT_S = 3600
 SETTLE_S = 5
+TAB_TRIES = 3
 PYTHON = sys.executable
 HERE = Path(__file__).resolve().parent
 
@@ -45,6 +46,32 @@ def close_book_tab(asin):
     """Close only the tabs showing this book; the rest of Brave stays as it is."""
     script = f'tell application "{BRAVE}" to close (every tab of every window whose URL contains "asin={asin}")'
     subprocess.run(['osascript', '-e', script], capture_output=True)
+
+
+def book_tabs(asin):
+    """How many Brave tabs show this book (read only), or None when Brave could not be asked."""
+    script = f'tell application "{BRAVE}" to get URL of every tab of every window'
+    result = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
+    if result.returncode:
+        print(f'Could not list Brave tabs: {result.stderr.strip()}', flush=True)
+        return None
+    return result.stdout.count(f'asin={asin}')
+
+
+def ensure_tab_closed(asin, count=book_tabs, close=close_book_tab, tries=TAB_TRIES, sleep=time.sleep):
+    """The extension closes its own tab after the download; make sure, close what is left, and say whether it worked.
+
+    Tabs stayed open before because nothing checked: close_book_tab ignored osascript's errors, and captures
+    not started by this script had no one to close them at all.
+    """
+    for _ in range(tries):
+        left = count(asin)
+        if left == 0:
+            return True
+        if left:
+            close(asin)
+        sleep(2)
+    return count(asin) == 0
 
 
 def wait_for_zip(downloads, before, timeout=ZIP_WAIT_S, clock=time.monotonic, sleep=time.sleep):
@@ -101,19 +128,23 @@ def convert(asin, title=None, model='vision', domain='read.amazon.com', download
             source=None, recapture=False):
     """Capture (unless source is given), convert, check and fix one book. Returns the report data."""
     started = time.time()
+    tab_closed = None  # no tab when converting an existing ZIP
     if source is None:
         before = set(downloads.glob('*.zip'))
         open_in_brave(asin, domain, recapture)
         source = wait_for_zip(downloads, before)
-        close_book_tab(asin)
+        tab_closed = ensure_tab_closed(asin)
         if source is None:
             raise RuntimeError(f'No ZIP appeared in {downloads} within {ZIP_WAIT_S // 60} minutes; the book tab was closed. '
                                'The extension badge says skip when it refused to start, and the tab console says why.')
     run([PYTHON, str(HERE / 'img2txt.py'), str(source), '--model', model] + (['--title', title] if title else []))
     folder = source.with_suffix('') if source.suffix == '.zip' else source
     checks, rounds = correct(folder, title)
+    if tab_closed is not None:
+        # Blocking, but not a capture defect: the runner records it and goes on without recapturing.
+        checks.append(Check('tab_closed', tab_closed, f'book tab {"closed" if tab_closed else "still open"} after the capture'))
     return report(folder, checks, {'asin': asin, 'source': str(source), 'recapture': recapture, 'rounds': rounds,
-                                   'seconds': round(time.time() - started)})
+                                   'tab_closed': tab_closed, 'seconds': round(time.time() - started)})
 
 
 def main():
