@@ -31,4 +31,10 @@ function finishCapture(state, { tabId, asin, pages }) {
   return { active: null, saved };
 }
 
-if (typeof module !== 'undefined') module.exports = { readAutoStart, claimCapture, finishCapture };
+// Cloud Reader's own page title is just "Kindle", which names no book.
+function chooseTitle({ element, page, asin }) {
+  const pageTitle = (page || '').trim();
+  return (element || '').trim() || (pageTitle && pageTitle !== 'Kindle' ? pageTitle : '') || asin || 'kindle-book';
+}
+
+if (typeof module !== 'undefined') module.exports = { readAutoStart, claimCapture, finishCapture, chooseTitle };

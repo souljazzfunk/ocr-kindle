@@ -44,3 +44,11 @@ test('closing the capturing tab frees the lock; other tabs closing do not', () =
 test('auto start without an ASIN is refused, since it could not be deduplicated', () => {
   assert.strictEqual(claimCapture(empty, { tabId: 1, asin: '', auto: true }).ok, false);
 });
+
+test('the ZIP is named after the book, never after the reader page title "Kindle"', () => {
+  const { chooseTitle } = require('./autostart.js');
+  assert.strictEqual(chooseTitle({ element: ' Zero to Sold ', page: 'Kindle', asin: 'B08BWZS8VN' }), 'Zero to Sold');
+  assert.strictEqual(chooseTitle({ element: undefined, page: 'Kindle', asin: 'B08BWZS8VN' }), 'B08BWZS8VN');
+  assert.strictEqual(chooseTitle({ element: '', page: 'Zero to Sold', asin: 'B08BWZS8VN' }), 'Zero to Sold');
+  assert.strictEqual(chooseTitle({ element: '', page: '', asin: '' }), 'kindle-book');
+});

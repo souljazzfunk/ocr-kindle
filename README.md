@@ -23,7 +23,7 @@ Load the extension once. Open `chrome://extensions` (or `brave://extensions`), t
 1. Open the book in Cloud Reader (`read.amazon.co.jp` or `read.amazon.com`) and go to the first page you want. A larger window gives larger page images.
 2. Click the extension's toolbar icon. The badge shows the current location. Capture stops by itself at the end of the book (or of the sample), or when you click the icon again.
    To start without clicking, open the book's URL with `#autocapture` at the end, e.g. `open -a "Brave Browser" 'https://read.amazon.com/?asin=B07HNMJV57#autocapture'`. The extension removes the marker from the address bar as soon as it reads it, so a reload or a restored tab does not start again. Only one tab captures at a time, and a book whose ZIP was already saved does not start automatically again; click the icon to capture it once more. The badge shows `skip` when a start was refused, and the tab's console says why.
-3. The browser saves `<book title>.zip`, holding `page_0001.png` plus `page_0001.txt` where the text layer had text. Pages stay in memory until then, so leave the tab open.
+3. The browser saves `<book title>.zip`, holding `page_0001.png` plus `page_0001.txt` where the text layer had text, and `dom-probe.json`, a short description of the reader page (title candidates, text-layer element, element counts) for diagnosing a changed Cloud Reader layout. Pages stay in memory until then, so leave the tab open.
 4. Run:
 
 ```bash

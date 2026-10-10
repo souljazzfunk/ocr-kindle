@@ -18,13 +18,23 @@ function position() {
 }
 
 function bookTitle(asin) {
-  const title = document.querySelector('.book-title')?.textContent.trim() || asin || 'kindle-book';
+  const title = chooseTitle({
+    element: document.querySelector('.book-title, [class*="book-title"], [data-testid*="title"]')?.textContent,
+    page: document.title,
+    asin,
+  });
   return title.replace(/[\\/:*?"<>|~]/g, '_').slice(0, 120);
 }
 
 // Cloud Reader overlays the page image with a screen-reader text layer of <p> and <h1>-<h6> elements.
+function textLayer() {
+  return document.querySelector('#kr-renderer .kg-view > .kg-a11y-abs')
+    || [...document.querySelectorAll('#kr-renderer .kg-a11y-abs, #kr-renderer [class*="a11y"]')]
+      .find((el) => el.children.length && el.textContent.trim().length >= MIN_TEXT_CHARS);
+}
+
 function pageMarkdown() {
-  const layer = document.querySelector('#kr-renderer .kg-view > .kg-a11y-abs');
+  const layer = textLayer();
   if (!layer) return '';
   return [...layer.children].map((el) => {
     const level = /^H([1-6])$/.exec(el.tagName)?.[1];
@@ -69,22 +79,63 @@ async function turnPage(prevSrc) {
   return null;
 }
 
+// What the reader page looked like, saved as dom-probe.json in the ZIP, so a changed Cloud Reader layout
+// can be diagnosed from the ZIP alone. Page text is cut to a short excerpt.
+function domProbe(page) {
+  const describe = (el) => ({
+    tag: el.tagName.toLowerCase(),
+    id: el.id || undefined,
+    class: (typeof el.className === 'string' ? el.className : '').trim().slice(0, 120) || undefined,
+    aria: el.getAttribute('aria-label') || undefined,
+    children: el.children.length,
+    text: el.textContent.trim().slice(0, 80) || undefined,
+  });
+  const tree = (el, depth) => ({
+    ...describe(el),
+    kids: depth ? [...el.children].slice(0, 12).map((c) => tree(c, depth - 1)) : undefined,
+  });
+  const reader = document.querySelector('#kr-renderer') || document.body;
+  const layer = textLayer();
+  return {
+    page,
+    url: location.origin + location.pathname,
+    documentTitle: document.title,
+    titleCandidates: [...document.querySelectorAll('h1, [class*="title"], [data-testid*="title"]')].slice(0, 15).map(describe),
+    counts: {
+      img: document.querySelectorAll('img').length,
+      blobImg: document.querySelectorAll('img[src^="blob:"]').length,
+      canvas: document.querySelectorAll('canvas').length,
+      krRenderer: document.querySelectorAll('#kr-renderer').length,
+      kgView: document.querySelectorAll('.kg-view').length,
+      a11y: document.querySelectorAll('[class*="a11y"]').length,
+    },
+    textLayer: layer ? { ...describe(layer), excerpt: layer.textContent.trim().slice(0, 300) } : null,
+    a11yElements: [...document.querySelectorAll('[class*="a11y"], [role="document"], [aria-live]')].slice(0, 20).map(describe),
+    reader: tree(reader, 4),
+  };
+}
+
+const PROBE_PAGES = [1, 3];
+
 async function captureBook(save, isRunning) {
   let img = await waitForPage(null);
   let previous = '';
   let count = 0;
+  const probes = [];
   while (img && isRunning()) {
     const data = await toPng(img);
     if (data !== previous) {
       count++;
       const name = `page_${String(count).padStart(4, '0')}`;
       save(`${name}.png`, Uint8Array.from(atob(data.split(',')[1]), (c) => c.charCodeAt(0)), position());
+      if (PROBE_PAGES.includes(count)) probes.push(domProbe(count));
       const text = pageMarkdown();
       if (text.length >= MIN_TEXT_CHARS) save(`${name}.txt`, new TextEncoder().encode(text), position());
       previous = data;
     }
     img = await turnPage(img.src);
   }
+  if (count) save('dom-probe.json', new TextEncoder().encode(JSON.stringify(probes, null, 1)), '');
   return count;
 }
 
