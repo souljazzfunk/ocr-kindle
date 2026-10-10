@@ -61,13 +61,31 @@ def test_main_runs_the_rest_of_the_list_and_keeps_going_after_a_failure(tmp_path
         return {'blocking_failures': [], 'warnings': ['title']}
 
     monkeypatch.setattr(capture_books.capture_book, 'convert', convert)
-    monkeypatch.setattr(sys, 'argv', ['capture_books.py', str(books)])
+    monkeypatch.setattr(sys, 'argv', ['capture_books.py', str(books), '--keep-going'])
     with pytest.raises(SystemExit) as exit_info:
         capture_books.main()
     progress = json.loads((tmp_path / 'books.progress.json').read_text())
     assert progress['B2']['verdict'] == 'failed' and progress['B2']['error'] == 'no ZIP'
     assert progress['B3']['verdict'] == 'done' and progress['B3']['warnings'] == ['title']
     assert exit_info.value.code == 1 and '2 done, 1 failed' in capsys.readouterr().out
+
+
+def test_a_book_whose_markdown_fails_stops_the_list_until_the_converter_is_fixed(tmp_path, monkeypatch, capsys):
+    # 2026-10-10: Automate and Building a Second Brain failed their heading checks and the list went on to a third.
+    books = tmp_path / 'books.tsv'
+    books.write_text('B1\tAutomate\nB2\tTwo\n')
+    started = []
+
+    def convert(asin, title=None, recapture=False, **options):
+        started.append(asin)
+        return {'blocking_failures': ['heading_noise'], 'warnings': []}
+
+    monkeypatch.setattr(capture_books.capture_book, 'convert', convert)
+    monkeypatch.setattr(sys, 'argv', ['capture_books.py', str(books)])
+    with pytest.raises(SystemExit) as exit_info:
+        capture_books.main()
+    assert exit_info.value.code == 2 and started == ['B1']
+    assert 'Stopped the list: Automate failed heading_noise' in capsys.readouterr().out
 
 
 def test_a_capture_that_missed_the_start_or_end_is_redone_and_a_tab_left_open_is_not():
