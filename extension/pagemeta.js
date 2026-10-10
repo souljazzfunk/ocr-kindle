@@ -91,4 +91,13 @@ function turnGuard(total) {
   };
 }
 
-if (typeof module !== 'undefined') module.exports = { pickTitle, probePage, parsePosition, atStart, turnGuard, TURNS_PER_PAGE, EXTRA_TURNS, STUCK_TURNS };
+// Some books open in Cloud Reader only as a notice that they need the Kindle app (2026-10-11, For 91 Days In
+// Tokyo), with no page to capture. The words start the reason, so capture_book.py can tell this book-level refusal
+// from a browser problem.
+const APP_ONLY = 'kindle app required';
+
+function appOnly(text) {
+  return /Kindle App Is Required|can only be opened using Kindle app/i.test(text || '');
+}
+
+if (typeof module !== 'undefined') module.exports = { pickTitle, probePage, parsePosition, atStart, turnGuard, appOnly, APP_ONLY, TURNS_PER_PAGE, EXTRA_TURNS, STUCK_TURNS };

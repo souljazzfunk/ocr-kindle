@@ -278,3 +278,19 @@ def test_a_book_tab_still_open_keeps_the_wait_going(tmp_path):
     assert capture_book.wait_for_zip(tmp_path, set(), timeout=600, clock=lambda: now[0], sleep=sleep, asin='B0',
                                      tabs=lambda asin: 1) is None
     assert now[0] >= 600
+
+
+def test_a_book_cloud_reader_cannot_open_is_the_book_s_failure_not_the_browser_s(tmp_path, monkeypatch):
+    # 2026-10-11: For 91 Days In Tokyo opened to "Kindle App Is Required" and the list waited an hour.
+    import capture_books
+    monkeypatch.setattr(capture_book, 'folder_problem', lambda: None)
+    monkeypatch.setattr(capture_book, 'ensure_tab_closed', lambda asin: True)
+
+    def open_in_brave(asin, domain, recapture):
+        (tmp_path / f'{asin}.skip.json').write_text(json.dumps({'reason': 'kindle app required: Cloud Reader cannot open this book'}))
+
+    monkeypatch.setattr(capture_book, 'open_in_brave', open_in_brave)
+    data = capture_book.convert('B00S1MW0KM', 'For 91 Days In Tokyo', downloads=tmp_path)
+    assert data['blocking_failures'] == ['kindle_app_only']
+    assert 'kindle_app_only' not in capture_books.STOP_CHECKS
+    assert capture_books.decide(data, 1) == 'failed'

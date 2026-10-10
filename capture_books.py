@@ -200,7 +200,7 @@ def main():
             sys.exit(2)
         # Laiken, 2026-10-10: try one book, and run the rest only once a book comes out right. Every later book goes
         # through the same converter, so a book that fails its Markdown checks stops the list until the fix is in.
-        if verdict == 'failed' and not args.keep_going:
+        if verdict == 'failed' and not args.keep_going and capture_book.APP_ONLY not in data['blocking_failures']:
             print(f'\nStopped the list: {title or asin} failed {", ".join(data["blocking_failures"])}. Fix the converter, '
                   'reconvert this book from its ZIP until it passes, then run the same command to go on.')
             sys.exit(2)
