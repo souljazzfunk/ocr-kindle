@@ -157,8 +157,9 @@ def homoglyph(book):
 
 
 def odd_case(book):
+    # Count letter runs, as ODD_CASE matches them, so `WiFi` in `WiFi-only` has a spelling to compare with.
     spellings = defaultdict(Counter)
-    for w in WORD.findall(book.corpus):
+    for w in re.findall(r'[A-Za-z]+', book.corpus):
         spellings[w.lower()][w] += 1
     for stem, text in book.pages.items():
         for token in set(ODD_CASE.findall(text)):
