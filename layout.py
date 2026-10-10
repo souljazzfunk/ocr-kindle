@@ -135,7 +135,8 @@ def json_array(text):
 
 
 def ask_layout_claude(cli, images):
-    """Sonnet's reading of a batch of Vision pages through `claude -p`: it opens each page image with its Read tool."""
+    """Sonnet's reading of a batch of Vision pages through `claude -p`: it opens each page image with its Read tool.
+    Hooks are off so these calls stay out of the session log the LLM wiki grows from (Laiken, 2026-10-10)."""
     parts = [PROMPT, 'Open each page image with the Read tool before answering. Reply with only a JSON array, one '
              'object per page: {"page": "<name>", "titles": [{"line": n, "level": n}], "quotes": [n], '
              '"figures": [{"lines": [n], "description": "..."}], "art": [n], "drop_cap": {"line": n, "word": "..."} '
@@ -145,7 +146,8 @@ def ask_layout_claude(cli, images):
                   '\n'.join(f'{i}: {line[3]}' for i, line in enumerate(sorted_boxes(image)))]
     run = subprocess.run(
         [cli, '-p', '--model', CLAUDE_MODEL, '--output-format', 'json', '--allowedTools', 'Read',
-         '--add-dir', str(images[0].parent.resolve()), '--strict-mcp-config'],
+         '--add-dir', str(images[0].parent.resolve()), '--strict-mcp-config',
+         '--settings', '{"disableAllHooks": true}'],
         input='\n\n'.join(parts), capture_output=True, text=True, timeout=CLAUDE_TIMEOUT_S,
         cwd=images[0].parent)
     reply = json.loads(run.stdout) if run.stdout.strip().startswith('{') else {}
