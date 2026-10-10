@@ -15,6 +15,7 @@ jobs:
   python:
     # Linux runs everything but the Vision/AppKit paths; macOS runs the whole suite.
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}

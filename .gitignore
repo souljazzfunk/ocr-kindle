@@ -5,6 +5,7 @@ config.env
 # Service account keys
 *.json
 !extension/manifest.json
+!.claude/settings.json
 service-account*.json
 credentials/
 
