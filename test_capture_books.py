@@ -5,10 +5,13 @@ import pytest
 
 import capture_books
 
+update_checkout = capture_books.update_checkout  # the real one; tests below stub it on the module
+
 
 @pytest.fixture(autouse=True)
 def brave_saves_without_asking(monkeypatch):
     monkeypatch.setattr(capture_books.brave, 'prompt_problem', lambda: None)
+    monkeypatch.setattr(capture_books, 'update_checkout', lambda: 'same')
 
 
 def result(failures, warnings=()):
@@ -58,13 +61,31 @@ def test_main_runs_the_rest_of_the_list_and_keeps_going_after_a_failure(tmp_path
         return {'blocking_failures': [], 'warnings': ['title']}
 
     monkeypatch.setattr(capture_books.capture_book, 'convert', convert)
-    monkeypatch.setattr(sys, 'argv', ['capture_books.py', str(books)])
+    monkeypatch.setattr(sys, 'argv', ['capture_books.py', str(books), '--keep-going'])
     with pytest.raises(SystemExit) as exit_info:
         capture_books.main()
     progress = json.loads((tmp_path / 'books.progress.json').read_text())
     assert progress['B2']['verdict'] == 'failed' and progress['B2']['error'] == 'no ZIP'
     assert progress['B3']['verdict'] == 'done' and progress['B3']['warnings'] == ['title']
     assert exit_info.value.code == 1 and '2 done, 1 failed' in capsys.readouterr().out
+
+
+def test_a_book_whose_markdown_fails_stops_the_list_until_the_converter_is_fixed(tmp_path, monkeypatch, capsys):
+    # 2026-10-10: Automate and Building a Second Brain failed their heading checks and the list went on to a third.
+    books = tmp_path / 'books.tsv'
+    books.write_text('B1\tAutomate\nB2\tTwo\n')
+    started = []
+
+    def convert(asin, title=None, recapture=False, **options):
+        started.append(asin)
+        return {'blocking_failures': ['heading_noise'], 'warnings': []}
+
+    monkeypatch.setattr(capture_books.capture_book, 'convert', convert)
+    monkeypatch.setattr(sys, 'argv', ['capture_books.py', str(books)])
+    with pytest.raises(SystemExit) as exit_info:
+        capture_books.main()
+    assert exit_info.value.code == 2 and started == ['B1']
+    assert 'Stopped the list: Automate failed heading_noise' in capsys.readouterr().out
 
 
 def test_a_capture_that_missed_the_start_or_end_is_redone_and_a_tab_left_open_is_not():
@@ -163,3 +184,36 @@ def test_a_book_the_list_stopped_on_is_tried_again_as_a_recapture(tmp_path, monk
         capture_books.main()
     # B1 again with #recapture (the extension may have saved it), B2's own failure stays, B3 is new.
     assert started == [('B1', True), ('B3', False)]
+
+
+def fake_git(heads, changed='', branch='main', pull_code=0):
+    heads = iter(heads)
+
+    def git(*args):
+        out = {'--abbrev-ref': branch}.get(args[1], '') if args[0] == 'rev-parse' else ''
+        if args[:2] == ('rev-parse', 'HEAD'):
+            out = next(heads)
+        if args[0] == 'diff':
+            out = changed
+        return type('R', (), {'stdout': out, 'stderr': 'diverged', 'returncode': pull_code if args[0] == 'pull' else 0})()
+    return git
+
+
+def test_main_is_pulled_before_each_book_and_says_what_a_change_needs():
+    assert update_checkout(fake_git(['a', 'a'])) == 'same'
+    assert update_checkout(fake_git(['a', 'b'], 'img2txt.py\ntest_img2txt.py')) == 'python'
+    assert update_checkout(fake_git(['a', 'b'], 'extension/pagemeta.js\nextension/manifest.json')) == 'extension'
+    assert update_checkout(fake_git(['a', 'b'], 'extension/pagemeta.test.js')) == 'python'
+    assert update_checkout(fake_git(['a'], branch='vision-headings-fix')) == 'same'
+    assert update_checkout(fake_git(['a'], pull_code=1)).startswith('could not pull main')
+
+
+def test_an_extension_change_on_main_stops_the_list_before_the_next_book(tmp_path, monkeypatch, capsys):
+    books = tmp_path / 'books.tsv'
+    books.write_text('B1\tOne\n')
+    monkeypatch.setattr(capture_books, 'update_checkout', lambda: 'extension')
+    monkeypatch.setattr(capture_books.capture_book, 'convert', lambda *a, **k: pytest.fail('captured with a stale extension'))
+    monkeypatch.setattr(sys, 'argv', ['capture_books.py', str(books)])
+    with pytest.raises(SystemExit) as exit_info:
+        capture_books.main()
+    assert exit_info.value.code == 2 and 'reload it once' in capsys.readouterr().out
