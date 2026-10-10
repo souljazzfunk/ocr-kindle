@@ -76,10 +76,18 @@ def ensure_tab_closed(asin, count=book_tabs, close=close_book_tab, tries=TAB_TRI
     return count(asin) == 0
 
 
-def wait_for_zip(downloads, before, timeout=ZIP_WAIT_S, clock=time.monotonic, sleep=time.sleep):
-    """The first new .zip whose size has stopped changing, or None when none appears in time."""
+def skip_notices(downloads, asin):
+    """The extension's <ASIN>.skip.json files (uniquified copies too): an automatic capture it would not run."""
+    return set(Path(downloads).glob(f'{asin}.skip*.json'))
+
+
+def wait_for_zip(downloads, before, timeout=ZIP_WAIT_S, clock=time.monotonic, sleep=time.sleep, asin=None):
+    """The first new .zip whose size has stopped changing, a new skip notice for asin, or None when neither appears."""
     deadline = clock() + timeout
     while clock() < deadline:
+        skipped = skip_notices(downloads, asin) - before if asin else set()
+        if skipped:
+            return max(skipped, key=lambda p: p.stat().st_mtime)
         new = [p for p in Path(downloads).glob('*.zip') if p not in before and not p.name.endswith('.crdownload')]
         if new:
             path = max(new, key=lambda p: p.stat().st_mtime)
@@ -134,6 +142,12 @@ def download_check(zip_path, record=brave.download_record):
     return Check('download', by_extension and complete, detail)
 
 
+def not_captured(asin, check, reason, recapture):
+    """The result for a book whose capture never produced a ZIP. These failures stop the list (capture_books.py)."""
+    print(f'FAIL {check:18} {reason}', flush=True)
+    return {'asin': asin, 'recapture': recapture, 'blocking_failures': [check], 'warnings': [], 'error': reason}
+
+
 def report(folder, checks, extra):
     data = {**extra, 'checks': [asdict(c) for c in checks],
             'blocking_failures': [c.name for c in checks if not c.ok and c.blocking],
@@ -155,13 +169,21 @@ def convert(asin, title=None, model='vision', domain='read.amazon.com', download
         problem = folder_problem()
         if problem:
             raise RuntimeError(f'Brave loads the extension from this checkout, and it is not main: {problem}')
-        before = set(downloads.glob('*.zip'))
+        # A tab left from an earlier run may still be capturing this book; a second one must not start beside it
+        # (2026-10-10: a resumed run opened Automate the Boring Stuff again while the first tab was still paging).
+        if not ensure_tab_closed(asin):
+            return not_captured(asin, 'tab_before', 'a Brave tab on this book was already open and could not be closed',
+                                recapture)
+        before = set(downloads.glob('*.zip')) | skip_notices(downloads, asin)
         open_in_brave(asin, domain, recapture)
-        source = wait_for_zip(downloads, before)
+        source = wait_for_zip(downloads, before, asin=asin)
         tab_closed = ensure_tab_closed(asin)
         if source is None:
-            raise RuntimeError(f'No ZIP appeared in {downloads} within {ZIP_WAIT_S // 60} minutes; the book tab was closed. '
-                               'The extension badge says skip when it refused to start, and the tab console says why.')
+            return not_captured(asin, 'no_zip', f'no ZIP in {downloads} within {ZIP_WAIT_S // 60} minutes; the book tab '
+                                f'was {"closed" if tab_closed else "left open"}', recapture)
+        if source.suffix == '.json':
+            reason = json.loads(source.read_text(encoding='utf-8')).get('reason', 'no reason given')
+            return not_captured(asin, 'capture_refused', f'the extension did not capture: {reason}', recapture)
     run([PYTHON, str(HERE / 'img2txt.py'), str(source), '--model', model] + (['--title', title] if title else []))
     folder = source.with_suffix('') if source.suffix == '.zip' else source
     checks, rounds = correct(folder, title)

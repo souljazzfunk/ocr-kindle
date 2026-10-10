@@ -124,3 +124,21 @@ def test_a_partial_capture_is_recaptured_before_the_list_stops(tmp_path, monkeyp
     with pytest.raises(SystemExit) as exit_info:
         capture_books.main()
     assert exit_info.value.code == 2 and started == [('B1', False), ('B1', True)]
+
+
+def test_a_capture_that_made_no_zip_stops_the_list(tmp_path, monkeypatch, capsys):
+    books = tmp_path / 'books.tsv'
+    books.write_text('B1\tAutomate\nB2\tTwo\n')
+    started = []
+
+    def convert(asin, title=None, recapture=False, **options):
+        started.append(asin)
+        return {'blocking_failures': ['capture_refused'], 'warnings': [], 'error': 'could not page back to page 1'}
+
+    monkeypatch.setattr(capture_books.capture_book, 'convert', convert)
+    monkeypatch.setattr(sys, 'argv', ['capture_books.py', str(books)])
+    with pytest.raises(SystemExit) as exit_info:
+        capture_books.main()
+    assert exit_info.value.code == 2 and started == ['B1']
+    progress = json.loads((tmp_path / 'books.progress.json').read_text())
+    assert progress['B1']['error'] == 'could not page back to page 1'
