@@ -294,3 +294,11 @@ def test_a_book_cloud_reader_cannot_open_is_the_book_s_failure_not_the_browser_s
     assert data['blocking_failures'] == ['kindle_app_only']
     assert 'kindle_app_only' not in capture_books.STOP_CHECKS
     assert capture_books.decide(data, 1) == 'failed'
+
+
+def test_book_tabs_are_closed_one_by_one_from_the_last():
+    # 2026-10-11: Brave ignored `close (every tab ... whose URL contains ...)` and a book tab stayed open.
+    script = capture_book.close_tab_script('B005RR0XRG')
+    assert 'whose URL' not in script
+    assert 'repeat with i from (count of tabs of w) to 1 by -1' in script
+    assert 'if URL of tab i of w contains "asin=B005RR0XRG" then close tab i of w' in script

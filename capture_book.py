@@ -49,10 +49,22 @@ def open_in_brave(asin, domain, recapture=False):
     run(['open', '-a', BRAVE, f'https://{domain}/?asin={asin}#{"recapture" if recapture else "autocapture"}'])
 
 
+def close_tab_script(asin):
+    """AppleScript closing only the tabs showing this book, one by one from the last, so closing one does not shift
+    the index of the next. Brave ignored the shorter `close (every tab ... whose URL contains ...)` form at times
+    (2026-10-11: For 91 Days in Oviedo's tab stayed open and the list stopped on tab_before)."""
+    return f'''tell application "{BRAVE}"
+    repeat with w in windows
+        repeat with i from (count of tabs of w) to 1 by -1
+            if URL of tab i of w contains "asin={asin}" then close tab i of w
+        end repeat
+    end repeat
+end tell'''
+
+
 def close_book_tab(asin):
     """Close only the tabs showing this book; the rest of Brave stays as it is."""
-    script = f'tell application "{BRAVE}" to close (every tab of every window whose URL contains "asin={asin}")'
-    subprocess.run(['osascript', '-e', script], capture_output=True)
+    subprocess.run(['osascript', '-e', close_tab_script(asin)], capture_output=True)
 
 
 def book_tabs(asin):
