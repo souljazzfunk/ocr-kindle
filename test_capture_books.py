@@ -6,6 +6,11 @@ import pytest
 import capture_books
 
 
+@pytest.fixture(autouse=True)
+def brave_saves_without_asking(monkeypatch):
+    monkeypatch.setattr(capture_books.brave, 'prompt_problem', lambda: None)
+
+
 def result(failures, warnings=()):
     return {'blocking_failures': list(failures), 'warnings': list(warnings)}
 

@@ -16,6 +16,7 @@
 | 本は 1 ページ目から最後まで取り込む。リーダーは前回読んだ位置で開くので、そのまま取り込まない | `extension/content.js`（自動取り込みは 1 ページ目まで戻ってから始め、戻れなければ断る。ZIP に `positions.json`）、`check_book.py` の `start_position` / `end_position`（落ちたら取り直し）、テスト `extension/pagemeta.test.js`・`test_check_book.py` |
 | 取り込みが終わった本のタブは確実に閉じる | 拡張の worker が ZIP の保存完了後に自動取り込みのタブだけ閉じる（`tabToClose`、テスト `extension/autostart.test.js`）。`capture_book.py` が残っていないか確かめ、残れば閉じ、閉じられなければ `tab_closed` で落とす |
 | Brave で動く拡張は main と同じもの。ブランチやローカルの書きかけを読み込ませない。変えたら版を上げる | `extension_state.py`（拡張フォルダが main でない・書きかけがあると `capture_book.py` が取り込みを断る）、拡張が ZIP に `capture.json`（版）を入れ、`extension_version` で再読み込み忘れを落とす、CI `scripts/check_extension_version.py`（extension/ を変えて版が上がっていない PR を落とす）、テスト `test_extension_state.py` |
+| ZIP はダイアログなしで保存する。保存できたと言うのは Brave の履歴で拡張が保存を終えたと確かめたときだけ | `brave.py`（読むだけ）。`capture_books.py` は Brave が保存場所を尋ねる設定のままなら始めない。`capture_book.py` の `download` が Brave の履歴で拡張による保存と完了を確かめる。テスト `test_brave.py` |
 | 全文版リーダーの書名・テキスト層が取れないときに、当て推量で直さない | 拡張が ZIP に `dom-probe.json`（画面構造）を入れる。`extension/pagemeta.js`、テスト `extension/pagemeta.test.js` |
 | 出来上がった Markdown の不具合（見出しなし、7→Z・8→& の読み違い、ダッシュ、重複ページ、書名）は機械が見つけて直す。人が気づくのを待たない | `check_book.py`（不具合ごとに直すコマンドを返す）、`capture_book.py`（直して再検査を最大 3 周、`report.json` に残す）、テスト `test_check_book.py` |
 | 検査・フック・拡張のテストは CI で回す | `.github/workflows/ci.yml`（`node --test`、`pytest` を Linux と macOS で） |

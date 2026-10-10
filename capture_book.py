@@ -23,6 +23,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from check_book import Check, check_folder
+import brave
 from extension_state import folder_problem, repo_version, zip_version
 
 BRAVE = 'Brave Browser'
@@ -122,6 +123,17 @@ def version_check(folder, expected=None):
                  + ('' if made_by == expected else '; reload the extension in Brave once'))
 
 
+def download_check(zip_path, record=brave.download_record):
+    """The ZIP must have been saved by the extension through chrome.downloads and completed, per Brave's history."""
+    found = record(zip_path)
+    if found is None:
+        return Check('download', False, f'{Path(zip_path).name} not in Brave\'s download history')
+    by_extension, complete = found
+    detail = ('saved by the extension' if by_extension else 'saved by a page link, not the extension') + (
+        ', complete' if complete else ', not complete')
+    return Check('download', by_extension and complete, detail)
+
+
 def report(folder, checks, extra):
     data = {**extra, 'checks': [asdict(c) for c in checks],
             'blocking_failures': [c.name for c in checks if not c.ok and c.blocking],
@@ -157,6 +169,7 @@ def convert(asin, title=None, model='vision', domain='read.amazon.com', download
         # Blocking, but not a capture defect: the runner records it and goes on without recapturing.
         checks.append(Check('tab_closed', tab_closed, f'book tab {"closed" if tab_closed else "still open"} after the capture'))
         checks.append(version_check(folder))
+        checks.append(download_check(source))
     return report(folder, checks, {'asin': asin, 'source': str(source), 'recapture': recapture, 'rounds': rounds,
                                    'tab_closed': tab_closed, 'seconds': round(time.time() - started)})
 

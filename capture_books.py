@@ -16,6 +16,7 @@ import sys
 import time
 from pathlib import Path
 
+import brave
 import capture_book
 
 # A failure in these checks means the ZIP itself is unusable, so the book is captured again (once).
@@ -67,6 +68,9 @@ def main():
     parser.add_argument('--downloads', type=Path, default=Path.home() / 'Downloads')
     args = parser.parse_args()
 
+    problem = brave.prompt_problem()
+    if problem:
+        sys.exit(f'Not starting: {problem}')
     progress_path = args.list.with_suffix('.progress.json')
     progress = load_progress(progress_path)
     options = {'model': args.model, 'domain': args.domain, 'downloads': args.downloads}
