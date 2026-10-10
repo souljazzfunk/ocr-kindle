@@ -1,5 +1,6 @@
 const PAGE_WAIT_MS = 3000;
 const NEXT_ATTEMPTS = 3;
+const FIRST_PAGE_WAIT_MS = 60000;
 // Heading-only pages keep part of their text in the image (e.g. layer "1" for a page reading "幻想1 アメリカ…"),
 // so short layers are left for img2txt.py to OCR.
 const MIN_TEXT_CHARS = 40;
@@ -16,8 +17,8 @@ function position() {
   return m ? `${m[1]}/${m[2]}` : '';
 }
 
-function bookTitle() {
-  const title = document.querySelector('.book-title')?.textContent.trim() || 'kindle-book';
+function bookTitle(asin) {
+  const title = document.querySelector('.book-title')?.textContent.trim() || asin || 'kindle-book';
   return title.replace(/[\\/:*?"<>|~]/g, '_').slice(0, 120);
 }
 
@@ -141,13 +142,21 @@ function download(blob, filename) {
 
 let running = false;
 
-chrome.runtime.onMessage.addListener(async (msg) => {
-  if (msg !== 'toggle') return;
-  if (running) {
+function asinFromUrl() {
+  return new URL(location.href).searchParams.get('asin') || '';
+}
+
+async function startCapture(asin, auto) {
+  running = true; // set before the claim returns, so a second click stops rather than starts again
+  const { ok, reason } = await chrome.runtime.sendMessage({ claim: { asin, auto } });
+  if (!ok) {
     running = false;
+    chrome.runtime.sendMessage({ badge: 'skip' });
+    console.log(`[kindle-capture] not starting: ${reason}`);
     return;
   }
-  running = true;
+  // Opened from a URL, the reader may still be loading its first page.
+  for (let t = 0; auto && !pageImage() && t < FIRST_PAGE_WAIT_MS; t += 500) await sleep(500);
   const files = [];
   const save = (name, bytes, pos) => {
     files.push({ name, bytes });
@@ -155,7 +164,21 @@ chrome.runtime.onMessage.addListener(async (msg) => {
   };
   const count = await captureBook(save, () => running);
   running = false;
-  if (count) download(zip(files), `${bookTitle()}.zip`);
+  if (count) download(zip(files), `${bookTitle(asin)}.zip`);
+  chrome.runtime.sendMessage({ finish: { asin, pages: count } });
   chrome.runtime.sendMessage({ badge: 'done' });
   console.log(`[kindle-capture] saved ${count} pages`);
+}
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg !== 'toggle') return;
+  if (running) running = false;
+  else startCapture(asinFromUrl(), false);
 });
+
+// Drop the marker before anything else, so a reload or a restored tab does not start again.
+const autoStart = readAutoStart(location.href);
+if (autoStart) {
+  history.replaceState(history.state, '', autoStart.cleanUrl);
+  startCapture(autoStart.asin, true);
+}
