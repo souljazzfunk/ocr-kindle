@@ -140,3 +140,23 @@ def test_accepts_extension_zip_and_names_output_after_it(tmp_path):
 def test_join_pages_keeps_figure_notes_apart():
     body = 'It was the best of times, it was the worst of times, it was the age of wisdom, it was the age of wisdom, it was the age of'
     assert join_pages([body, '![Jobs in 1982]()', 'foolishness.']) == body + '\n\n![Jobs in 1982]()\n\nfoolishness.\n'
+
+
+def test_vision_pages_run_one_process_per_core_and_gemini_stays_at_its_rate_limit(monkeypatch):
+    import img2txt
+    from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+    assert img2txt.ocr_pool(['vision']) == (ProcessPoolExecutor, img2txt.VISION_WORKERS)
+    assert img2txt.VISION_WORKERS == (os.cpu_count() or img2txt.WORKERS)
+    assert img2txt.ocr_pool(['gemini-3.8-flash', 'vision']) == (ThreadPoolExecutor, img2txt.WORKERS)
+
+
+def test_a_page_job_runs_in_a_separate_process(tmp_path):
+    # The job must pickle for a process pool: a module-level function, with the page result or the error.
+    import img2txt
+    from concurrent.futures import ProcessPoolExecutor
+    from functools import partial
+    image = tmp_path / 'page_0001.png'
+    image.write_bytes(b'not an image')
+    with ProcessPoolExecutor(2) as pool:
+        [(page, result, error)] = list(pool.map(partial(img2txt.ocr_job, None, ['no-such-model']), [image]))
+    assert page == image and result is None and 'no-such-model' in str(error)
