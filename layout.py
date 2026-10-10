@@ -22,9 +22,14 @@ from img2txt import (BODY_LINE_CHARS, DECORATIVE_DIGITS, HEADING_NUMBER, LINES, 
 
 LAYOUT = 'layout.json'
 MODEL = 'gemini-3.5-flash-lite'
-BATCH = 8  # pages per request
+BATCH = 20  # pages per request; the free tier allows 500 requests a day, which 8 a request used up on 2026-10-10
 TRIES = 5
 RATE_WAIT_S = 30  # the free tier allows 15 requests a minute
+DAILY_LIMIT = 'PerDay'  # in a 429 for the day's requests, which waiting minutes does not end
+
+
+class DailyLimit(RuntimeError):
+    """Gemini's requests for the day are used up; they come back at midnight Pacific (16:00 or 17:00 JST)."""
 LINE_PITCH = 1.6  # line pitch at most this many line heights
 MIN_FIGURE_LINES = 3
 CAPS_MIN_LETTERS = 3
@@ -116,16 +121,18 @@ def mark_layout(folder, client, images):
             try:
                 return ask_layout(client, batch), None
             except Exception as e:
-                if '429' not in str(e) or attempt + 1 == TRIES:
+                if '429' not in str(e) or DAILY_LIMIT in str(e) or attempt + 1 == TRIES:
                     return {}, e
                 time.sleep(RATE_WAIT_S)
 
+    daily = False
     with ThreadPoolExecutor(WORKERS) as pool:
         for done, (pages, error) in enumerate(pool.map(ask, batches), 1):
             if error:
                 print(f'[layout {done}/{len(batches)}] error: {error}', flush=True)
             layout.update(pages)
             (folder / LAYOUT).write_text(json.dumps(layout, ensure_ascii=False, indent=0), encoding='utf-8')
+            daily = daily or (error is not None and DAILY_LIMIT in str(error))
     chapters = contents_entries(page_images(folder))
     styled = styled_titles(folder, layout)
     for image in images:
@@ -134,7 +141,12 @@ def mark_layout(folder, client, images):
             boxes, page = reread_beside_cap(image, sorted_boxes(image), page)
             text = page_markdown(boxes, page, chapters)
             image.with_suffix('.txt').write_text(text or ' ', encoding='utf-8')
-    return [image for image in images if image.stem not in layout]
+    left = [image for image in images if image.stem not in layout]
+    if daily:
+        # The pages laid out so far are written above; the rest wait for tomorrow's requests.
+        raise DailyLimit(f'Gemini\'s requests for today are used up; {len(left)} pages still need a layout. '
+                         'They come back at midnight Pacific (16:00 or 17:00 JST).')
+    return left
 
 
 def page_markdown(boxes, page, chapters=()):

@@ -217,3 +217,27 @@ def test_an_extension_change_on_main_stops_the_list_before_the_next_book(tmp_pat
     with pytest.raises(SystemExit) as exit_info:
         capture_books.main()
     assert exit_info.value.code == 2 and 'reload it once' in capsys.readouterr().out
+
+
+def test_gemini_s_daily_limit_stops_the_list_and_the_book_resumes_from_its_folder(tmp_path, monkeypatch, capsys):
+    books = tmp_path / 'books.tsv'
+    books.write_text('B1\tFacing the Mountain\nB2\tTwo\n')
+    started = []
+
+    def convert(asin, title=None, recapture=False, **options):
+        started.append((asin, recapture, options.get('source')))
+        if len(started) == 1:
+            return {'blocking_failures': ['gemini_daily_limit'], 'warnings': [], 'source': '/books/Facing the Mountain'}
+        return {'blocking_failures': [], 'warnings': []}
+
+    monkeypatch.setattr(capture_books.capture_book, 'convert', convert)
+    monkeypatch.setattr(sys, 'argv', ['capture_books.py', str(books), '--keep-going'])
+    with pytest.raises(SystemExit) as exit_info:
+        capture_books.main()
+    assert exit_info.value.code == 2 and started == [('B1', False, None)]
+    assert json.loads((tmp_path / 'books.progress.json').read_text())['B1']['verdict'] == 'waiting'
+    assert 'requests for today are used up' in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        capture_books.main()
+    # No new capture: the folder from the first run is converted again.
+    assert started[1] == ('B1', False, capture_books.Path('/books/Facing the Mountain')) and started[2][0] == 'B2'

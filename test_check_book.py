@@ -235,3 +235,16 @@ def test_a_refused_capture_fails_with_the_extensions_reason(tmp_path, monkeypatc
     monkeypatch.setattr(capture_book, 'open_in_brave', open_in_brave)
     data = capture_book.convert('B07VSXS4NK', 'Automate', downloads=tmp_path)
     assert data['blocking_failures'] == ['capture_refused'] and 'already capturing' in data['error']
+
+
+def test_gemini_s_daily_limit_is_reported_with_the_folder_to_convert_again(tmp_path, monkeypatch):
+    import subprocess
+    folder = tmp_path / 'Facing the Mountain'
+    folder.mkdir()
+
+    def run(command, **kwargs):
+        raise subprocess.CalledProcessError(capture_book.DAILY_LIMIT_EXIT, command)
+
+    monkeypatch.setattr(capture_book, 'run', run)
+    data = capture_book.convert('B0X', 'Facing the Mountain', source=folder)
+    assert data['blocking_failures'] == ['gemini_daily_limit'] and data['source'] == str(folder)

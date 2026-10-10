@@ -123,23 +123,36 @@ def main():
         if update != 'same':
             print(f'=== {update}; going on with the code already here', flush=True)
         entry = progress.get(asin, {})
+        waiting = entry.get('verdict') == 'waiting' and entry.get('source')
         if entry.get('verdict') == 'done' or (
                 entry.get('verdict') == 'failed' and not STOP_CHECKS & set(entry.get('failures', []))):
             continue
         print(f'=== {title or asin} ({asin})', flush=True)
         try:
             # Any earlier attempt may have saved the ASIN in the extension, which then refuses #autocapture.
-            again = asin in progress
-            verdict, data = run_book(asin, title, options, again=again)
+            again = asin in progress and not waiting
+            # A book stopped by Gemini's daily limit was captured well: convert its folder again, without Brave.
+            book_options = {**options, 'source': Path(entry['source'])} if waiting else options
+            verdict, data = run_book(asin, title, book_options, again=again)
         except Exception as e:  # a crash in one book must not stop the list, and must be in the summary
             verdict, data = 'failed', {'error': str(e), 'blocking_failures': ['crash'], 'warnings': []}
         stop = STOP_CHECKS & set(data['blocking_failures'])
         if stop:
             verdict = 'stopped'  # not the book's fault: the next run tries it again
+        daily = capture_book.DAILY_LIMIT_CHECK in data['blocking_failures']
+        if daily:
+            verdict = 'waiting'  # Gemini's day is used up; every later book would fail its layout too
         progress[asin] = {'title': title, 'verdict': verdict, 'failures': data['blocking_failures'],
                           'warnings': data['warnings'], 'error': data.get('error'), 'at': time.strftime('%Y-%m-%dT%H:%M:%S')}
+        if daily:
+            progress[asin]['source'] = data['source']
         progress_path.write_text(json.dumps(progress, ensure_ascii=False, indent=1), encoding='utf-8')
         print(f'=== {verdict}: {title or asin}' + (f' ({", ".join(data["blocking_failures"])})' if verdict != 'done' else ''), flush=True)
+        if daily:
+            print(f'\nStopped the list: Gemini\'s requests for today are used up on {title or asin}. They come back at '
+                  'midnight Pacific (16:00 or 17:00 JST); then run the same command, and this book is converted from '
+                  'its folder with no new capture.')
+            sys.exit(2)
         if stop:
             print(f'\nStopped the list: {", ".join(sorted(stop))} failed on {title or asin}. These come from Brave or the '
                   'extension, so every later book would fail too. Fix the cause, then run the same command to resume.')

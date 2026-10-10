@@ -105,6 +105,7 @@ def test_layout_is_asked_once_per_page_in_batches(tmp_path, monkeypatch):
         return SimpleNamespace(text=json.dumps(answer))
 
     monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
+    monkeypatch.setattr(layout, 'BATCH', 8)
     client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
     images = sorted(tmp_path.glob('page_*.png'))
     assert mark_layout(tmp_path, client, images) == []
@@ -112,6 +113,30 @@ def test_layout_is_asked_once_per_page_in_batches(tmp_path, monkeypatch):
     assert (tmp_path / 'page_0001.txt').read_text().startswith('## A TITLE\n\nBody text')
     assert mark_layout(tmp_path, client, images) == [] and len(asked) == 2  # kept in layout.json
 
+
+
+def test_gemini_s_daily_limit_is_not_waited_out_and_stops_after_writing_what_was_laid_out(tmp_path, monkeypatch):
+    # 2026-10-10: the free tier's 500 requests a day ran out mid-list, and every later page failed its layout.
+    for n in range(1, 31):
+        (tmp_path / f'page_{n:04d}.png').write_bytes(b'png')
+        (tmp_path / f'page_{n:04d}.lines.json').write_text(json.dumps([[0.1, 0.1, 0.03, 'A TITLE']] + BODY))
+    asked = []
+
+    def generate_content(model, contents, config):
+        stems = [part.split('"')[1] for part in contents if isinstance(part, str) and part.startswith('Page "')]
+        asked.append(stems)
+        if len(asked) > 1:
+            raise RuntimeError('429 RESOURCE_EXHAUSTED quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier')
+        return SimpleNamespace(text=json.dumps([{'page': s, 'titles': [{'line': 0, 'level': 2}]} for s in stems]))
+
+    monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
+    monkeypatch.setattr(layout.time, 'sleep', lambda s: pytest.fail('waited on a daily limit'))
+    monkeypatch.setattr(layout, 'WORKERS', 1)
+    client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    with pytest.raises(layout.DailyLimit, match='10 pages still need a layout'):
+        mark_layout(tmp_path, client, sorted(tmp_path.glob('page_*.png')))
+    assert len(asked) == 2 and len(read_layout(tmp_path)) == 20
+    assert (tmp_path / 'page_0001.txt').read_text().startswith('## A TITLE')
 
 def test_pieces_of_one_printed_line_read_left_to_right():
     pieces = [(0.44, 0.009, 0.026, "I've had when discussing"), (0.024, 0.010, 0.021, 'This is'),
