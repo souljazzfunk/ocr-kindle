@@ -12,7 +12,7 @@
 | 取り込みは Brave の Cloud Reader 拡張から始める。Kindle for Mac アプリは、ユーザー本人がそう書いたときだけ使う | `.claude/hooks/guard_capture.py`（`kindle2img.applescript` / `screencapture` / Kindle アプリを開くコマンドを止める。本人の指示があるときは `KINDLE_APP_OK=1` を付ける）、テスト `test_guard_capture.py` |
 | 同じ本を取り直すのは、検査で ZIP が使えないと分かったときだけ | 拡張は `#autocapture` では保存済みの本を始めない。`capture_books.py` だけが `#recapture` で取り直す（それでも 1 回・1 タブ） |
 | Brave を終了・再起動しない。取り込みが終わったら本のタブだけ閉じる。Chrome で read.amazon を開かない | 同じフック（Brave の quit / kill、Chrome での read.amazon を止める） |
-| 次の本へ進むかは検査結果で決める。通れば次へ、ZIP が使い物にならなければ取り直し、直しきれなければ失敗として記録して次へ。人の OK は待たない | `capture_books.py`（`decide()`）、テスト `test_capture_books.py` |
+| 次の本へ進むかは検査結果で決める。通れば次へ、ZIP が使い物にならなければ取り直し。Markdown の検査が直しきれなければ一覧を止め、変換を直してその本が通るまで次の本へ進まない（Laiken：試しに 1 冊、正しくできるようになったら全部）。人の OK は待たない | `capture_books.py`（`decide()`、失敗で終了コード 2。`--keep-going` で記録して次へ）、テスト `test_capture_books.py` |
 | ブラウザか拡張のせいの失敗（保存、版、タブ、先頭・末尾）が残ったら、一覧を進めずに止める。拡張の変更が効いたと言うのは、実機の取り込みでこれが通ったときだけ | `capture_books.py` の `STOP_CHECKS`（取り直しのあとも残れば終了コード 2 で止まり、同じコマンドで続きから）、テスト `test_capture_books.py` |
 | 本は 1 ページ目から最後まで取り込む。リーダーは前回読んだ位置で開くので、そのまま取り込まない | `extension/content.js`（自動取り込みは 1 ページ目まで戻ってから始め、戻れなければ断る。ZIP に `positions.json`）、`check_book.py` の `start_position` / `end_position`（落ちたら取り直し）、テスト `extension/pagemeta.test.js`・`test_check_book.py` |
 | 取り込みが終わった本のタブは確実に閉じる | 拡張の worker が ZIP の保存完了後に自動取り込みのタブだけ閉じる（`tabToClose`、テスト `extension/autostart.test.js`）。`capture_book.py` が残っていないか確かめ、残れば閉じ、閉じられなければ `tab_closed` で落とす |
@@ -33,4 +33,4 @@ venv/bin/python capture_books.py books.tsv          # 一覧をまとめて。�
 venv/bin/python capture_book.py <ASIN> --title "<書名>"   # 1 冊だけ
 ```
 
-1 冊ごとに、Brave で `#autocapture` 付きの URL を開き、ZIP が出たらその本のタブだけ閉じ、`img2txt.py`（既定 `--model vision`）、`check_book.py` の検査、直せるものは直して再検査（最大 3 周）、`report.json` を書く。検査が通れば次の本へ。`pages` / `text` で落ちたら ZIP が使えないので 1 回だけ取り直す。それ以外が残れば失敗として `books.progress.json` に記録し、次の本へ進む。終わったら、できた本と失敗した本（理由つき）をまとめて報告する。
+1 冊ごとに、Brave で `#autocapture` 付きの URL を開き、ZIP が出たらその本のタブだけ閉じ、`img2txt.py`（既定 `--model vision`）、`check_book.py` の検査、直せるものは直して再検査（最大 3 周）、`report.json` を書く。検査が通れば次の本へ。`pages` / `text` で落ちたら ZIP が使えないので 1 回だけ取り直す。それ以外が残れば失敗として `books.progress.json` に記録し、一覧を止める（変換を直してその本が通ってから再開）。終わったら、できた本と失敗した本（理由つき）をまとめて報告する。

@@ -101,6 +101,8 @@ def main():
     parser.add_argument('--model', default='vision')
     parser.add_argument('--domain', default='read.amazon.com')
     parser.add_argument('--downloads', type=Path, default=Path.home() / 'Downloads')
+    parser.add_argument('--keep-going', action='store_true',
+                        help='Record a book whose Markdown failed its checks and go on (default: stop there)')
     args = parser.parse_args()
 
     problem = brave.prompt_problem()
@@ -141,6 +143,12 @@ def main():
         if stop:
             print(f'\nStopped the list: {", ".join(sorted(stop))} failed on {title or asin}. These come from Brave or the '
                   'extension, so every later book would fail too. Fix the cause, then run the same command to resume.')
+            sys.exit(2)
+        # Laiken, 2026-10-10: try one book, and run the rest only once a book comes out right. Every later book goes
+        # through the same converter, so a book that fails its Markdown checks stops the list until the fix is in.
+        if verdict == 'failed' and not args.keep_going:
+            print(f'\nStopped the list: {title or asin} failed {", ".join(data["blocking_failures"])}. Fix the converter, '
+                  'reconvert this book from its ZIP until it passes, then run the same command to go on.')
             sys.exit(2)
 
     done = [p['title'] or a for a, p in progress.items() if p['verdict'] == 'done']
