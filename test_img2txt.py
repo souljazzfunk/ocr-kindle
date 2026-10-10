@@ -2,6 +2,8 @@ import os
 import subprocess
 import sys
 import zipfile
+
+import pytest
 from pathlib import Path
 
 from img2txt import join_pages, vision_headings, vision_markdown
@@ -36,6 +38,7 @@ def test_join_pages_keeps_short_title_pages_separate():
 
 
 def test_vision_markdown_rebuilds_paragraphs_from_line_boxes():
+    pytest.importorskip('AppKit')  # join_lines spell-checks with NSSpellChecker
     lines = [
         (0.121, 0.30, 'Apple II.'),
         (0.121, 0.10, 'Mike Markkula'),
@@ -83,6 +86,7 @@ def test_vision_markdown_keeps_headings_on_their_own_lines():
 
 
 def test_join_pages_undoes_hyphenation_across_pages():
+    pytest.importorskip('AppKit')
     body = 'Valentine, however, did not become a preeminent Silicon Valley investor by relying on surface appearances. '
     pages = [body + 'He manipu-', 'lating everyone. ' + body + 'twenty-', 'eight times.']
     assert join_pages(pages) == body + 'He manipulating everyone. ' + body + 'twenty-eight times.\n'

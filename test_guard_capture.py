@@ -54,3 +54,16 @@ def test_ordinary_commands_pass():
     for command in ['venv/bin/python img2txt.py ~/Downloads/x.zip --model vision', 'git pull',
                     'osascript -e \'tell application "Brave Browser" to close (tabs of window 1 whose URL contains "B07HNMJV57")\'']:
         assert guard.check(command, 's') is None
+
+
+def test_hook_wiring_blocks_through_stdin_and_exit_code(tmp_path):
+    """The hook as settings.json runs it: JSON on stdin, exit 2 with the reason on stderr."""
+    import json
+    import subprocess
+    import sys
+    env = {**__import__('os').environ, 'GUARD_CAPTURE_STATE': str(tmp_path)}
+    event = json.dumps({'session_id': 's', 'tool_name': 'Bash', 'tool_input': {'command': 'osascript kindle2img.applescript ltr'}})
+    result = subprocess.run([sys.executable, str(Path(__file__).parent / '.claude/hooks/guard_capture.py')], input=event, capture_output=True, text=True, env=env)
+    assert result.returncode == 2 and 'Cloud Reader extension' in result.stderr
+    settings = json.loads((Path(__file__).parent / '.claude/settings.json').read_text())
+    assert any('guard_capture.py' in h['command'] for m in settings['hooks']['PreToolUse'] for h in m['hooks'] if m['matcher'] == 'Bash')

@@ -34,6 +34,17 @@ The script extracts the ZIP into `~/Downloads/<book title>/`, prints how many pa
 
 If any page fails (quota, network), the script exits with an error and keeps the pages that succeeded. Run the same command again on the folder to retry only the missing pages. `--force` re-OCRs everything, `--model` picks another Gemini model, and `--title` sets the output name.
 
+## One command per book
+
+`capture_book.py` runs the steps above for one book, then checks the result and fixes what it can:
+
+```bash
+venv/bin/python capture_book.py B07HNMJV57 --title "How to Write a Lot"
+venv/bin/python capture_book.py B07HNMJV57 --zip ~/Downloads/kindle-book.zip   # from an existing capture
+```
+
+It opens the book in Brave with `#autocapture`, waits for the ZIP, closes only that book's tab, runs `img2txt.py` (`--model vision` by default), then `check_book.py`. Each check names a fix: no `#` headings or a heading read as `Z`/`&` re-OCRs with the current `img2txt.py`, duplicate pages, seams, foreign pages, dashes, stray symbols and homoglyphs run `proofread.py --apply`, and a page without text re-runs `img2txt.py`. The fixes run and the checks repeat, up to three rounds. `report.json` in the book folder records every check, and the exit code is 1 while a blocking check still fails. A default output name (`kindle-book` or the ASIN) and zero text-layer pages are warnings: they do not block, and the ZIP's `dom-probe.json` says where to look. `check_book.py <folder>` runs the checks alone.
+
 ## Audiobook
 
 `md2audio.py` reads the Markdown aloud with a macOS `say` voice and writes one `.m4a` with a chapter marker per chapter. The voice and speed follow the book's language: Kyoko (Enhanced) at 220 words per minute when kana and kanji outnumber English words, Zoe (Premium) at 170 otherwise. `--voice` and `--rate` override them. It needs `ffmpeg` (`brew install ffmpeg`) and nothing from `venv`. Download the voices once in System Settings → Accessibility → Spoken Content → System Voice → Manage Voices, or pass another with `--voice`, e.g. `--voice Kyoko` for the built-in one.
