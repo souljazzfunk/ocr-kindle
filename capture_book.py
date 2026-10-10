@@ -25,14 +25,14 @@ from pathlib import Path
 from check_book import Check, check_folder
 import brave
 from extension_state import folder_problem, repo_version, zip_version
-from img2txt import DAILY_LIMIT_EXIT
+from img2txt import GEMINI_ERROR, GEMINI_FAILED_EXIT
 
 BRAVE = 'Brave Browser'
 ROUNDS = 3
 ZIP_WAIT_S = 3600
 SETTLE_S = 5
 TAB_TRIES = 3
-DAILY_LIMIT_CHECK = 'gemini_daily_limit'
+GEMINI_CHECK = 'gemini'
 PYTHON = sys.executable
 HERE = Path(__file__).resolve().parent
 
@@ -199,12 +199,14 @@ def convert(asin, title=None, model='vision', domain='read.amazon.com', download
         run([PYTHON, str(HERE / 'img2txt.py'), str(source), '--model', model] + (['--title', title] if title else []))
         checks, rounds = correct(folder, title)
     except subprocess.CalledProcessError as e:
-        if e.returncode != DAILY_LIMIT_EXIT:
+        if e.returncode != GEMINI_FAILED_EXIT:
             raise
-        # Not the book's fault, and the capture is good: capture_books.py waits and converts this folder again.
-        print(f'FAIL {DAILY_LIMIT_CHECK:18} Gemini\'s requests for today are used up', flush=True)
-        return {'asin': asin, 'source': str(folder), 'recapture': recapture, 'blocking_failures': [DAILY_LIMIT_CHECK],
-                'warnings': [], 'error': 'Gemini daily request limit; resume after midnight Pacific (16:00 or 17:00 JST)'}
+        # Not the book's fault, and the capture is good: capture_books.py stops and later converts this folder again.
+        written = folder / GEMINI_ERROR
+        reason = written.read_text(encoding='utf-8') if written.exists() else 'a Gemini request failed'
+        print(f'FAIL {GEMINI_CHECK:18} {reason}', flush=True)
+        return {'asin': asin, 'source': str(folder), 'recapture': recapture, 'blocking_failures': [GEMINI_CHECK],
+                'warnings': [], 'error': reason}
     if tab_closed is not None:
         # Blocking, but not a capture defect: the runner records it and goes on without recapturing.
         checks.append(Check('tab_closed', tab_closed, f'book tab {"closed" if tab_closed else "still open"} after the capture'))

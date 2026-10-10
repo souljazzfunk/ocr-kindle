@@ -131,7 +131,7 @@ def main():
         try:
             # Any earlier attempt may have saved the ASIN in the extension, which then refuses #autocapture.
             again = asin in progress and not waiting
-            # A book stopped by Gemini's daily limit was captured well: convert its folder again, without Brave.
+            # A book stopped by a Gemini failure was captured well: convert its folder again, without Brave.
             book_options = {**options, 'source': Path(entry['source'])} if waiting else options
             verdict, data = run_book(asin, title, book_options, again=again)
         except Exception as e:  # a crash in one book must not stop the list, and must be in the summary
@@ -139,19 +139,18 @@ def main():
         stop = STOP_CHECKS & set(data['blocking_failures'])
         if stop:
             verdict = 'stopped'  # not the book's fault: the next run tries it again
-        daily = capture_book.DAILY_LIMIT_CHECK in data['blocking_failures']
-        if daily:
-            verdict = 'waiting'  # Gemini's day is used up; every later book would fail its layout too
+        gemini = capture_book.GEMINI_CHECK in data['blocking_failures']
+        if gemini:
+            verdict = 'waiting'  # Gemini failed; every later book would fail its layout too
         progress[asin] = {'title': title, 'verdict': verdict, 'failures': data['blocking_failures'],
                           'warnings': data['warnings'], 'error': data.get('error'), 'at': time.strftime('%Y-%m-%dT%H:%M:%S')}
-        if daily:
+        if gemini:
             progress[asin]['source'] = data['source']
         progress_path.write_text(json.dumps(progress, ensure_ascii=False, indent=1), encoding='utf-8')
         print(f'=== {verdict}: {title or asin}' + (f' ({", ".join(data["blocking_failures"])})' if verdict != 'done' else ''), flush=True)
-        if daily:
-            print(f'\nStopped the list: Gemini\'s requests for today are used up on {title or asin}. They come back at '
-                  'midnight Pacific (16:00 or 17:00 JST); then run the same command, and this book is converted from '
-                  'its folder with no new capture.')
+        if gemini:
+            print(f'\nStopped the list: Gemini failed on {title or asin}: {data.get("error")}\nOnce the cause is gone, '
+                  'run the same command: this book is converted from its folder with no new capture.')
             sys.exit(2)
         if stop:
             print(f'\nStopped the list: {", ".join(sorted(stop))} failed on {title or asin}. These come from Brave or the '

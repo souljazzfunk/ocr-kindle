@@ -133,10 +133,28 @@ def test_gemini_s_daily_limit_is_not_waited_out_and_stops_after_writing_what_was
     monkeypatch.setattr(layout.time, 'sleep', lambda s: pytest.fail('waited on a daily limit'))
     monkeypatch.setattr(layout, 'WORKERS', 1)
     client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
-    with pytest.raises(layout.DailyLimit, match='10 pages still need a layout'):
+    with pytest.raises(layout.GeminiFailed, match='10 pages left.*midnight Pacific'):
         mark_layout(tmp_path, client, sorted(tmp_path.glob('page_*.png')))
     assert len(asked) == 2 and len(read_layout(tmp_path)) == 20
     assert (tmp_path / 'page_0001.txt').read_text().startswith('## A TITLE')
+
+
+def test_any_failed_gemini_request_stops_the_book_without_sending_the_rest(tmp_path, monkeypatch):
+    for n in range(1, 61):
+        (tmp_path / f'page_{n:04d}.png').write_bytes(b'png')
+        (tmp_path / f'page_{n:04d}.lines.json').write_text(json.dumps(BODY))
+    asked = []
+
+    def generate_content(model, contents, config):
+        asked.append(1)
+        raise RuntimeError('403 PERMISSION_DENIED API key not valid')
+
+    monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
+    monkeypatch.setattr(layout, 'WORKERS', 1)
+    client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    with pytest.raises(layout.GeminiFailed, match='60 pages left: 403 PERMISSION_DENIED'):
+        mark_layout(tmp_path, client, sorted(tmp_path.glob('page_*.png')))
+    assert len(asked) == 1  # three batches, one request
 
 def test_pieces_of_one_printed_line_read_left_to_right():
     pieces = [(0.44, 0.009, 0.026, "I've had when discussing"), (0.024, 0.010, 0.021, 'This is'),
