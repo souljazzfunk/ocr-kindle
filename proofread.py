@@ -186,19 +186,47 @@ def stray_symbol(book):
 def l_for_i(book):
     """Vision reads a capital I after a capital as a small l: "Al" for AI, "AlforEDUbook" for AIforEDUbook. A letter
     run is fixed when the book also spells it with the I (AI for Educators: AI 108 times, Al 265), unless a
-    capitalised word follows, as a name does (Al Gore)."""
+    capitalised word follows, as a name does (Al Gore), except in a title-case line ("30 Ways Al Can Support")."""
     runs = Counter(re.findall(r'[A-Za-z]+', book.corpus))
     for stem, text in book.pages.items():
         for m in re.finditer(r'(?<![A-Za-z])[A-Za-z]*[A-Z]l[A-Za-z]*(?![A-Za-z])', text):
             run = m.group()
             fixes = [run[:i] + 'I' + run[i + 1:] for i, c in enumerate(run) if c == 'l' and i and run[i - 1].isupper()]
             best = max(fixes, key=lambda f: runs[f], default=None)
-            named = re.match(r' [A-Z][a-z]', text[m.end():m.end() + 3])
+            named = re.match(r' [A-Z][a-z]', text[m.end():m.end() + 3]) and not title_case(line_at(text, m.start()))
             if best and not named and runs[best] >= L_FOR_I_MIN and runs[best] * L_FOR_I_RATIO >= runs[run]:
                 # The neighbouring characters keep the replacement off a longer word ("Also").
                 start, end = max(0, m.start() - 1), min(len(text), m.end() + 1)
                 before = text[start:end]
                 yield Finding('l_for_i', stem, before, before.replace(run, best, 1))
+
+
+def line_at(text, at):
+    return text[text.rfind('\n', 0, at) + 1:(text.find('\n', at) + 1 or len(text) + 1) - 1]
+
+
+def title_case(line):
+    words = re.findall(r'[A-Za-z]{2,}', line)
+    return len(words) >= 4 and sum(w[0].isupper() for w in words) >= 0.8 * len(words)
+
+
+BINARY_ART = re.compile(r'(?m)(?: [01]+)* [01]{6,}(?: [01]+)*$')
+STRAY_COLON = re.compile(r'(?<=[a-z]{3}[.!?])[:;](?= |$)', re.M)
+
+
+def binary_art(book):
+    """A cover's pattern of 0s and 1s read as text at the end of a line ("AUTHOR OF DITCH THAT TEXTBOOK 1 10111010")."""
+    for stem, text in book.pages.items():
+        for m in BINARY_ART.finditer(text):
+            yield Finding('binary_art', stem, m.group(), '')
+
+
+def stray_colon(book):
+    """A colon or semicolon read after a sentence's end ("thrive with this technology.:")."""
+    for stem, text in book.pages.items():
+        for m in STRAY_COLON.finditer(text):
+            start = max(0, m.start() - 4)
+            yield Finding('stray_colon', stem, text[start:m.end()], text[start:m.start()])
 
 
 def digits_for_ll(book):
@@ -246,7 +274,7 @@ def decorative_digit(book):
 
 
 DETECTORS = [duplicate_page, seam_overlap, foreign_page, hyphen_break, dash_as_hyphen, homoglyph, odd_case, stray_symbol,
-             decorative_digit, l_for_i, digits_for_ll, heading_noise]
+             decorative_digit, l_for_i, digits_for_ll, binary_art, stray_colon, heading_noise]
 
 
 def cross_read(folder, pages, sources):
