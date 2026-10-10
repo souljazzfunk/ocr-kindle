@@ -72,17 +72,21 @@ async function turnPage(prevSrc, label = 'Next page') {
 }
 
 // The reader reopens a book where it was last read (AI for Educators opened at page 75 of 120), so an automatic
-// capture pages back to the start first. Returns whether it got there.
+// capture pages back to the start first. Returns '' once there, or why it could not get there.
 async function goToStart(isRunning) {
   let img = pageImage();
-  const limit = (parsePosition(document.body.innerText)?.m || 2000) + 50;
-  for (let i = 0; img && i < limit && isRunning(); i++) {
-    if (parsePosition(document.body.innerText)?.n === 1) return true;
+  const guard = turnGuard(parsePosition(document.body.innerText)?.m);
+  while (img && isRunning()) {
+    const pos = parsePosition(document.body.innerText);
+    if (pos?.n === 1) return '';
+    const stop = guard(pos);
+    if (stop) return `paging back to page 1 stopped: ${stop}`;
     const back = await turnPage(img.src, 'Previous page');
     if (!back) break;
     img = back;
   }
-  return atStart(parsePosition(document.body.innerText), false);
+  if (!isRunning()) return 'stopped by a click on the icon';
+  return atStart(parsePosition(document.body.innerText), false) ? '' : `could not page back to page 1 (still at ${position() || 'an unknown page'})`;
 }
 
 async function captureBook(save, isRunning) {
@@ -90,7 +94,11 @@ async function captureBook(save, isRunning) {
   let previous = '';
   let count = 0;
   const positions = {};
+  const guard = turnGuard(parsePosition(document.body.innerText)?.m);
+  let stopped = '';
   while (img && isRunning()) {
+    stopped = guard(parsePosition(document.body.innerText));
+    if (stopped) break;
     const data = await toPng(img);
     if (data !== previous) {
       count++;
@@ -111,8 +119,9 @@ async function captureBook(save, isRunning) {
   }
   // Page N of M for every saved page, so check_book.py can tell a capture that missed the start or the end.
   if (count) save('positions.json', new TextEncoder().encode(JSON.stringify(positions, null, 1)), '');
-  // Which extension made this ZIP, so capture_book.py can tell a Brave that was not reloaded after a change.
-  if (count) save('capture.json', new TextEncoder().encode(JSON.stringify({ extension_version: chrome.runtime.getManifest().version })), '');
+  // Which extension made this ZIP, so capture_book.py can tell a Brave that was not reloaded after a change,
+  // and why the capture ended early when a turn cap stopped it (check_book.py's capture_stop).
+  if (count) save('capture.json', new TextEncoder().encode(JSON.stringify({ extension_version: chrome.runtime.getManifest().version, stopped })), '');
   return count;
 }
 
@@ -190,26 +199,28 @@ function asinFromUrl() {
   return new URL(location.href).searchParams.get('asin') || '';
 }
 
+// An automatic capture that will not run says why in <ASIN>.skip.json in Downloads and closes its tab, so
+// capture_book.py stops waiting at once instead of for an hour.
+async function refuse(asin, auto, reason) {
+  running = false;
+  chrome.runtime.sendMessage({ badge: 'skip' });
+  console.log(`[kindle-capture] not starting: ${reason}`);
+  if (!auto) return;
+  const notice = { asin, reason, position: position(), extension_version: chrome.runtime.getManifest().version };
+  const saved = await download(new Blob([JSON.stringify(notice, null, 1)], { type: 'application/json' }), `${asin}.skip.json`);
+  chrome.runtime.sendMessage({ finish: { asin, pages: 0, auto, download: saved } });
+}
+
 async function startCapture(asin, auto, again = false) {
   running = true; // set before the claim returns, so a second click stops rather than starts again
   const { ok, reason } = await chrome.runtime.sendMessage({ claim: { asin, auto, again } });
-  if (!ok) {
-    running = false;
-    chrome.runtime.sendMessage({ badge: 'skip' });
-    console.log(`[kindle-capture] not starting: ${reason}`);
-    return;
-  }
+  if (!ok) return refuse(asin, auto, reason);
   // Opened from a URL, the reader may still be loading its first page.
   for (let t = 0; auto && !pageImage() && t < FIRST_PAGE_WAIT_MS; t += 500) await sleep(500);
   if (auto) {
     chrome.runtime.sendMessage({ badge: 'back' });
-    if (!await goToStart(() => running)) {
-      running = false;
-      chrome.runtime.sendMessage({ finish: { asin, pages: 0 } });
-      chrome.runtime.sendMessage({ badge: 'skip' });
-      console.log(`[kindle-capture] not starting: could not page back to page 1 (still at ${position() || 'an unknown page'})`);
-      return;
-    }
+    const problem = await goToStart(() => running);
+    if (problem) return refuse(asin, auto, problem);
   }
   const files = [];
   const save = (name, bytes, pos) => {

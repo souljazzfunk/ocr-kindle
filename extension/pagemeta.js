@@ -60,4 +60,30 @@ function atStart(pos, turned) {
   return pos ? pos.n === 1 : !turned;
 }
 
-if (typeof module !== 'undefined') module.exports = { pickTitle, probePage, parsePosition, atStart };
+// Caps on page turns. On 2026-10-10 Automate the Boring Stuff (552 pages, opened at 517) turned for over 15 minutes
+// with nothing to stop it but the end of the book, and looked like an endless loop. A guard is called once per turn
+// with the reader's position and returns why to stop, or '' to go on.
+const EXTRA_TURNS = 50;
+const UNKNOWN_LENGTH = 3000;
+const STUCK_TURNS = 30;
+
+function turnGuard(total) {
+  const limit = (total || UNKNOWN_LENGTH) + EXTRA_TURNS;
+  let turns = 0;
+  let last = null;
+  let same = 0;
+  return (pos) => {
+    turns++;
+    if (turns > limit) return `${turns} turns, more than the ${limit} a book of ${total || 'unknown'} pages needs`;
+    const n = pos ? pos.n : null;
+    if (n !== null && n === last) {
+      if (++same >= STUCK_TURNS) return `the reader stayed on page ${n} for ${STUCK_TURNS} turns`;
+    } else {
+      same = 0;
+      last = n;
+    }
+    return '';
+  };
+}
+
+if (typeof module !== 'undefined') module.exports = { pickTitle, probePage, parsePosition, atStart, turnGuard, EXTRA_TURNS, STUCK_TURNS };

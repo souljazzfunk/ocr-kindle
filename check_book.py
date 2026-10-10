@@ -18,6 +18,7 @@ from img2txt import SOURCES, TEXT_LAYER, VISION, page_images, read_sources
 from proofread import DECORATIVE_REF, Book, find_all, load_pages
 
 PROBE = 'dom-probe.json'
+CAPTURE = 'capture.json'
 POSITIONS = 'positions.json'
 POSITION = re.compile(r'(?:位置|ページ|Location|Page)\D{0,3}(\d+)\s*(?:/|of)\s*(\d+)')
 DEFAULT_TITLES = re.compile(r'^(kindle-book|[A-Z0-9]{10})$')
@@ -126,6 +127,10 @@ def check_folder(folder, title=None):
     short = last and last[1] < last[2] - end_tolerance(last[2])
     checks.append(Check('end_position', not short,
                         f'last page {last[1]} of {last[2]}' if last else 'end not recorded', fix=None))
+    capture = folder / CAPTURE
+    stopped = json.loads(capture.read_text(encoding='utf-8')).get('stopped') if capture.exists() else ''
+    checks.append(Check('capture_stop', not stopped, f'a turn cap ended the capture: {stopped}' if stopped
+                        else 'the capture ran to the end of the book', fix=None))
     checks.append(Check('positions', complete, f'{POSITIONS} ' + ('present' if complete else
                         'missing: a ZIP from extension 1.2 or older, so start and end were not fully checked'),
                         blocking=False, fix=None))

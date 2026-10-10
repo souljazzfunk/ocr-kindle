@@ -184,3 +184,46 @@ def test_real_titles_are_not_noise(tmp_path):
     folder = book(tmp_path, [page], md=page)
     checks = by_name(check_folder(folder))
     assert checks['heading_noise'].ok and checks['chapter_titles'].ok and checks['decorative_digits'].ok
+
+
+def test_a_capture_cut_off_by_a_turn_cap_is_caught(tmp_path):
+    folder = book(tmp_path, [BODY + BODY2], md=BODY + BODY2)
+    (folder / 'capture.json').write_text(json.dumps({'extension_version': '1.5', 'stopped': 'the reader stayed on page 517 for 30 turns'}))
+    checks = by_name(check_folder(folder))
+    assert not checks['capture_stop'].ok and 'page 517' in checks['capture_stop'].detail
+    (folder / 'capture.json').write_text(json.dumps({'extension_version': '1.5', 'stopped': ''}))
+    assert by_name(check_folder(folder))['capture_stop'].ok
+
+
+def test_a_skip_notice_ends_the_wait_at_once(tmp_path):
+    before = {tmp_path / 'B07VSXS4NK.skip.json'}
+    (tmp_path / 'B07VSXS4NK.skip.json').write_text('{}')  # from an earlier run: not this capture's
+    (tmp_path / 'B0OTHER.skip.json').write_text('{}')
+    ticks = iter(range(0, 100, 1))
+    wait = lambda: capture_book.wait_for_zip(tmp_path, before, timeout=5, clock=lambda: next(ticks), sleep=lambda s: None,
+                                            asin='B07VSXS4NK')
+    assert wait() is None
+    (tmp_path / 'B07VSXS4NK.skip (1).json').write_text(json.dumps({'reason': 'could not page back to page 1'}))
+    ticks = iter(range(0, 100, 1))
+    assert wait() == tmp_path / 'B07VSXS4NK.skip (1).json'
+
+
+def test_a_tab_left_on_the_book_is_closed_before_opening_another_or_the_book_is_not_started(tmp_path, monkeypatch):
+    opened = []
+    monkeypatch.setattr(capture_book, 'folder_problem', lambda: None)
+    monkeypatch.setattr(capture_book, 'open_in_brave', lambda *a: opened.append(a))
+    monkeypatch.setattr(capture_book, 'ensure_tab_closed', lambda asin: False)  # Brave would not close it
+    data = capture_book.convert('B07VSXS4NK', 'Automate', downloads=tmp_path, recapture=True)
+    assert data['blocking_failures'] == ['tab_before'] and opened == []
+
+
+def test_a_refused_capture_fails_with_the_extensions_reason(tmp_path, monkeypatch):
+    monkeypatch.setattr(capture_book, 'folder_problem', lambda: None)
+    monkeypatch.setattr(capture_book, 'ensure_tab_closed', lambda asin: True)
+
+    def open_in_brave(asin, domain, recapture):
+        (tmp_path / f'{asin}.skip.json').write_text(json.dumps({'reason': 'tab 7 is already capturing B07VSXS4NK'}))
+
+    monkeypatch.setattr(capture_book, 'open_in_brave', open_in_brave)
+    data = capture_book.convert('B07VSXS4NK', 'Automate', downloads=tmp_path)
+    assert data['blocking_failures'] == ['capture_refused'] and 'already capturing' in data['error']

@@ -25,7 +25,10 @@ RECAPTURES = 1
 # Failures that come from the browser or the extension, not from one book: every later book would fail the same
 # way, so the list stops at the first book that still has one (after its recapture). On 2026-10-10 a run went on
 # while each ZIP opened a save dialog, and 1.3 was called fixed before any capture on the Mac had shown it.
-STOP_CHECKS = {'download', 'extension_version', 'tab_closed', 'start_position', 'end_position'}
+# A capture that never made a ZIP (refused, cut off by a turn cap, a tab left from an earlier run, an hour with no ZIP)
+# stops it too: on 2026-10-10 a resumed run opened a second tab on a book the first was still paging through.
+STOP_CHECKS = {'download', 'extension_version', 'tab_closed', 'start_position', 'end_position',
+               'capture_refused', 'capture_stop', 'tab_before', 'no_zip'}
 
 
 def read_list(path):
