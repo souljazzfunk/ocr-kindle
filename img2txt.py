@@ -386,6 +386,8 @@ def main():
     parser.add_argument('--title', help='Output file name without extension (default: folder name)')
     parser.add_argument('--model', help=f'Comma-separated models tried in order, Gemini names or "vision" (default: GEMINI_MODEL in config.env or {DEFAULT_MODELS})')
     parser.add_argument('--force', action='store_true', help='Re-OCR pages that already have text')
+    parser.add_argument('--layout', choices=['gemini', 'sonnet'], default='gemini',
+                        help='Who reads the page structure: Gemini, falling back to Sonnet (claude -p) when it fails, or Sonnet only')
     args = parser.parse_args()
     config = load_config()
     if args.folder.suffix == '.zip':
@@ -437,13 +439,16 @@ def main():
             sys.exit(f'{len(failed)} pages failed. Re-run the same command to retry only those pages.')
 
     # Pages read just now, and pages never laid out, take Gemini's layout; the rest keep their text and its proofreading.
-    from layout import GeminiFailed, mark_layout, read_layout
+    from layout import GeminiFailed, claude_cli, mark_layout, read_layout
     sources = read_sources(args.folder)
     done = read_layout(args.folder)
     vision = [img for img in images if sources.get(img.stem) == VISION and (img.stem in read_now or img.stem not in done)]
-    if vision and client:
+    cli = claude_cli()
+    if args.layout == 'sonnet' and not cli:
+        sys.exit('--layout sonnet needs the Claude Code CLI (claude) on PATH or in ~/.local/bin')
+    if vision and (client or cli):
         try:
-            left = mark_layout(args.folder, client, vision)
+            left = mark_layout(args.folder, None if args.layout == 'sonnet' else client, vision, cli)
         except GeminiFailed as e:
             print(e, flush=True)
             (args.folder / GEMINI_ERROR).write_text(str(e), encoding='utf-8')
@@ -452,7 +457,7 @@ def main():
         print(f'Layout read on {len(vision) - len(left)} of {len(vision)} Vision pages'
               + (f'; {len(left)} left, run again to retry' if left else ''), flush=True)
     elif vision:
-        print(f'GEMINI_API_KEY is not set in {CONFIG_PATH}: {len(vision)} Vision pages keep titles guessed from layout')
+        print(f'GEMINI_API_KEY is not set in {CONFIG_PATH} and claude is not installed: {len(vision)} Vision pages keep titles guessed from layout')
 
     write_book(args.folder, args.title or args.folder.resolve().name, config)
 

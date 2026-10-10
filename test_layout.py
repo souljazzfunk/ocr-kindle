@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -211,3 +212,56 @@ def test_heading_noise_is_made_plain_text(tmp_path):
     pages = {'page_0001': '## about the rates and slopes, people!\n\n## WHY WRITE\n\n' + body}
     findings = [f for f in find_all(Book(tmp_path, pages)) if f.kind == 'heading_noise']
     assert apply(pages, findings)['page_0001'] == 'about the rates and slopes, people!\n\n## WHY WRITE\n\n' + body
+
+
+def test_sonnet_lays_out_the_pages_gemini_could_not_and_the_book_goes_on(tmp_path, monkeypatch):
+    # 2026-10-10: Gemini's 500 requests a day ran out mid-list and the list waited for the next day.
+    for n in range(1, 31):
+        (tmp_path / f'page_{n:04d}.png').write_bytes(b'png')
+        (tmp_path / f'page_{n:04d}.lines.json').write_text(json.dumps([[0.1, 0.1, 0.03, 'A TITLE']] + BODY))
+
+    def generate_content(model, contents, config):
+        raise RuntimeError('429 RESOURCE_EXHAUSTED quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier')
+
+    calls = []
+
+    def run(command, input, **kwargs):
+        calls.append(command)
+        stems = re.findall(r'Page "([^"]+)": image (\S+)', input)
+        assert all(Path(path).exists() for _, path in stems)  # Sonnet opens the image itself
+        answer = [{'page': s, 'titles': [{'line': 0, 'level': 2}], 'quotes': [], 'figures': [], 'art': []} for s, _ in stems]
+        reply = {'type': 'result', 'is_error': False, 'result': 'Here it is:\n```json\n' + json.dumps(answer) + '\n```'}
+        return SimpleNamespace(returncode=0, stdout=json.dumps(reply), stderr='')
+
+    monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
+    monkeypatch.setattr(layout.time, 'sleep', lambda s: pytest.fail('waited on a daily limit'))
+    monkeypatch.setattr(layout.subprocess, 'run', run)
+    monkeypatch.setattr(layout, 'WORKERS', 1)
+    client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    assert mark_layout(tmp_path, client, sorted(tmp_path.glob('page_*.png')), cli='claude') == []
+    assert len(calls) == 2 and calls[0][:4] == ['claude', '-p', '--model', 'sonnet']
+    saved = read_layout(tmp_path)
+    assert len(saved) == 30 and all(page['model'] == 'claude' for page in saved.values())
+    assert (tmp_path / 'page_0030.txt').read_text().startswith('## A TITLE')
+
+
+def test_the_book_stops_when_sonnet_fails_too(tmp_path, monkeypatch):
+    for n in range(1, 61):
+        (tmp_path / f'page_{n:04d}.png').write_bytes(b'png')
+        (tmp_path / f'page_{n:04d}.lines.json').write_text(json.dumps(BODY))
+    calls = []
+
+    def run(command, input, **kwargs):
+        calls.append(1)
+        return SimpleNamespace(returncode=1, stdout='', stderr='Claude usage limit reached')
+
+    def generate_content(model, contents, config):
+        raise RuntimeError('429 RESOURCE_EXHAUSTED quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier')
+
+    monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
+    monkeypatch.setattr(layout.subprocess, 'run', run)
+    monkeypatch.setattr(layout, 'WORKERS', 1)
+    client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    with pytest.raises(layout.GeminiFailed, match='60 pages left: Gemini: 429.*Sonnet: .*usage limit.*midnight Pacific'):
+        mark_layout(tmp_path, client, sorted(tmp_path.glob('page_*.png')), cli='claude')
+    assert len(calls) == 1  # three batches, one call to each

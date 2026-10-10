@@ -5,12 +5,18 @@ Vision reads the words well, but a title, a pull quote, a sidebar label and a li
 boxes, and their place and size vary from book to book (AI for Educators sets its section titles in dark bands at the
 body margin and its pull quotes centred in grey boxes). So img2txt.py keeps Vision's line boxes per page
 (`<page>.lines.json`), and a Gemini model that sees the page image names, by line number, what each special line is.
-It answers with line numbers and a few words, never the book's text, so RECITATION cannot refuse it, and eight pages
+It answers with line numbers and a few words, never the book's text, so RECITATION cannot refuse it, and twenty pages
 go in one request. The answers are kept in layout.json, so a re-run asks only for pages not yet read.
+
+When Gemini fails (its free tier ran out mid-list on 2026-10-10), Sonnet answers the same question through the
+Claude Code CLI on the Mac (`claude -p`), on Laiken's Claude plan, so the list does not wait a day for the quota.
 """
 
 import json
+import os
 import re
+import shutil
+import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -32,6 +38,10 @@ DAILY_LIMIT = 'PerDay'  # in a 429 for the day's requests, which waiting minutes
 class GeminiFailed(RuntimeError):
     """A layout request failed after its retries. The rest of the book's requests are not sent: on 2026-10-10 every
     request failed for ten minutes before anyone noticed, because the run went on and only the verdict was watched."""
+CLAUDE_MODEL = 'sonnet'
+CLAUDE_WORKERS = 3
+CLAUDE_TIMEOUT_S = 900
+CLAUDE = 'claude'  # the model name kept in layout.json for the pages Claude laid out
 LINE_PITCH = 1.6  # line pitch at most this many line heights
 MIN_FIGURE_LINES = 3
 CAPS_MIN_LETTERS = 3
@@ -109,8 +119,46 @@ def ask_layout(client, images):
     return {page.pop('page'): page for page in json.loads(response.text) if page.get('page') in stems}
 
 
-def mark_layout(folder, client, images):
+def claude_cli():
+    """The Claude Code CLI, also where its installer puts it when a background job's PATH leaves that out."""
+    return shutil.which('claude') or next(
+        (str(p) for p in [os.path.expanduser('~/.local/bin/claude'), os.path.expanduser('~/.claude/local/claude')]
+         if os.access(p, os.X_OK)), None)
+
+
+def json_array(text):
+    """The JSON array in a reply that may wrap it in a code fence or a sentence."""
+    start, end = text.find('['), text.rfind(']')
+    if start < 0 or end < start:
+        raise ValueError(f'no JSON array in the reply: {text[:200]}')
+    return json.loads(text[start:end + 1])
+
+
+def ask_layout_claude(cli, images):
+    """Sonnet's reading of a batch of Vision pages through `claude -p`: it opens each page image with its Read tool."""
+    parts = [PROMPT, 'Open each page image with the Read tool before answering. Reply with only a JSON array, one '
+             'object per page: {"page": "<name>", "titles": [{"line": n, "level": n}], "quotes": [n], '
+             '"figures": [{"lines": [n], "description": "..."}], "art": [n], "drop_cap": {"line": n, "word": "..."} '
+             'or null}.']
+    for image in images:
+        parts += [f'Page "{image.stem}": image {image.resolve()}',
+                  '\n'.join(f'{i}: {line[3]}' for i, line in enumerate(sorted_boxes(image)))]
+    run = subprocess.run(
+        [cli, '-p', '--model', CLAUDE_MODEL, '--output-format', 'json', '--allowedTools', 'Read',
+         '--add-dir', str(images[0].parent.resolve()), '--strict-mcp-config'],
+        input='\n\n'.join(parts), capture_output=True, text=True, timeout=CLAUDE_TIMEOUT_S,
+        cwd=images[0].parent)
+    reply = json.loads(run.stdout) if run.stdout.strip().startswith('{') else {}
+    if run.returncode or reply.get('is_error') or 'result' not in reply:
+        raise RuntimeError(f'claude -p exited {run.returncode}: {(reply.get("result") or run.stderr or run.stdout)[:300]}')
+    stems = {image.stem for image in images}
+    return {page.pop('page'): dict(page, model=CLAUDE) for page in json_array(reply['result'])
+            if isinstance(page, dict) and page.get('page') in stems}
+
+
+def mark_layout(folder, client, images, cli=None):
     """Ask Gemini for the layout of the pages in images not read yet, and rewrite every page in images from it.
+    Once a Gemini request fails, the rest go to Sonnet through cli (`claude -p`); with no client, all of them do.
 
     Returns the pages still without a layout (a failed request; running img2txt.py again asks again).
     """
@@ -118,19 +166,37 @@ def mark_layout(folder, client, images):
     todo = [image for image in images if image.stem not in layout and image.with_suffix(LINES).exists()]
     batches = [todo[i:i + BATCH] for i in range(0, len(todo), BATCH)]
 
-    failed = threading.Event()
+    failed = threading.Event()  # Gemini failed: send it nothing more
+    claude_failed = threading.Event()
+    claude_slots = threading.Semaphore(CLAUDE_WORKERS)
+    gemini_error = []
+    if not client:
+        failed.set()
 
     def ask(batch):
         for attempt in range(TRIES):
             if failed.is_set():
-                return {}, None  # another request already failed: send nothing more
+                break
             try:
                 return ask_layout(client, batch), None
             except Exception as e:
                 if '429' not in str(e) or DAILY_LIMIT in str(e) or attempt + 1 == TRIES:
+                    if not failed.is_set():
+                        print(f'GEMINI ERROR [layout]: {e}' + ('; Sonnet lays out the rest' if cli else ''), flush=True)
+                        gemini_error.append(e)
                     failed.set()
-                    return {}, e
+                    break
                 time.sleep(RATE_WAIT_S)
+        if not cli or claude_failed.is_set():
+            return {}, (gemini_error or [None])[0]
+        with claude_slots:
+            if claude_failed.is_set():
+                return {}, None
+            try:
+                return ask_layout_claude(cli, batch), None
+            except Exception as e:
+                claude_failed.set()
+                return {}, RuntimeError(f'Gemini: {str((gemini_error or ["no API key"])[0])[:300]}; Sonnet: {e}')
 
     first_error = None
     with ThreadPoolExecutor(WORKERS) as pool:
@@ -138,6 +204,8 @@ def mark_layout(folder, client, images):
             if error:
                 print(f'GEMINI ERROR [layout {done}/{len(batches)}]: {error}', flush=True)
                 first_error = first_error or error
+            elif any(page.get('model') == CLAUDE for page in pages.values()):
+                print(f'[layout {done}/{len(batches)}] {len(pages)} pages by Sonnet', flush=True)
             layout.update(pages)
             (folder / LAYOUT).write_text(json.dumps(layout, ensure_ascii=False, indent=0), encoding='utf-8')
     chapters = contents_entries(page_images(folder))
@@ -153,7 +221,7 @@ def mark_layout(folder, client, images):
         # The pages laid out so far are written above; the rest wait for the cause to be gone.
         when = (' Today\'s requests are used up; they come back at midnight Pacific (16:00 or 17:00 JST).'
                 if DAILY_LIMIT in str(first_error) else '')
-        raise GeminiFailed(f'Gemini layout failed with {len(left)} pages left: {str(first_error)[:300]}.{when}')
+        raise GeminiFailed(f'Layout failed with {len(left)} pages left: {str(first_error)[:300]}.{when}')
     return left
 
 
