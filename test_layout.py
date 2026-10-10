@@ -151,6 +151,17 @@ def test_proofreading_fixes_al_for_ai_and_digits_for_ll():
     assert fixed['page_0002'] == "The more that AI becomes assimilated, the more that it'll impact the classroom."
 
 
+def test_proofreading_fixes_al_in_a_title_cover_digits_and_a_stray_colon():
+    pages = {'page_0001': 'AI tools. AI assistants. AI is here.\n\n- 4. 30 Ways Al Can Support Teaching and Learning',
+             'page_0002': 'MATT MILLER AUTHOR OF DITCH THAT TEXTBOOK 1 10111010\n\nIn 2023 there were 100000 users.',
+             'page_0003': 'Help ourselves thrive with this technology.:\n\nFor example: e.g.: stays.'}
+    findings = find_all(Book(Path('/nonexistent'), pages))
+    fixed = apply(pages, [f for f in findings if f.kind in ('l_for_i', 'binary_art', 'stray_colon')])
+    assert fixed['page_0001'].endswith('- 4. 30 Ways AI Can Support Teaching and Learning')
+    assert fixed['page_0002'] == 'MATT MILLER AUTHOR OF DITCH THAT TEXTBOOK\n\nIn 2023 there were 100000 users.'
+    assert fixed['page_0003'] == 'Help ourselves thrive with this technology.\n\nFor example: e.g.: stays.'
+
+
 def test_heading_noise_is_made_plain_text(tmp_path):
     (tmp_path / 'ocr_sources.tsv').write_text('page_0001\tvision\n')
     body = BODY[0][3] + ' ' + BODY[1][3]
