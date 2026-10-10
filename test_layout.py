@@ -240,6 +240,7 @@ def test_sonnet_lays_out_the_pages_gemini_could_not_and_the_book_goes_on(tmp_pat
     client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
     assert mark_layout(tmp_path, client, sorted(tmp_path.glob('page_*.png')), cli='claude') == []
     assert len(calls) == 2 and calls[0][:4] == ['claude', '-p', '--model', 'sonnet']
+    assert '{"disableAllHooks": true}' in calls[0]  # the LLM wiki logs no session for these calls
     saved = read_layout(tmp_path)
     assert len(saved) == 30 and all(page['model'] == 'claude' for page in saved.values())
     assert (tmp_path / 'page_0030.txt').read_text().startswith('## A TITLE')
