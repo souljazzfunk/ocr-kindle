@@ -136,7 +136,8 @@ def json_array(text):
 
 def ask_layout_claude(cli, images):
     """Sonnet's reading of a batch of Vision pages through `claude -p`: it opens each page image with its Read tool.
-    Hooks are off so these calls stay out of the session log the LLM wiki grows from (Laiken, 2026-10-10)."""
+    Hooks are off, and LLM_WIKI_WATCHER tells the wiki's own SessionEnd hook to skip them, so these calls stay out of
+    the session log the LLM wiki grows from (Laiken, 2026-10-10: seven of them had reached its queue)."""
     parts = [PROMPT, 'Open each page image with the Read tool before answering. Reply with only a JSON array, one '
              'object per page: {"page": "<name>", "titles": [{"line": n, "level": n}], "quotes": [n], '
              '"figures": [{"lines": [n], "description": "..."}], "art": [n], "drop_cap": {"line": n, "word": "..."} '
@@ -149,7 +150,7 @@ def ask_layout_claude(cli, images):
          '--add-dir', str(images[0].parent.resolve()), '--strict-mcp-config',
          '--settings', '{"disableAllHooks": true}'],
         input='\n\n'.join(parts), capture_output=True, text=True, timeout=CLAUDE_TIMEOUT_S,
-        cwd=images[0].parent)
+        cwd=images[0].parent, env=dict(os.environ, LLM_WIKI_WATCHER='1'))
     reply = json.loads(run.stdout) if run.stdout.strip().startswith('{') else {}
     if run.returncode or reply.get('is_error') or 'result' not in reply:
         raise RuntimeError(f'claude -p exited {run.returncode}: {(reply.get("result") or run.stderr or run.stdout)[:300]}')

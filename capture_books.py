@@ -7,20 +7,24 @@ and go on to the next by the checks' verdict, with no one asked in between.
 
 books.tsv has one `ASIN<TAB>title` per line (`#` lines are skipped). Progress goes to books.progress.json next
 to it: a book marked done or failed is not run again, so an interrupted run resumes at the next book. A book the
-list stopped on (a Brave or extension failure, STOP_CHECKS) is run again, as #recapture.
+list stopped on (a Brave or extension failure, STOP_CHECKS) is run again, as #recapture, unless a good capture of it
+was saved after it stopped: then that ZIP is converted with no new capture.
 At the end the summary lists what was done and what failed and why; the exit code is 1 when anything failed.
 """
 
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 import brave
 import capture_book
+from check_book import CAPTURE
 
 # A failure in these checks means the ZIP itself is unusable, so the book is captured again (once).
 CAPTURE_CHECKS = {'pages', 'text', 'start_position', 'end_position'}
@@ -84,10 +88,40 @@ def decide(data, attempt):
     return 'failed'
 
 
+def comparable(text):
+    return re.sub(r'[^a-z0-9]', '', (text or '').lower())
+
+
+def saved_capture(downloads, title, since, version=None):
+    """The newest ZIP of this book saved after since (epoch seconds) by the extension on main, run to the end; else None.
+
+    On 2026-10-10 Facing the Mountain was captured well on 1.7 after the list had stopped on it, but its entry still
+    said stopped, so the resumed list paged through all 673 screens again.
+    """
+    version = version or capture_book.repo_version()
+    key = comparable(title)
+    if not key:
+        return None
+    for path in sorted(Path(downloads).glob('*.zip'), key=lambda p: p.stat().st_mtime, reverse=True):
+        stem = comparable(re.sub(r' \(\d+\)$', '', path.stem))  # Brave's uniquified copies
+        if path.stat().st_mtime <= since or not stem or not (stem.startswith(key) or key.startswith(stem)):
+            continue
+        try:
+            with zipfile.ZipFile(path) as archive:
+                made = json.loads(archive.read(CAPTURE))
+        except (KeyError, zipfile.BadZipFile, json.JSONDecodeError):
+            continue
+        if made.get('extension_version') == version and not made.get('stopped'):
+            return path
+    return None
+
+
 def run_book(asin, title, options, convert=None, again=False):
     """again: an earlier run's capture was unusable, so the extension (which saved the ASIN) must capture it anew."""
     convert = convert or capture_book.convert
     for attempt in range(1, RECAPTURES + 2):
+        if attempt > 1:
+            options = {key: value for key, value in options.items() if key != 'source'}  # that ZIP was unusable
         data = convert(asin, title, recapture=again or attempt > 1, **options)
         verdict = decide(data, attempt)
         if verdict != 'recapture':
@@ -133,6 +167,11 @@ def main():
             again = asin in progress and not waiting
             # A book stopped by a Gemini failure was captured well: convert its folder again, without Brave.
             book_options = {**options, 'source': Path(entry['source'])} if waiting else options
+            saved = again and entry.get('at') and saved_capture(
+                args.downloads, title, time.mktime(time.strptime(entry['at'], '%Y-%m-%dT%H:%M:%S')))
+            if saved:
+                print(f'=== converting {saved.name}, captured after the list stopped on this book', flush=True)
+                book_options, again = {**options, 'source': saved}, False
             verdict, data = run_book(asin, title, book_options, again=again)
         except Exception as e:  # a crash in one book must not stop the list, and must be in the summary
             verdict, data = 'failed', {'error': str(e), 'blocking_failures': ['crash'], 'warnings': []}
