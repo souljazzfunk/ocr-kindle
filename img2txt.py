@@ -27,6 +27,11 @@ CONFIG_PATH = Path(os.environ.get('KINDLE_OCR_CONFIG', Path(__file__).with_name(
 DEFAULT_MODELS = 'gemini-3.8-flash,gemini-3.5-flash-lite,vision'
 VISION = 'vision'
 VISION_INDENT = 0.015
+# A line this many times taller than the page's median line is a heading. Vision gives no heading marks itself.
+HEADING_RATIO = 1.5
+# Decorative heading digits Vision reads as letters (How to Write a Lot: 7 as Z, 8 as &).
+DECORATIVE_DIGITS = str.maketrans('Z&', '78')
+HEADING_NUMBER = re.compile(r'^((?:Chapter|Part|Step|No\.?)\s+)?([0-9Z&]{1,3})$', re.I)
 LINE_END_HYPHEN = re.compile(r'([A-Za-z]+)-$')
 SPELL_LOCK = threading.Lock()
 WORKERS = 4
@@ -103,26 +108,46 @@ def vision_lines(image):
 
 
 def vision_transcribe(image):
-    lines = [(left, top, text) for left, top, _, text in vision_lines(image)]
+    lines = vision_headings(vision_lines(image))
     # Vision finds nothing in vertical Japanese, so an empty result must not mark the page done.
     if not lines:
         raise RuntimeError('no text found')
     return vision_markdown(lines)
 
 
+def vision_headings(lines):
+    """Turn (left, top, height, text) boxes into (left, top, text), marking lines in a larger type as `#` headings."""
+    # A chapter's first page can hold as many heading lines as body lines, so the body size is taken low.
+    heights = sorted(height for _, _, height, _ in lines)
+    body = heights[len(heights) // 3] if heights else 0
+    marked = []
+    for left, top, height, text in lines:
+        if len(lines) > 1 and height >= HEADING_RATIO * body:
+            number = HEADING_NUMBER.match(text.strip())
+            if number:
+                text = (number.group(1) or '') + number.group(2).translate(DECORATIVE_DIGITS)
+            text = '# ' + text.strip()
+        marked.append((left, top, text))
+    return marked
+
+
 def vision_markdown(lines):
-    """Rebuild paragraphs from (left, top, text) line boxes: an indented line or a wide gap starts a new one."""
+    """Rebuild paragraphs from (left, top, text) line boxes: an indented line, a wide gap or a heading starts a new one."""
     lines = sorted(lines, key=lambda line: line[1])
     margin = min(left for left, _, _ in lines)
     pitch = median([b[1] - a[1] for a, b in zip(lines, lines[1:])] or [1])
     paragraphs = []
     previous_top = None
+    previous_heading = False
     for left, top, text in lines:
-        if previous_top is None or left - margin > VISION_INDENT or top - previous_top > 1.5 * pitch:
+        heading = text.startswith('# ')
+        if (previous_top is None or heading or previous_heading or left - margin > VISION_INDENT
+                or top - previous_top > 1.5 * pitch):
             paragraphs.append(text)
         else:
             paragraphs[-1] = join_lines(paragraphs[-1], text)
         previous_top = top
+        previous_heading = heading
     return '\n\n'.join(paragraphs)
 
 

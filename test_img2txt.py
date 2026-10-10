@@ -4,7 +4,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-from img2txt import join_pages, vision_markdown
+from img2txt import join_pages, vision_headings, vision_markdown
 
 SCRIPT = Path(__file__).with_name('img2txt.py')
 
@@ -49,6 +49,37 @@ def test_vision_markdown_rebuilds_paragraphs_from_line_boxes():
     assert vision_markdown(lines) == (
         'Mike Markkula\n\nAll of this required money.\n\n'
         'Bushnell suggested a former marketing manager at IBM-Apple II. He was thirty-three.')
+
+
+def test_vision_headings_mark_large_type_and_fix_decorative_digits():
+    lines = [
+        (0.40, 0.10, 0.060, 'Z'),
+        (0.30, 0.18, 0.045, 'Finding Time'),
+        (0.12, 0.30, 0.020, 'Writing is a skill, not an inspiration.'),
+        (0.12, 0.33, 0.020, 'Schedule it like a class you teach.'),
+        (0.12, 0.36, 0.021, 'Most of us never do.'),
+        (0.30, 0.50, 0.045, 'Chapter &'),
+        (0.30, 0.60, 0.045, 'Generation Z'),
+    ]
+    assert vision_headings(lines) == [
+        (0.40, 0.10, '# 7'),
+        (0.30, 0.18, '# Finding Time'),
+        (0.12, 0.30, 'Writing is a skill, not an inspiration.'),
+        (0.12, 0.33, 'Schedule it like a class you teach.'),
+        (0.12, 0.36, 'Most of us never do.'),
+        (0.30, 0.50, '# Chapter 8'),
+        (0.30, 0.60, '# Generation Z'),
+    ]
+
+
+def test_vision_headings_leave_a_page_of_one_size_alone():
+    lines = [(0.1, 0.1, 0.02, 'Z'), (0.1, 0.2, 0.02, 'and more text')]
+    assert vision_headings(lines) == [(0.1, 0.1, 'Z'), (0.1, 0.2, 'and more text')]
+
+
+def test_vision_markdown_keeps_headings_on_their_own_lines():
+    lines = [(0.40, 0.10, '# 7'), (0.30, 0.12, '# Finding Time'), (0.12, 0.14, 'Writing is a skill.')]
+    assert vision_markdown(lines) == '# 7\n\n# Finding Time\n\nWriting is a skill.'
 
 
 def test_join_pages_undoes_hyphenation_across_pages():
