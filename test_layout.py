@@ -227,6 +227,7 @@ def test_sonnet_lays_out_the_pages_gemini_could_not_and_the_book_goes_on(tmp_pat
 
     def run(command, input, **kwargs):
         calls.append(command)
+        assert kwargs['env']['LLM_WIKI_WATCHER'] == '1'
         stems = re.findall(r'Page "([^"]+)": image (\S+)', input)
         assert all(Path(path).exists() for _, path in stems)  # Sonnet opens the image itself
         answer = [{'page': s, 'titles': [{'line': 0, 'level': 2}], 'quotes': [], 'figures': [], 'art': []} for s, _ in stems]
