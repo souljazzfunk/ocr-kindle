@@ -162,3 +162,25 @@ def test_tab_left_open_is_closed_and_reported(tmp_path):
     assert closed == ['B1'] * capture_book.TAB_TRIES
     # Brave could not be asked: nothing is closed blindly, and the tab is not reported closed.
     assert not capture_book.ensure_tab_closed('B1', count=lambda a: None, close=closed.append, sleep=lambda s: None)
+
+
+def test_heading_noise_missed_chapters_and_digits_in_the_text_are_caught(tmp_path):
+    # How to Write a Lot after the first heading rule: cover words, a photo, a mid-sentence line as headings,
+    # chapter numbers and titles left as plain text, and Z for 7 in a chapter reference.
+    cover = '# How\n\n# Write\n\n# Iot'
+    opening = '2\n\nSpecious Barriers to Writing a Lot\n\n' + BODY + BODY2
+    mid = '# about the rates and slopes, people!\n\n' + BODY + 'In Chapter Z, we turn to books.'
+    folder = book(tmp_path, [cover, opening, mid], md='\n\n'.join([cover, opening, mid]))
+    checks = by_name(check_folder(folder, title='How to Write a Lot'))
+    assert not checks['heading_noise'].ok and checks['heading_noise'].detail.startswith('4 headings')
+    assert not checks['chapter_titles'].ok and checks['chapter_titles'].detail.startswith('1 chapter')
+    assert not checks['decorative_digits'].ok and '1 chapter references' in checks['decorative_digits'].detail
+    assert checks['proofread'].fix[3] == 'decorative_digit'
+    assert '--force' in checks['heading_noise'].fix and '--force' in checks['chapter_titles'].fix
+
+
+def test_real_titles_are_not_noise(tmp_path):
+    page = '# 2 Specious Barriers to Writing a Lot\n\n## SPECIOUS BARRIER 1\n\n' + BODY + BODY2
+    folder = book(tmp_path, [page], md=page)
+    checks = by_name(check_folder(folder))
+    assert checks['heading_noise'].ok and checks['chapter_titles'].ok and checks['decorative_digits'].ok

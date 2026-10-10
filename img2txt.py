@@ -27,8 +27,16 @@ CONFIG_PATH = Path(os.environ.get('KINDLE_OCR_CONFIG', Path(__file__).with_name(
 DEFAULT_MODELS = 'gemini-3.8-flash,gemini-3.5-flash-lite,vision'
 VISION = 'vision'
 VISION_INDENT = 0.015
-# A line this many times taller than the page's median line is a heading. Vision gives no heading marks itself.
+# Vision gives no heading marks, and its line heights vary by half again within one paragraph, so a heading is
+# found by its place on the page: set apart from the body (centred, or in a larger type), with space above or below.
 HEADING_RATIO = 1.5
+# Taller than this, a line is cover type, handwriting in a photo or a rotated chart label, not a heading.
+MAX_HEADING_RATIO = 2.5
+SET_APART = 0.1  # left edge this far right of the body margin: centred or displayed
+BODY_LINE_CHARS = 30
+MIN_BODY_LINES = 3  # a page without body text (cover, title page, figure) gets no headings
+MAX_HEADINGS = 3  # more set-apart lines than this on one page are a figure, a table or a photo
+SPACED = 1.8  # a heading has this many line pitches of space above or below it
 # Decorative heading digits Vision reads as letters (How to Write a Lot: 7 as Z, 8 as &).
 DECORATIVE_DIGITS = str.maketrans('Z&', '78')
 HEADING_NUMBER = re.compile(r'^((?:Chapter|Part|Step|No\.?)\s+)?([0-9Z&]{1,3})$', re.I)
@@ -116,19 +124,66 @@ def vision_transcribe(image):
 
 
 def vision_headings(lines):
-    """Turn (left, top, height, text) boxes into (left, top, text), marking lines in a larger type as `#` headings."""
-    # A chapter's first page can hold as many heading lines as body lines, so the body size is taken low.
-    heights = sorted(height for _, _, height, _ in lines)
-    body = heights[len(heights) // 3] if heights else 0
+    """Turn (left, top, height, text) boxes into (left, top, text), marking chapter and section titles as headings.
+
+    A chapter opening (a number over a title, How to Write a Lot) becomes one `# 7 Writing Books`;
+    other titles become `##`. Cover, title and figure pages, and lines in a photo, get none.
+    """
+    lines = sorted(lines, key=lambda line: line[1])
+    marks, pitch = heading_lines(lines)
     marked = []
-    for left, top, height, text in lines:
-        if len(lines) > 1 and height >= HEADING_RATIO * body:
-            number = HEADING_NUMBER.match(text.strip())
-            if number:
-                text = (number.group(1) or '') + number.group(2).translate(DECORATIVE_DIGITS)
-            text = '# ' + text.strip()
-        marked.append((left, top, text))
+    i = 0
+    while i < len(lines):
+        left, top, _, text = lines[i]
+        text = text.strip()
+        i += 1
+        if i - 1 not in marks:
+            marked.append((left, top, text))
+            continue
+        number = HEADING_NUMBER.match(text)
+        if number:
+            text = (number.group(1) or '') + number.group(2).translate(DECORATIVE_DIGITS)
+        # The title under a chapter number, and the second line of a title that wraps (no space between), join it.
+        under_number = bool(number)
+        while i in marks and not HEADING_NUMBER.match(lines[i][3].strip()) and (
+                under_number or lines[i][1] - lines[i - 1][1] <= SPACED * pitch):
+            text = f'{text} {lines[i][3].strip()}'
+            i += 1
+            under_number = False
+        marked.append((left, top, ('# ' if number else '## ') + text))
     return marked
+
+
+def heading_lines(lines):
+    """Indexes of the lines (sorted by top) that are titles, and the body's line pitch."""
+    margin = min((left for left, _, _, _ in lines), default=0)
+    body = [line for line in lines if line[0] - margin < SET_APART / 2 and len(line[3]) >= BODY_LINE_CHARS]
+    if len(body) < MIN_BODY_LINES:
+        return set(), 0
+    # Body text starts at the margin; a page with many lines away from it holds a photo, a chart or a table.
+    if sum(left - margin > SET_APART for left, _, _, _ in lines) > MAX_HEADINGS:
+        return set(), 0
+    size = median(height for _, _, height, _ in body)
+    pitch = median(b[1] - a[1] for a, b in zip(body, body[1:]))
+    marks = set()
+    for i, (left, top, height, text) in enumerate(lines):
+        text = text.strip()
+        set_apart = left - margin > SET_APART or height >= HEADING_RATIO * size
+        above = top - lines[i - 1][1] if i else 1
+        below = lines[i + 1][1] - top if i + 1 < len(lines) else 1
+        if (set_apart and height <= MAX_HEADING_RATIO * size and max(above, below) > SPACED * pitch
+                and looks_like_title(text)):
+            marks.add(i)
+    return (marks if len(marks) <= MAX_HEADINGS else set()), pitch
+
+
+def looks_like_title(text):
+    """A title starts with a capital or a number and does not stop mid-sentence."""
+    if HEADING_NUMBER.match(text):
+        return True
+    first = text.lstrip('"\'“‘(')[:1]
+    return (bool(first) and len(text) <= 80 and (first.isupper() or first.isdigit())
+            and not text.endswith((',', ';', '-')) and not re.match(r'(?:FIGURE|TABLE|Figure|Table)\b', text))
 
 
 def vision_markdown(lines):
@@ -140,7 +195,7 @@ def vision_markdown(lines):
     previous_top = None
     previous_heading = False
     for left, top, text in lines:
-        heading = text.startswith('# ')
+        heading = re.match(r'#+ ', text) is not None
         if (previous_top is None or heading or previous_heading or left - margin > VISION_INDENT
                 or top - previous_top > 1.5 * pitch):
             paragraphs.append(text)

@@ -54,25 +54,36 @@ def test_vision_markdown_rebuilds_paragraphs_from_line_boxes():
         'Bushnell suggested a former marketing manager at IBM-Apple II. He was thirty-three.')
 
 
-def test_vision_headings_mark_large_type_and_fix_decorative_digits():
-    lines = [
-        (0.40, 0.10, 0.060, 'Z'),
-        (0.30, 0.18, 0.045, 'Finding Time'),
-        (0.12, 0.30, 0.020, 'Writing is a skill, not an inspiration.'),
-        (0.12, 0.33, 0.020, 'Schedule it like a class you teach.'),
-        (0.12, 0.36, 0.021, 'Most of us never do.'),
-        (0.30, 0.50, 0.045, 'Chapter &'),
-        (0.30, 0.60, 0.045, 'Generation Z'),
-    ]
-    assert vision_headings(lines) == [
-        (0.40, 0.10, '# 7'),
-        (0.30, 0.18, '# Finding Time'),
-        (0.12, 0.30, 'Writing is a skill, not an inspiration.'),
-        (0.12, 0.33, 'Schedule it like a class you teach.'),
-        (0.12, 0.36, 'Most of us never do.'),
-        (0.30, 0.50, '# Chapter 8'),
-        (0.30, 0.60, '# Generation Z'),
-    ]
+# Line boxes shaped like How to Write a Lot's, as Vision returns them: (left, top, height, text).
+BODY_LINES = [(0.023, 0.573 + i * 0.038, 0.0276 + (i % 3) * 0.002, f'Body text of the chapter, line number {i} of this page')
+              for i in range(8)]
+
+
+def test_vision_headings_join_a_chapter_number_and_its_title_and_fix_decorative_digits():
+    lines = [(0.484, 0.170, 0.0392, 'Z'), (0.380, 0.257, 0.0334, 'Writing Books')] + BODY_LINES
+    marked = vision_headings(lines)
+    assert marked[0] == (0.484, 0.170, '# 7 Writing Books')
+    assert [t for _, _, t in marked[1:]] == [t for *_, t in BODY_LINES]
+
+
+def test_vision_headings_mark_section_titles_and_join_a_wrapped_one():
+    lines = [(0.214, 0.104, 0.0325, 'WHAT SHOULD I DO? SETTING GOALS'), (0.301, 0.161, 0.0262, 'AND TRACKING PROGRESS')]
+    lines += [(left, top - 0.3, h, t) for left, top, h, t in BODY_LINES]
+    assert vision_headings(lines)[0] == (0.214, 0.104, '## WHAT SHOULD I DO? SETTING GOALS AND TRACKING PROGRESS')
+
+
+def test_vision_headings_skip_cover_photo_and_mid_sentence_lines():
+    cover = [(0.379, 0.270, 0.1119, 'How'), (0.316, 0.419, 0.1163, 'Write'), (0.522, 0.509, 0.1541, 'Iot'),
+             (0.382, 0.920, 0.0557, 'Paul J. Silvia, PhD')]
+    assert not any(t.startswith('#') for _, _, t in vision_headings(cover))  # no body text on the page
+    photo = [(0.260, 0.0, 0.0992, 'JAN 30 GONS'), (0.188, 0.119, 0.0412, '• Tom'), (0.542, 0.300, 0.1262, 'Persevere'),
+             (0.432, 0.528, 0.1359, '• read paper on'), (0.224, 0.487, 0.0538, 'Draft')]
+    photo += [(left, top + 0.2, h, t) for left, top, h, t in BODY_LINES[:6]]
+    assert not any(t.startswith('#') for _, _, t in vision_headings(photo))
+    # A body line Vision boxes taller than its neighbours, in the middle of a paragraph.
+    tall = BODY_LINES[:4] + [(0.024, 0.725, 0.0403, 'a wayward writing group, like hanging out with the')] + [
+        (left, top + 0.2, h, t) for left, top, h, t in BODY_LINES[4:]]
+    assert not any(t.startswith('#') for _, _, t in vision_headings(tall))
 
 
 def test_vision_headings_leave_a_page_of_one_size_alone():
@@ -81,8 +92,8 @@ def test_vision_headings_leave_a_page_of_one_size_alone():
 
 
 def test_vision_markdown_keeps_headings_on_their_own_lines():
-    lines = [(0.40, 0.10, '# 7'), (0.30, 0.12, '# Finding Time'), (0.12, 0.14, 'Writing is a skill.')]
-    assert vision_markdown(lines) == '# 7\n\n# Finding Time\n\nWriting is a skill.'
+    lines = [(0.40, 0.10, '# 7 Finding Time'), (0.30, 0.12, '## WHY WRITE'), (0.12, 0.14, 'Writing is a skill.')]
+    assert vision_markdown(lines) == '# 7 Finding Time\n\n## WHY WRITE\n\nWriting is a skill.'
 
 
 def test_join_pages_undoes_hyphenation_across_pages():
