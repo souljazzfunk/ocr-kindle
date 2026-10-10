@@ -14,7 +14,8 @@ import shutil
 import sys
 import threading
 import zipfile
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 from statistics import median
 
@@ -42,7 +43,11 @@ DECORATIVE_DIGITS = str.maketrans('Z&', '78')
 HEADING_NUMBER = re.compile(r'^((?:Chapter|Part|Step|No\.?)\s+)?([0-9Z&]{1,3})$', re.I)
 LINE_END_HYPHEN = re.compile(r'([A-Za-z]+)-$')
 SPELL_LOCK = threading.Lock()
-WORKERS = 4
+WORKERS = 4  # Gemini requests at once; the free tier's rate limit, not the Mac, is the bound
+# Vision runs on the Mac, one page per core. Separate processes, so the Python half of each page (line boxes to
+# Markdown) does not queue behind one interpreter lock. At 4 threads the 999 screens of Automate the Boring Stuff
+# went at about 100 a minute on an 8-core Mac.
+VISION_WORKERS = os.cpu_count() or WORKERS
 PAGE_NUMBER = re.compile(r'_(\d+)\.png$')
 SENTENCE_END = tuple('。．.!?！？」』）)”')
 MIN_BODY_CHARS = 100
@@ -95,6 +100,19 @@ def ocr_page(client, models, image):
         image.with_suffix('.txt').write_text(text or ' ', encoding='utf-8')
         return model, len(text)
     raise RuntimeError(' | '.join(errors))
+
+
+def ocr_job(client, models, image):
+    """One page for the worker pool: (image, (model, chars), None) or (image, None, error)."""
+    try:
+        return image, ocr_page(client, models, image), None
+    except Exception as e:
+        return image, None, e
+
+
+def ocr_pool(models):
+    """Vision alone runs in one process per core; anything with Gemini stays at WORKERS threads."""
+    return (ProcessPoolExecutor, VISION_WORKERS) if models == [VISION] else (ThreadPoolExecutor, WORKERS)
 
 
 def vision_lines(image):
@@ -312,15 +330,11 @@ def main():
             client = genai.Client(api_key=api_key, http_options=types.HttpOptions(
                 retry_options=types.HttpRetryOptions(attempts=3, initial_delay=2, max_delay=30)))
 
-        def run(image):
-            try:
-                return image, ocr_page(client, models, image), None
-            except Exception as e:
-                return image, None, e
-
         failed = []
-        with ThreadPoolExecutor(WORKERS) as pool:
-            for done, (image, result, error) in enumerate(pool.map(run, todo), 1):
+        executor, workers = ocr_pool(models)
+        print(f'OCR with {workers} {"processes" if executor is ProcessPoolExecutor else "threads"}', flush=True)
+        with executor(workers) as pool:
+            for done, (image, result, error) in enumerate(pool.map(partial(ocr_job, client, models), todo), 1):
                 if error:
                     print(f'[{done}/{len(todo)}] {image.name} error: {error}', flush=True)
                     failed.append(image)
