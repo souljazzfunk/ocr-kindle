@@ -9,7 +9,9 @@ Capture one book from Kindle Cloud Reader in Brave and turn it into checked Mark
 3. Runs img2txt.py, then check_book.py; runs each automatic fix it names and checks again, up to ROUNDS times.
 4. Writes report.json next to the book and exits 1 when a blocking check still fails.
 
-It handles one book and never opens another. `--zip` skips the capture and starts from an existing ZIP or folder.
+It handles one book; `capture_books.py` runs a list and decides from the checks whether to go on or redo.
+`--zip` skips the capture and starts from an existing ZIP or folder; `--recapture` captures a book again whose
+first ZIP was unusable (the extension otherwise refuses to auto-start a saved book).
 """
 
 import argparse
@@ -35,8 +37,8 @@ def run(command, **kwargs):
     return subprocess.run(command, check=True, **kwargs)
 
 
-def open_in_brave(asin, domain):
-    run(['open', '-a', BRAVE, f'https://{domain}/?asin={asin}#autocapture'])
+def open_in_brave(asin, domain, recapture=False):
+    run(['open', '-a', BRAVE, f'https://{domain}/?asin={asin}#{"recapture" if recapture else "autocapture"}'])
 
 
 def close_book_tab(asin):
@@ -95,6 +97,25 @@ def report(folder, checks, extra):
     return data
 
 
+def convert(asin, title=None, model='vision', domain='read.amazon.com', downloads=Path.home() / 'Downloads',
+            source=None, recapture=False):
+    """Capture (unless source is given), convert, check and fix one book. Returns the report data."""
+    started = time.time()
+    if source is None:
+        before = set(downloads.glob('*.zip'))
+        open_in_brave(asin, domain, recapture)
+        source = wait_for_zip(downloads, before)
+        close_book_tab(asin)
+        if source is None:
+            raise RuntimeError(f'No ZIP appeared in {downloads} within {ZIP_WAIT_S // 60} minutes; the book tab was closed. '
+                               'The extension badge says skip when it refused to start, and the tab console says why.')
+    run([PYTHON, str(HERE / 'img2txt.py'), str(source), '--model', model] + (['--title', title] if title else []))
+    folder = source.with_suffix('') if source.suffix == '.zip' else source
+    checks, rounds = correct(folder, title)
+    return report(folder, checks, {'asin': asin, 'source': str(source), 'recapture': recapture, 'rounds': rounds,
+                                   'seconds': round(time.time() - started)})
+
+
 def main():
     parser = argparse.ArgumentParser(description='Capture one Kindle book in Brave and produce checked Markdown')
     parser.add_argument('asin', help='The book\'s ASIN (?asin= in the Cloud Reader URL)')
@@ -103,22 +124,12 @@ def main():
     parser.add_argument('--domain', default='read.amazon.com')
     parser.add_argument('--downloads', type=Path, default=Path.home() / 'Downloads')
     parser.add_argument('--zip', type=Path, help='Skip the capture and start from this ZIP or folder')
+    parser.add_argument('--recapture', action='store_true', help='Capture again a book the extension already saved')
     args = parser.parse_args()
-
-    started = time.time()
-    source = args.zip
-    if source is None:
-        before = set(args.downloads.glob('*.zip'))
-        open_in_brave(args.asin, args.domain)
-        source = wait_for_zip(args.downloads, before)
-        close_book_tab(args.asin)
-        if source is None:
-            sys.exit(f'No ZIP appeared in {args.downloads} within {ZIP_WAIT_S // 60} minutes; the book tab was closed. '
-                     'Check the extension badge next time (skip = refused to start; the tab console says why).')
-    run([PYTHON, str(HERE / 'img2txt.py'), str(source), '--model', args.model] + (['--title', args.title] if args.title else []))
-    folder = source.with_suffix('') if source.suffix == '.zip' else source
-    checks, rounds = correct(folder, args.title)
-    data = report(folder, checks, {'asin': args.asin, 'source': str(source), 'rounds': rounds, 'seconds': round(time.time() - started)})
+    try:
+        data = convert(args.asin, args.title, args.model, args.domain, args.downloads, args.zip, args.recapture)
+    except RuntimeError as e:
+        sys.exit(str(e))
     sys.exit(bool(data['blocking_failures']))
 
 

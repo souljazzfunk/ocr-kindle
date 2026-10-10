@@ -152,9 +152,9 @@ function asinFromUrl() {
   return new URL(location.href).searchParams.get('asin') || '';
 }
 
-async function startCapture(asin, auto) {
+async function startCapture(asin, auto, again = false) {
   running = true; // set before the claim returns, so a second click stops rather than starts again
-  const { ok, reason } = await chrome.runtime.sendMessage({ claim: { asin, auto } });
+  const { ok, reason } = await chrome.runtime.sendMessage({ claim: { asin, auto, again } });
   if (!ok) {
     running = false;
     chrome.runtime.sendMessage({ badge: 'skip' });
@@ -188,5 +188,5 @@ chrome.runtime.onMessage.addListener((msg) => {
 const autoStart = readAutoStart(location.href);
 if (autoStart) {
   history.replaceState(history.state, '', autoStart.cleanUrl);
-  startCapture(autoStart.asin, true);
+  startCapture(autoStart.asin, true, autoStart.again);
 }
