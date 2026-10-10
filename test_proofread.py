@@ -56,6 +56,11 @@ def test_blockquotes_and_suspended_hyphens_are_left_alone():
     assert fixes(pages) == []
 
 
+def test_odd_case_inside_hyphenated_word():
+    pages = {'page_0001': BODY + 'slow WiFi-only access, then WiFi again, and a lone wiFi'}
+    assert fixes(pages) == [('odd_case', 'page_0001', 'wiFi', 'WiFi')]
+
+
 def test_apply_rewrites_pages_and_rebuilds_book(tmp_path):
     book = tmp_path / 'My Book'
     book.mkdir()
