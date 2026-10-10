@@ -5,10 +5,13 @@ import pytest
 
 import capture_books
 
+update_checkout = capture_books.update_checkout  # the real one; tests below stub it on the module
+
 
 @pytest.fixture(autouse=True)
 def brave_saves_without_asking(monkeypatch):
     monkeypatch.setattr(capture_books.brave, 'prompt_problem', lambda: None)
+    monkeypatch.setattr(capture_books, 'update_checkout', lambda: 'same')
 
 
 def result(failures, warnings=()):
@@ -163,3 +166,36 @@ def test_a_book_the_list_stopped_on_is_tried_again_as_a_recapture(tmp_path, monk
         capture_books.main()
     # B1 again with #recapture (the extension may have saved it), B2's own failure stays, B3 is new.
     assert started == [('B1', True), ('B3', False)]
+
+
+def fake_git(heads, changed='', branch='main', pull_code=0):
+    heads = iter(heads)
+
+    def git(*args):
+        out = {'--abbrev-ref': branch}.get(args[1], '') if args[0] == 'rev-parse' else ''
+        if args[:2] == ('rev-parse', 'HEAD'):
+            out = next(heads)
+        if args[0] == 'diff':
+            out = changed
+        return type('R', (), {'stdout': out, 'stderr': 'diverged', 'returncode': pull_code if args[0] == 'pull' else 0})()
+    return git
+
+
+def test_main_is_pulled_before_each_book_and_says_what_a_change_needs():
+    assert update_checkout(fake_git(['a', 'a'])) == 'same'
+    assert update_checkout(fake_git(['a', 'b'], 'img2txt.py\ntest_img2txt.py')) == 'python'
+    assert update_checkout(fake_git(['a', 'b'], 'extension/pagemeta.js\nextension/manifest.json')) == 'extension'
+    assert update_checkout(fake_git(['a', 'b'], 'extension/pagemeta.test.js')) == 'python'
+    assert update_checkout(fake_git(['a'], branch='vision-headings-fix')) == 'same'
+    assert update_checkout(fake_git(['a'], pull_code=1)).startswith('could not pull main')
+
+
+def test_an_extension_change_on_main_stops_the_list_before_the_next_book(tmp_path, monkeypatch, capsys):
+    books = tmp_path / 'books.tsv'
+    books.write_text('B1\tOne\n')
+    monkeypatch.setattr(capture_books, 'update_checkout', lambda: 'extension')
+    monkeypatch.setattr(capture_books.capture_book, 'convert', lambda *a, **k: pytest.fail('captured with a stale extension'))
+    monkeypatch.setattr(sys, 'argv', ['capture_books.py', str(books)])
+    with pytest.raises(SystemExit) as exit_info:
+        capture_books.main()
+    assert exit_info.value.code == 2 and 'reload it once' in capsys.readouterr().out

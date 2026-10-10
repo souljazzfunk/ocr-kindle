@@ -13,6 +13,8 @@ At the end the summary lists what was done and what failed and why; the exit cod
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -30,6 +32,31 @@ RECAPTURES = 1
 # stops it too: on 2026-10-10 a resumed run opened a second tab on a book the first was still paging through.
 STOP_CHECKS = {'download', 'extension_version', 'tab_closed', 'start_position', 'end_position',
                'capture_refused', 'capture_stop', 'tab_before', 'no_zip'}
+
+
+HERE = Path(__file__).resolve().parent
+
+
+def update_checkout(git=None):
+    """Pull main before each book, so a fix merged mid-list is used without anyone asking for it.
+
+    Returns 'same', 'python' (this run restarts to load it), 'extension' (Brave must reload it first) or an error.
+    On 2026-10-10 each merge needed Laiken to type "pull main" to a session on the Mac.
+    """
+    git = git or (lambda *args: subprocess.run(['git', '-C', str(HERE), *args], capture_output=True, text=True))
+    if git('rev-parse', '--abbrev-ref', 'HEAD').stdout.strip() != 'main':
+        return 'same'  # capture_book.py refuses a checkout that is not main and says why
+    before = git('rev-parse', 'HEAD').stdout.strip()
+    pulled = git('pull', '--ff-only', '-q', 'origin', 'main')
+    if pulled.returncode:
+        return f'could not pull main: {pulled.stderr.strip()}'
+    after = git('rev-parse', 'HEAD').stdout.strip()
+    if before == after:
+        return 'same'
+    changed = git('diff', '--name-only', before, after).stdout.split()
+    if any(path.startswith('extension/') and not path.endswith('.test.js') for path in changed):
+        return 'extension'
+    return 'python'
 
 
 def read_list(path):
@@ -83,6 +110,16 @@ def main():
     progress = load_progress(progress_path)
     options = {'model': args.model, 'domain': args.domain, 'downloads': args.downloads}
     for asin, title in read_list(args.list):
+        update = update_checkout()
+        if update == 'python':
+            print('=== main changed: restarting with it (the list resumes here)', flush=True)
+            os.execv(sys.executable, [sys.executable, *sys.argv])
+        if update == 'extension':
+            print('\nStopped the list: main changed the extension. Ask Laiken to reload it once in Brave, then run the '
+                  'same command to resume.', flush=True)
+            sys.exit(2)
+        if update != 'same':
+            print(f'=== {update}; going on with the code already here', flush=True)
         entry = progress.get(asin, {})
         if entry.get('verdict') == 'done' or (
                 entry.get('verdict') == 'failed' and not STOP_CHECKS & set(entry.get('failures', []))):
