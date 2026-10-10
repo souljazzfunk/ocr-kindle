@@ -22,6 +22,10 @@ import capture_book
 # A failure in these checks means the ZIP itself is unusable, so the book is captured again (once).
 CAPTURE_CHECKS = {'pages', 'text', 'start_position', 'end_position'}
 RECAPTURES = 1
+# Failures that come from the browser or the extension, not from one book: every later book would fail the same
+# way, so the list stops at the first book that still has one (after its recapture). On 2026-10-10 a run went on
+# while each ZIP opened a save dialog, and 1.3 was called fixed before any capture on the Mac had shown it.
+STOP_CHECKS = {'download', 'extension_version', 'tab_closed', 'start_position', 'end_position'}
 
 
 def read_list(path):
@@ -87,6 +91,11 @@ def main():
                           'warnings': data['warnings'], 'error': data.get('error'), 'at': time.strftime('%Y-%m-%dT%H:%M:%S')}
         progress_path.write_text(json.dumps(progress, ensure_ascii=False, indent=1), encoding='utf-8')
         print(f'=== {verdict}: {title or asin}' + (f' ({", ".join(data["blocking_failures"])})' if verdict == 'failed' else ''), flush=True)
+        stop = STOP_CHECKS & set(data['blocking_failures'])
+        if stop:
+            print(f'\nStopped the list: {", ".join(sorted(stop))} failed on {title or asin}. These come from Brave or the '
+                  'extension, so every later book would fail too. Fix the cause, then run the same command to resume.')
+            sys.exit(2)
 
     done = [p['title'] or a for a, p in progress.items() if p['verdict'] == 'done']
     failed = {p['title'] or a: p['failures'] for a, p in progress.items() if p['verdict'] == 'failed'}
