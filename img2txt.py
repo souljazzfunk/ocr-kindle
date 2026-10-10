@@ -59,6 +59,8 @@ FULL_LINE = 0.85  # a line this share of the body's median length runs to the ma
 FULL_LINE_TAIL = 400
 # Which reader produced each page's .txt, one `page<TAB>source` line per write; the last line for a page wins.
 SOURCES = 'ocr_sources.tsv'
+GEMINI_FAILED_EXIT = 3  # a Gemini request failed: capture_book.py stops the list instead of failing the book
+GEMINI_ERROR = 'gemini_error.txt'  # why, for capture_book.py
 TEXT_LAYER = 'textlayer'
 PICTURE = 'picture'  # a page Vision found no words on, in a book it reads
 NO_TEXT = 'no text found'
@@ -435,12 +437,18 @@ def main():
             sys.exit(f'{len(failed)} pages failed. Re-run the same command to retry only those pages.')
 
     # Pages read just now, and pages never laid out, take Gemini's layout; the rest keep their text and its proofreading.
-    from layout import mark_layout, read_layout
+    from layout import GeminiFailed, mark_layout, read_layout
     sources = read_sources(args.folder)
     done = read_layout(args.folder)
     vision = [img for img in images if sources.get(img.stem) == VISION and (img.stem in read_now or img.stem not in done)]
     if vision and client:
-        left = mark_layout(args.folder, client, vision)
+        try:
+            left = mark_layout(args.folder, client, vision)
+        except GeminiFailed as e:
+            print(e, flush=True)
+            (args.folder / GEMINI_ERROR).write_text(str(e), encoding='utf-8')
+            sys.exit(GEMINI_FAILED_EXIT)
+        (args.folder / GEMINI_ERROR).unlink(missing_ok=True)
         print(f'Layout read on {len(vision) - len(left)} of {len(vision)} Vision pages'
               + (f'; {len(left)} left, run again to retry' if left else ''), flush=True)
     elif vision:

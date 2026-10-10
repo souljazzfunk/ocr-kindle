@@ -235,3 +235,18 @@ def test_a_refused_capture_fails_with_the_extensions_reason(tmp_path, monkeypatc
     monkeypatch.setattr(capture_book, 'open_in_brave', open_in_brave)
     data = capture_book.convert('B07VSXS4NK', 'Automate', downloads=tmp_path)
     assert data['blocking_failures'] == ['capture_refused'] and 'already capturing' in data['error']
+
+
+def test_a_gemini_failure_is_reported_with_its_reason_and_the_folder_to_convert_again(tmp_path, monkeypatch):
+    import subprocess
+    folder = tmp_path / 'Facing the Mountain'
+    folder.mkdir()
+
+    def run(command, **kwargs):
+        (folder / capture_book.GEMINI_ERROR).write_text('Gemini layout failed with 10 pages left: 429 PerDay')
+        raise subprocess.CalledProcessError(capture_book.GEMINI_FAILED_EXIT, command)
+
+    monkeypatch.setattr(capture_book, 'run', run)
+    data = capture_book.convert('B0X', 'Facing the Mountain', source=folder)
+    assert data['blocking_failures'] == ['gemini'] and data['source'] == str(folder)
+    assert data['error'].endswith('429 PerDay')

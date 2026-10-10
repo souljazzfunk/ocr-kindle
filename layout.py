@@ -11,6 +11,7 @@ go in one request. The answers are kept in layout.json, so a re-run asks only fo
 
 import json
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from statistics import median
@@ -22,9 +23,15 @@ from img2txt import (BODY_LINE_CHARS, DECORATIVE_DIGITS, HEADING_NUMBER, LINES, 
 
 LAYOUT = 'layout.json'
 MODEL = 'gemini-3.5-flash-lite'
-BATCH = 8  # pages per request
+BATCH = 20  # pages per request; the free tier allows 500 requests a day, which 8 a request used up on 2026-10-10
 TRIES = 5
 RATE_WAIT_S = 30  # the free tier allows 15 requests a minute
+DAILY_LIMIT = 'PerDay'  # in a 429 for the day's requests, which waiting minutes does not end
+
+
+class GeminiFailed(RuntimeError):
+    """A layout request failed after its retries. The rest of the book's requests are not sent: on 2026-10-10 every
+    request failed for ten minutes before anyone noticed, because the run went on and only the verdict was watched."""
 LINE_PITCH = 1.6  # line pitch at most this many line heights
 MIN_FIGURE_LINES = 3
 CAPS_MIN_LETTERS = 3
@@ -111,19 +118,26 @@ def mark_layout(folder, client, images):
     todo = [image for image in images if image.stem not in layout and image.with_suffix(LINES).exists()]
     batches = [todo[i:i + BATCH] for i in range(0, len(todo), BATCH)]
 
+    failed = threading.Event()
+
     def ask(batch):
         for attempt in range(TRIES):
+            if failed.is_set():
+                return {}, None  # another request already failed: send nothing more
             try:
                 return ask_layout(client, batch), None
             except Exception as e:
-                if '429' not in str(e) or attempt + 1 == TRIES:
+                if '429' not in str(e) or DAILY_LIMIT in str(e) or attempt + 1 == TRIES:
+                    failed.set()
                     return {}, e
                 time.sleep(RATE_WAIT_S)
 
+    first_error = None
     with ThreadPoolExecutor(WORKERS) as pool:
         for done, (pages, error) in enumerate(pool.map(ask, batches), 1):
             if error:
-                print(f'[layout {done}/{len(batches)}] error: {error}', flush=True)
+                print(f'GEMINI ERROR [layout {done}/{len(batches)}]: {error}', flush=True)
+                first_error = first_error or error
             layout.update(pages)
             (folder / LAYOUT).write_text(json.dumps(layout, ensure_ascii=False, indent=0), encoding='utf-8')
     chapters = contents_entries(page_images(folder))
@@ -134,7 +148,13 @@ def mark_layout(folder, client, images):
             boxes, page = reread_beside_cap(image, sorted_boxes(image), page)
             text = page_markdown(boxes, page, chapters)
             image.with_suffix('.txt').write_text(text or ' ', encoding='utf-8')
-    return [image for image in images if image.stem not in layout]
+    left = [image for image in images if image.stem not in layout]
+    if first_error:
+        # The pages laid out so far are written above; the rest wait for the cause to be gone.
+        when = (' Today\'s requests are used up; they come back at midnight Pacific (16:00 or 17:00 JST).'
+                if DAILY_LIMIT in str(first_error) else '')
+        raise GeminiFailed(f'Gemini layout failed with {len(left)} pages left: {str(first_error)[:300]}.{when}')
+    return left
 
 
 def page_markdown(boxes, page, chapters=()):
