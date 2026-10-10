@@ -160,3 +160,33 @@ def test_a_page_job_runs_in_a_separate_process(tmp_path):
     with ProcessPoolExecutor(2) as pool:
         [(page, result, error)] = list(pool.map(partial(img2txt.ocr_job, None, ['no-such-model']), [image]))
     assert page == image and result is None and 'no-such-model' in str(error)
+
+
+def test_a_few_pages_without_words_are_pictures_but_a_book_of_them_stays_pending(tmp_path, monkeypatch):
+    import img2txt
+
+    def ocr_job(client, models, image):
+        if image.stem in ('page_0001', 'page_0207') or 'vertical' in str(image):
+            return image, None, RuntimeError(img2txt.NO_TEXT)
+        image.with_suffix('.txt').write_text('Words on the page.')
+        return image, ('vision', 18), None
+
+    monkeypatch.setattr(img2txt, 'ocr_job', ocr_job)
+    monkeypatch.setattr(img2txt, 'ocr_pool', lambda models: (img2txt.ThreadPoolExecutor, 2))
+    monkeypatch.setattr(img2txt, 'load_config', lambda: {})
+    book = tmp_path / 'Dilla Time'
+    book.mkdir()
+    for n in range(1, 241):
+        (book / f'page_{n:04d}.png').write_bytes(b'png')
+    monkeypatch.setattr(sys, 'argv', ['img2txt.py', str(book), '--model', 'vision'])
+    img2txt.main()  # Dilla Time: a photo of a Rhodes piano did not fail the book
+    assert (book / 'page_0207.txt').read_text() == '![Picture]()'
+    assert img2txt.read_sources(book)['page_0207'] == img2txt.PICTURE
+    vertical = tmp_path / 'vertical'
+    vertical.mkdir()
+    for n in range(1, 4):
+        (vertical / f'page_{n:04d}.png').write_bytes(b'png')
+    monkeypatch.setattr(sys, 'argv', ['img2txt.py', str(vertical), '--model', 'vision'])
+    with pytest.raises(SystemExit):
+        img2txt.main()
+    assert not list(vertical.glob('*.txt'))
