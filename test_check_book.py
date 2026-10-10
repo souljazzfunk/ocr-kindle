@@ -92,11 +92,11 @@ def test_correct_runs_each_fix_once_and_stops_when_clean(tmp_path, monkeypatch):
     assert rounds == 2 and all(c.ok or not c.blocking for c in checks)
 
 
-def test_correct_gives_up_after_the_round_limit(tmp_path):
+def test_correct_gives_up_when_the_fix_does_not_help(tmp_path):
     folder = book(tmp_path, [BODY], md=BODY)
     calls = []
-    checks, rounds = capture_book.correct(folder, None, rounds=2, runner=lambda c: calls.append(c))
-    assert rounds == 2 and len(calls) == 2
+    checks, rounds = capture_book.correct(folder, None, rounds=3, runner=lambda c: calls.append(c))
+    assert rounds == 2 and len(calls) == 1  # the re-OCR ran once, then nothing was left to try
     assert [c.name for c in checks if not c.ok and c.blocking] == ['headings']
 
 
@@ -227,3 +227,25 @@ def test_a_refused_capture_fails_with_the_extensions_reason(tmp_path, monkeypatc
     monkeypatch.setattr(capture_book, 'open_in_brave', open_in_brave)
     data = capture_book.convert('B07VSXS4NK', 'Automate', downloads=tmp_path)
     assert data['blocking_failures'] == ['capture_refused'] and 'already capturing' in data['error']
+
+
+def test_a_reocr_that_did_not_help_is_not_run_again_and_text_fixes_run_after_it(tmp_path):
+    # AI for Educators, 2026-10-10: heading_noise stayed, so each of 3 rounds re-OCRed the whole book and undid
+    # the dash fixes; the book ended with heading_noise and dash_as_hyphen both failing.
+    folder = book(tmp_path, ['# How\n\n# Write\n\n# Iot', BODY + 'appliance-a unit.'], md=BODY + 'appliance-a unit.')
+    commands = []
+
+    def fake_run(command):
+        commands.append(command[1].split('/')[-1])
+        if commands[-1] == 'proofread.py':
+            (folder / 'page_0002.txt').write_text(BODY + 'appliance—a unit.')
+
+    checks, rounds = capture_book.correct(folder, 'How to Write a Lot', runner=fake_run)
+    assert commands == ['img2txt.py', 'proofread.py']
+    assert by_name(checks)['proofread'].ok and not by_name(checks)['heading_noise'].ok
+
+
+def test_one_title_on_a_page_without_body_text_is_not_noise(tmp_path):
+    folder = book(tmp_path, ['# Contents', '# How\n\n# Write\n\n# Iot', '# 1 Introduction\n\n' + BODY + BODY2])
+    checks = by_name(check_folder(folder))
+    assert checks['heading_noise'].detail == '3 headings that are not titles: "How", "Write", "Iot"'

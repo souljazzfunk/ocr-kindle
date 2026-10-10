@@ -110,14 +110,21 @@ def plan_fixes(checks):
 
 
 def correct(folder, title, rounds=ROUNDS, runner=run):
-    """Check, fix what can be fixed by the machine, and check again. Returns (checks, rounds used)."""
+    """Check, fix what can be fixed by the machine, and check again. Returns (checks, rounds used).
+
+    A full re-OCR (img2txt.py --force) runs at most once per book: a second one reads the same pages the same way,
+    and on a 999-screen book each costs about ten minutes. It also undoes the text fixes, so those run after it.
+    """
     checks = check_folder(folder, title)
+    reocr_done = False
     for round_no in range(1, rounds + 1):
-        fixes = plan_fixes(checks)
+        fixes = [f for f in plan_fixes(checks) if not (reocr_done and '--force' in f)]
         if not fixes:
             break
+        fixes.sort(key=lambda f: '--force' not in f)  # re-OCR first, then the fixes to its text
         for fix in fixes:
             runner([PYTHON, str(HERE / fix[0]), *fix[1:]])
+            reocr_done = reocr_done or '--force' in fix
         checks = check_folder(folder, title)
     return checks, round_no
 
