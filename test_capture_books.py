@@ -217,3 +217,33 @@ def test_an_extension_change_on_main_stops_the_list_before_the_next_book(tmp_pat
     with pytest.raises(SystemExit) as exit_info:
         capture_books.main()
     assert exit_info.value.code == 2 and 'reload it once' in capsys.readouterr().out
+
+
+def test_gemini_out_stops_the_list_and_the_same_zip_is_converted_on_resume(tmp_path, monkeypatch, capsys):
+    # 2026-10-10: Gemini's daily quota ran out mid-list; every later book lost its layout and was recorded failed.
+    books = tmp_path / 'books.tsv'
+    books.write_text('B1\tFacing the Mountain\nB2\tTwo\n')
+    zip_path = tmp_path / 'Facing the Mountain.zip'
+    zip_path.write_bytes(b'zip')
+    calls = []
+
+    def out(asin, title=None, recapture=False, source=None, **options):
+        calls.append((asin, recapture, source))
+        return {'blocking_failures': ['gemini'], 'warnings': [], 'error': 'daily quota', 'source': str(zip_path)}
+
+    monkeypatch.setattr(capture_books.capture_book, 'convert', out)
+    monkeypatch.setattr(sys, 'argv', ['capture_books.py', str(books), '--keep-going'])
+    with pytest.raises(SystemExit) as stop:
+        capture_books.main()
+    assert stop.value.code == 2 and calls == [('B1', False, None)]  # B2 is not started
+    assert 'Gemini cannot answer' in capsys.readouterr().out
+
+    def back(asin, title=None, recapture=False, source=None, **options):
+        calls.append((asin, recapture, source))
+        return {'blocking_failures': [], 'warnings': [], 'source': str(source)}
+
+    monkeypatch.setattr(capture_books.capture_book, 'convert', back)
+    with pytest.raises(SystemExit):
+        capture_books.main()
+    # The captured ZIP is converted again, with no new capture; then the list goes on.
+    assert calls[1:] == [('B1', False, zip_path), ('B2', False, None)]

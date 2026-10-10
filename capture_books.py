@@ -31,7 +31,7 @@ RECAPTURES = 1
 # A capture that never made a ZIP (refused, cut off by a turn cap, a tab left from an earlier run, an hour with no ZIP)
 # stops it too: on 2026-10-10 a resumed run opened a second tab on a book the first was still paging through.
 STOP_CHECKS = {'download', 'extension_version', 'tab_closed', 'start_position', 'end_position',
-               'capture_refused', 'capture_stop', 'tab_before', 'no_zip'}
+               'capture_refused', 'capture_stop', 'tab_before', 'no_zip', 'gemini'}
 
 
 HERE = Path(__file__).resolve().parent
@@ -128,18 +128,30 @@ def main():
             continue
         print(f'=== {title or asin} ({asin})', flush=True)
         try:
-            # Any earlier attempt may have saved the ASIN in the extension, which then refuses #autocapture.
-            again = asin in progress
-            verdict, data = run_book(asin, title, options, again=again)
+            source = entry.get('source')
+            if entry.get('failures') == ['gemini'] and source and Path(source).exists():
+                # Captured fine; only Gemini was out. Convert the same ZIP rather than page through the book again.
+                data = capture_book.convert(asin, title, source=Path(source), **options)
+                verdict = decide(data, RECAPTURES + 1)
+            else:
+                # Any earlier attempt may have saved the ASIN in the extension, which then refuses #autocapture.
+                again = asin in progress
+                verdict, data = run_book(asin, title, options, again=again)
         except Exception as e:  # a crash in one book must not stop the list, and must be in the summary
             verdict, data = 'failed', {'error': str(e), 'blocking_failures': ['crash'], 'warnings': []}
         stop = STOP_CHECKS & set(data['blocking_failures'])
         if stop:
             verdict = 'stopped'  # not the book's fault: the next run tries it again
         progress[asin] = {'title': title, 'verdict': verdict, 'failures': data['blocking_failures'],
-                          'warnings': data['warnings'], 'error': data.get('error'), 'at': time.strftime('%Y-%m-%dT%H:%M:%S')}
+                          'warnings': data['warnings'], 'error': data.get('error'), 'source': data.get('source'),
+                          'at': time.strftime('%Y-%m-%dT%H:%M:%S')}
         progress_path.write_text(json.dumps(progress, ensure_ascii=False, indent=1), encoding='utf-8')
         print(f'=== {verdict}: {title or asin}' + (f' ({", ".join(data["blocking_failures"])})' if verdict != 'done' else ''), flush=True)
+        if stop == {'gemini'}:
+            print(f'\nStopped the list: Gemini cannot answer ({data.get("error")}). {title or asin} is captured; the '
+                  'same command converts its ZIP once Gemini is back (the daily quota resets at midnight Pacific time).',
+                  flush=True)
+            sys.exit(2)
         if stop:
             print(f'\nStopped the list: {", ".join(sorted(stop))} failed on {title or asin}. These come from Brave or the '
                   'extension, so every later book would fail too. Fix the cause, then run the same command to resume.')

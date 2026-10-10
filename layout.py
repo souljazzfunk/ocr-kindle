@@ -25,6 +25,7 @@ MODEL = 'gemini-3.5-flash-lite'
 BATCH = 8  # pages per request
 TRIES = 5
 RATE_WAIT_S = 30  # the free tier allows 15 requests a minute
+DAILY_QUOTA = 'PerDay'  # in the quota id of a 429 for the daily limit
 LINE_PITCH = 1.6  # line pitch at most this many line heights
 MIN_FIGURE_LINES = 3
 CAPS_MIN_LETTERS = 3
@@ -102,6 +103,12 @@ def ask_layout(client, images):
     return {page.pop('page'): page for page in json.loads(response.text) if page.get('page') in stems}
 
 
+class GeminiUnavailable(RuntimeError):
+    """Gemini cannot answer this run: the free tier's daily quota is used up, or every request failed (a bad key,
+    no network). On 2026-10-10 the daily quota ran out mid-list and every later book quietly lost its layout for
+    an hour, each recorded as a failed book; this ends the run at once instead, so the list stops and says why."""
+
+
 def mark_layout(folder, client, images):
     """Ask Gemini for the layout of the pages in images not read yet, and rewrite every page in images from it.
 
@@ -111,21 +118,35 @@ def mark_layout(folder, client, images):
     todo = [image for image in images if image.stem not in layout and image.with_suffix(LINES).exists()]
     batches = [todo[i:i + BATCH] for i in range(0, len(todo), BATCH)]
 
+    out = []  # set once the daily quota is gone: the batches still queued are not sent
+
     def ask(batch):
         for attempt in range(TRIES):
+            if out:
+                return {}, out[0]
             try:
                 return ask_layout(client, batch), None
             except Exception as e:
+                if DAILY_QUOTA in str(e):
+                    out.append(e)
+                    return {}, e
                 if '429' not in str(e) or attempt + 1 == TRIES:
                     return {}, e
-                time.sleep(RATE_WAIT_S)
+                time.sleep(RATE_WAIT_S)  # the per-minute limit: wait it out
 
+    errors = []
     with ThreadPoolExecutor(WORKERS) as pool:
         for done, (pages, error) in enumerate(pool.map(ask, batches), 1):
             if error:
-                print(f'[layout {done}/{len(batches)}] error: {error}', flush=True)
+                errors.append(error)
+                print(f'[layout {done}/{len(batches)}] error: {str(error)[:200]}', flush=True)
             layout.update(pages)
             (folder / LAYOUT).write_text(json.dumps(layout, ensure_ascii=False, indent=0), encoding='utf-8')
+    if out:
+        raise GeminiUnavailable(f'the free tier\'s daily quota for {MODEL} is used up; it resets at midnight Pacific '
+                                f'time (16:00 or 17:00 in Japan): {str(out[0])[:200]}')
+    if batches and len(errors) == len(batches):
+        raise GeminiUnavailable(f'every layout request failed: {str(errors[0])[:200]}')
     chapters = contents_entries(page_images(folder))
     styled = styled_titles(folder, layout)
     for image in images:

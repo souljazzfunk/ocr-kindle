@@ -23,6 +23,7 @@
 | 全文版リーダーの書名・テキスト層が取れないときに、当て推量で直さない | 拡張が ZIP に `dom-probe.json`（画面構造）を入れる。`extension/pagemeta.js`、テスト `extension/pagemeta.test.js` |
 | 出来上がった Markdown の不具合（見出しなし、7→Z・8→& の読み違い、ダッシュ、重複ページ、書名、Al→AI、'11→'ll）は機械が見つけて直す。人が気づくのを待たない | `check_book.py`（不具合ごとに直すコマンドを返す）、`capture_book.py`（直して再検査を最大 3 周、校正は各周の最後、`report.json` に残す）、テスト `test_check_book.py`・`test_layout.py` |
 | Vision のページの構造（見出し・引用・図・飾り・頭文字）を位置と大きさだけで当て推量しない。同じ読み直しを修正として繰り返さない | `layout.py`（Gemini がページ画像と行番号から構造だけを答え、`layout.json` に残す。章の階層は本の目次で揃える）、`check_book.py` の `layout`（未読のページがあれば落として読み直す）、テスト `test_layout.py` |
+| Gemini が答えられない（1 日の無料枠切れ、全リクエスト失敗）ときは、本を失敗として記録して次へ進まず、すぐ一覧を止める。取り込み済みの本は再開時に同じ ZIP から変換し、取り直さない | `layout.py` の `GeminiUnavailable`（枠切れなら残りを送らない）、`img2txt.py` が終了コード 3、`capture_book.py` の `gemini`、`capture_books.py` の `STOP_CHECKS`（再開時は記録した ZIP を変換）、テスト `test_layout.py`・`test_capture_books.py` |
 | 検査・フック・拡張のテストは CI で回す | `.github/workflows/ci.yml`（`node --test`、`pytest` を Linux と macOS で） |
 
 ## 取り込みの手順

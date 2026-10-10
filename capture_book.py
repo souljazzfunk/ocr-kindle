@@ -23,6 +23,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from check_book import Check, check_folder
+from img2txt import GEMINI_EXIT
 import brave
 from extension_state import folder_problem, repo_version, zip_version
 
@@ -192,9 +193,18 @@ def convert(asin, title=None, model='vision', domain='read.amazon.com', download
         if source.suffix == '.json':
             reason = json.loads(source.read_text(encoding='utf-8')).get('reason', 'no reason given')
             return not_captured(asin, 'capture_refused', f'the extension did not capture: {reason}', recapture)
-    run([PYTHON, str(HERE / 'img2txt.py'), str(source), '--model', model] + (['--title', title] if title else []))
     folder = source.with_suffix('') if source.suffix == '.zip' else source
-    checks, rounds = correct(folder, title)
+    try:
+        run([PYTHON, str(HERE / 'img2txt.py'), str(source), '--model', model] + (['--title', title] if title else []))
+        checks, rounds = correct(folder, title)
+    except subprocess.CalledProcessError as e:
+        if e.returncode != GEMINI_EXIT:
+            raise
+        # Every later book would fail the same way; the list stops, and resumes from this ZIP, not a new capture.
+        reason = 'Gemini cannot answer (daily quota used up, or every request failed); see the log above'
+        print(f'FAIL {"gemini":18} {reason}', flush=True)
+        return {'asin': asin, 'source': str(source), 'recapture': recapture, 'blocking_failures': ['gemini'],
+                'warnings': [], 'error': reason}
     if tab_closed is not None:
         # Blocking, but not a capture defect: the runner records it and goes on without recapturing.
         checks.append(Check('tab_closed', tab_closed, f'book tab {"closed" if tab_closed else "still open"} after the capture'))

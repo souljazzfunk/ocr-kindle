@@ -63,6 +63,7 @@ TEXT_LAYER = 'textlayer'
 PICTURE = 'picture'  # a page Vision found no words on, in a book it reads
 NO_TEXT = 'no text found'
 PICTURE_SHARE = 0.05
+GEMINI_EXIT = 3  # Gemini cannot answer this run (layout.GeminiUnavailable); capture_book.py stops on it
 LINES = '.lines.json'  # Vision's line boxes for a page, for layout.py
 
 OCR_PROMPT = """Transcribe the book text on this Kindle page image exactly as printed.
@@ -435,12 +436,16 @@ def main():
             sys.exit(f'{len(failed)} pages failed. Re-run the same command to retry only those pages.')
 
     # Pages read just now, and pages never laid out, take Gemini's layout; the rest keep their text and its proofreading.
-    from layout import mark_layout, read_layout
+    from layout import GeminiUnavailable, mark_layout, read_layout
     sources = read_sources(args.folder)
     done = read_layout(args.folder)
     vision = [img for img in images if sources.get(img.stem) == VISION and (img.stem in read_now or img.stem not in done)]
     if vision and client:
-        left = mark_layout(args.folder, client, vision)
+        try:
+            left = mark_layout(args.folder, client, vision)
+        except GeminiUnavailable as e:
+            print(f'GEMINI UNAVAILABLE: {e}', file=sys.stderr, flush=True)
+            sys.exit(GEMINI_EXIT)
         print(f'Layout read on {len(vision) - len(left)} of {len(vision)} Vision pages'
               + (f'; {len(left)} left, run again to retry' if left else ''), flush=True)
     elif vision:

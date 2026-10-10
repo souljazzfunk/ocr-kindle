@@ -168,3 +168,29 @@ def test_heading_noise_is_made_plain_text(tmp_path):
     pages = {'page_0001': '## about the rates and slopes, people!\n\n## WHY WRITE\n\n' + body}
     findings = [f for f in find_all(Book(tmp_path, pages)) if f.kind == 'heading_noise']
     assert apply(pages, findings)['page_0001'] == 'about the rates and slopes, people!\n\n## WHY WRITE\n\n' + body
+
+
+def test_a_used_up_daily_quota_ends_the_run_at_once(tmp_path, monkeypatch):
+    from layout import GeminiUnavailable
+    for n in range(1, 41):
+        (tmp_path / f'page_{n:04d}.png').write_bytes(b'png')
+        (tmp_path / f'page_{n:04d}.lines.json').write_text(json.dumps(BODY))
+    sent = []
+
+    def generate_content(model, contents, config):
+        sent.append(1)
+        raise RuntimeError("429 RESOURCE_EXHAUSTED quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier'")
+
+    monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
+    monkeypatch.setattr(layout, 'WORKERS', 1)
+    client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    with pytest.raises(GeminiUnavailable, match='daily quota'):
+        mark_layout(tmp_path, client, sorted(tmp_path.glob('page_*.png')))
+    assert len(sent) == 1  # the other four batches are not sent, and not retried
+
+    def bad_key(model, contents, config):
+        raise RuntimeError('400 API key not valid')
+
+    client = SimpleNamespace(models=SimpleNamespace(generate_content=bad_key))
+    with pytest.raises(GeminiUnavailable, match='every layout request failed'):
+        mark_layout(tmp_path, client, sorted(tmp_path.glob('page_*.png')))
