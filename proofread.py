@@ -39,6 +39,12 @@ DASH = re.compile(r'(?<![\w-])([A-Za-z]+)-([A-Za-z]+)(?![\w-])')
 ODD_CASE = re.compile(r'\b[A-Za-z]*[a-z][A-Z][A-Za-z]*\b')
 STRAY_SYMBOL = re.compile(r'(?m)^[>›<‹]$\n?|(?<= )[>›<‹] ')
 WORD = re.compile(r"[A-Za-z]+(?:['’-][A-Za-z]+)*")
+# Vision reads the decorative 7 and 8 of How to Write a Lot as Z and &, in the text too ("In Chapter Z",
+# "Chapters 6, Z, and &"). Only chapter references are rewritten, so Generation Z and R&D stay as they are.
+_REF = r'(?:\d{1,2}|[Z&])'
+DECORATIVE_REF = re.compile(rf'\bChapters?\s+{_REF}(?:(?:,\s*|\s+)(?:and\s+|or\s+)?{_REF})*(?![\w&])'
+                            rf'|\b\d{{1,2}}(?:,\s*(?:and\s+|or\s+)?{_REF})+(?![\w&])')
+DECORATIVE_DIGITS = str.maketrans('Z&', '78')
 
 
 @dataclass(frozen=True)
@@ -175,7 +181,15 @@ def stray_symbol(book):
             yield Finding('stray_symbol', stem, m.group(), '')
 
 
-DETECTORS = [duplicate_page, seam_overlap, foreign_page, hyphen_break, dash_as_hyphen, homoglyph, odd_case, stray_symbol]
+def decorative_digit(book):
+    for stem, text in book.pages.items():
+        for m in DECORATIVE_REF.finditer(text):
+            if re.search(r'[Z&]', m.group()):
+                yield Finding('decorative_digit', stem, m.group(), m.group().translate(DECORATIVE_DIGITS))
+
+
+DETECTORS = [duplicate_page, seam_overlap, foreign_page, hyphen_break, dash_as_hyphen, homoglyph, odd_case, stray_symbol,
+             decorative_digit]
 
 
 def cross_read(folder, pages, sources):

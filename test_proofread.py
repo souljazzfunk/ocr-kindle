@@ -75,3 +75,11 @@ def test_apply_rewrites_pages_and_rebuilds_book(tmp_path):
     assert 'dash_as_hyphen      1 on 1 pages, 0 on text-layer pages' in result.stdout
     assert (book / 'page_0001.txt').read_text() == BODY + 'He was an appliance—a unit.'
     assert (book / 'My Book.md').read_text() == BODY + 'He was an appliance—a unit.\n\nSome text to keep.\n'
+
+
+def test_decorative_digits_in_chapter_references_are_put_back():
+    from proofread import Book, decorative_digit
+    pages = {'page_0012': 'Chapters 6, Z, and & apply the principles. In Chapter Z, we turn to books. '
+                          'Generation Z and R&D stay, as do 3 & 4 apples.'}
+    found = list(decorative_digit(Book(Path('.'), pages)))
+    assert [(f.before, f.after) for f in found] == [('Chapters 6, Z, and &', 'Chapters 6, 7, and 8'), ('Chapter Z', 'Chapter 7')]
