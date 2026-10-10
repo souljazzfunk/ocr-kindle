@@ -12,6 +12,14 @@ jobs:
         with:
           node-version: 22
       - run: node --test
+  extension-version:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: python3 scripts/check_extension_version.py origin/${{ github.base_ref }}
   python:
     # Linux runs everything but the Vision/AppKit paths; macOS runs the whole suite.
     strategy:

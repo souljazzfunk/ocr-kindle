@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Kindle Cloud Reader Capture",
-  "version": "1.3",
+  "version": "1.4",
   "description": "Saves every Kindle Cloud Reader page image and text layer of a book as <book title>.zip for img2txt.py.",
   "permissions": ["storage", "downloads"],
   "background": { "service_worker": "background.js" },

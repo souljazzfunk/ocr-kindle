@@ -23,6 +23,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from check_book import Check, check_folder
+from extension_state import folder_problem, repo_version, zip_version
 
 BRAVE = 'Brave Browser'
 ROUNDS = 3
@@ -112,6 +113,15 @@ def correct(folder, title, rounds=ROUNDS, runner=run):
     return checks, round_no
 
 
+def version_check(folder, expected=None):
+    """A fresh capture must come from the extension version on main; anything else means Brave was not reloaded."""
+    expected = expected or repo_version()
+    made_by = zip_version(folder)
+    return Check('extension_version', made_by == expected,
+                 f'ZIP made by extension {made_by or "1.3 or older (no capture.json)"}, main is {expected}'
+                 + ('' if made_by == expected else '; reload the extension in Brave once'))
+
+
 def report(folder, checks, extra):
     data = {**extra, 'checks': [asdict(c) for c in checks],
             'blocking_failures': [c.name for c in checks if not c.ok and c.blocking],
@@ -130,6 +140,9 @@ def convert(asin, title=None, model='vision', domain='read.amazon.com', download
     started = time.time()
     tab_closed = None  # no tab when converting an existing ZIP
     if source is None:
+        problem = folder_problem()
+        if problem:
+            raise RuntimeError(f'Brave loads the extension from this checkout, and it is not main: {problem}')
         before = set(downloads.glob('*.zip'))
         open_in_brave(asin, domain, recapture)
         source = wait_for_zip(downloads, before)
@@ -143,6 +156,7 @@ def convert(asin, title=None, model='vision', domain='read.amazon.com', download
     if tab_closed is not None:
         # Blocking, but not a capture defect: the runner records it and goes on without recapturing.
         checks.append(Check('tab_closed', tab_closed, f'book tab {"closed" if tab_closed else "still open"} after the capture'))
+        checks.append(version_check(folder))
     return report(folder, checks, {'asin': asin, 'source': str(source), 'recapture': recapture, 'rounds': rounds,
                                    'tab_closed': tab_closed, 'seconds': round(time.time() - started)})
 

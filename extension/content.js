@@ -111,6 +111,8 @@ async function captureBook(save, isRunning) {
   }
   // Page N of M for every saved page, so check_book.py can tell a capture that missed the start or the end.
   if (count) save('positions.json', new TextEncoder().encode(JSON.stringify(positions, null, 1)), '');
+  // Which extension made this ZIP, so capture_book.py can tell a Brave that was not reloaded after a change.
+  if (count) save('capture.json', new TextEncoder().encode(JSON.stringify({ extension_version: chrome.runtime.getManifest().version })), '');
   return count;
 }
 
