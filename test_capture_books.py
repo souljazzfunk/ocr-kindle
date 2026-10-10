@@ -272,3 +272,10 @@ def test_a_recapture_after_a_saved_zip_failed_does_not_reuse_that_zip():
 
     verdict, _ = capture_books.run_book('B0', 'Book', {'source': 'old.zip'}, convert=convert)
     assert verdict == 'done' and calls == [(False, 'old.zip'), (True, None)]
+
+
+def test_a_capture_with_no_zip_is_tried_once_more_then_stops_the_list():
+    assert capture_books.decide(result(['tab_gone']), 1) == 'recapture'
+    assert capture_books.decide(result(['no_zip', 'tab_closed']), 1) == 'recapture'
+    assert capture_books.decide(result(['tab_gone']), 2) == 'failed'
+    assert 'tab_gone' in capture_books.STOP_CHECKS  # a second vanished tab stops the list: later books would follow
