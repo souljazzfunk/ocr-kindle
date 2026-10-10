@@ -89,7 +89,8 @@ def noisy_headings(folder, sources):
         page = image.with_suffix('.txt').read_text(encoding='utf-8')
         titles = [t for _, t in HEADING.findall(page)]
         has_body = any(len(p) >= 100 and not p.startswith('#') for p in page.split('\n\n'))
-        if titles and (not has_body or len(titles) > MAX_PAGE_HEADINGS):
+        # A page without body text may hold one title (Contents, Foreword, Part One); more are cover or photo words.
+        if (not has_body and len(titles) > 1) or len(titles) > MAX_PAGE_HEADINGS:
             noise += titles
             continue
         noise += [t for t in titles if not_a_title(t)]
@@ -160,7 +161,7 @@ def check_folder(folder, title=None):
                         fix=reocr if from_vision and decorative else None))
     noise = noisy_headings(folder, sources)
     checks.append(Check('heading_noise', not noise, f'{len(noise)} headings that are not titles'
-                        + (f', e.g. "{noise[0][:40]}"' if noise else ''), fix=reocr if from_vision and noise else None))
+                        + (': ' + ', '.join(f'"{t[:40]}"' for t in noise[:10]) if noise else ''), fix=reocr if from_vision and noise else None))
     missed = MISSED_CHAPTER.findall(text)
     checks.append(Check('chapter_titles', not missed, f'{len(missed)} chapter openings without a heading',
                         fix=reocr if from_vision and missed else None))
