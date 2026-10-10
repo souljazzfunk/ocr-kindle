@@ -60,6 +60,9 @@ FULL_LINE_TAIL = 400
 # Which reader produced each page's .txt, one `page<TAB>source` line per write; the last line for a page wins.
 SOURCES = 'ocr_sources.tsv'
 TEXT_LAYER = 'textlayer'
+PICTURE = 'picture'  # a page Vision found no words on, in a book it reads
+NO_TEXT = 'no text found'
+PICTURE_SHARE = 0.05
 LINES = '.lines.json'  # Vision's line boxes for a page, for layout.py
 
 OCR_PROMPT = """Transcribe the book text on this Kindle page image exactly as printed.
@@ -175,7 +178,7 @@ def vision_transcribe(image):
     boxes = vision_lines(image)
     # Vision finds nothing in vertical Japanese, so an empty result must not mark the page done.
     if not boxes:
-        raise RuntimeError('no text found')
+        raise RuntimeError(NO_TEXT)
     image.with_suffix(LINES).write_text(json.dumps(boxes, ensure_ascii=False), encoding='utf-8')
     return vision_markdown(vision_headings(boxes))
 
@@ -412,12 +415,22 @@ def main():
             for done, (image, result, error) in enumerate(pool.map(partial(ocr_job, None if models == [VISION] else client, models), todo), 1):
                 if error:
                     print(f'[{done}/{len(todo)}] {image.name} error: {error}', flush=True)
-                    failed.append(image)
+                    failed.append((image, error))
                     continue
                 model, chars = result
                 print(f'[{done}/{len(todo)}] {image.name} {chars} chars ({model})', flush=True)
                 record_sources(args.folder, [(image.stem, model)])
                 read_now.add(image.stem)
+        # A photo or a blank page has no words for Vision to find (Dilla Time: a Rhodes piano on page 207). A few
+        # such pages in a book that Vision reads are pictures; a book where most pages fail is vertical Japanese,
+        # which Vision cannot read, so those stay pending.
+        blank = [image for image, error in failed if NO_TEXT in str(error)]
+        if blank and models == [VISION] and len(blank) <= PICTURE_SHARE * len(images):
+            for image in blank:
+                image.with_suffix('.txt').write_text('![Picture]()', encoding='utf-8')
+            record_sources(args.folder, [(image.stem, PICTURE) for image in blank])
+            print(f'{len(blank)} pages without words kept as pictures: {", ".join(i.stem for i in blank)}', flush=True)
+            failed = [(image, error) for image, error in failed if image not in blank]
         if failed:
             sys.exit(f'{len(failed)} pages failed. Re-run the same command to retry only those pages.')
 
