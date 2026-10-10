@@ -8,7 +8,7 @@ const empty = { active: null, saved: [] };
 
 test('the marker is read once and removed from the URL', () => {
   const first = readAutoStart(URL_WITH_MARKER);
-  assert.deepStrictEqual(first, { cleanUrl: 'https://read.amazon.com/?asin=B07HNMJV57', asin: 'B07HNMJV57' });
+  assert.deepStrictEqual(first, { cleanUrl: 'https://read.amazon.com/?asin=B07HNMJV57', asin: 'B07HNMJV57', again: false });
   // A reload or a restored tab sees the cleaned URL and must not start again.
   assert.strictEqual(readAutoStart(first.cleanUrl), null);
 });
@@ -28,6 +28,16 @@ test('a saved book is not captured again automatically, only by clicking the ico
   assert.deepStrictEqual(done, { active: null, saved: ['B07HNMJV57'] });
   assert.strictEqual(claimCapture(done, { tabId: 3, asin: 'B07HNMJV57', auto: true }).ok, false);
   assert.ok(claimCapture(done, { tabId: 3, asin: 'B07HNMJV57', auto: false }).ok);
+});
+
+test('#recapture starts a saved book again, once, and still one tab at a time', () => {
+  const again = readAutoStart('https://read.amazon.com/?asin=B07HNMJV57#recapture');
+  assert.deepStrictEqual(again, { cleanUrl: 'https://read.amazon.com/?asin=B07HNMJV57', asin: 'B07HNMJV57', again: true });
+  assert.strictEqual(readAutoStart(again.cleanUrl), null);
+  const done = { active: null, saved: ['B07HNMJV57'] };
+  const started = claimCapture(done, { tabId: 3, asin: 'B07HNMJV57', auto: true, again: true });
+  assert.ok(started.ok);
+  assert.strictEqual(claimCapture(started.state, { tabId: 4, asin: 'B07HNMJV57', auto: true, again: true }).ok, false);
 });
 
 test('a capture that saved nothing does not mark the book saved', () => {

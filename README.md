@@ -23,16 +23,29 @@ Load the extension once. Open `chrome://extensions` (or `brave://extensions`), t
 1. Open the book in Cloud Reader (`read.amazon.co.jp` or `read.amazon.com`) and go to the first page you want. A larger window gives larger page images.
 2. Click the extension's toolbar icon. The badge shows the current location. Capture stops by itself at the end of the book (or of the sample), or when you click the icon again.
    To start without clicking, open the book's URL with `#autocapture` at the end, e.g. `open -a "Brave Browser" 'https://read.amazon.com/?asin=B07HNMJV57#autocapture'`. The extension removes the marker from the address bar as soon as it reads it, so a reload or a restored tab does not start again. Only one tab captures at a time, and a book whose ZIP was already saved does not start automatically again; click the icon to capture it once more. The badge shows `skip` when a start was refused, and the tab's console says why.
-3. The browser saves `<book title>.zip`, holding `page_0001.png` plus `page_0001.txt` where the text layer had text. Pages stay in memory until then, so leave the tab open.
+3. The browser saves `<book title>.zip`, holding `page_0001.png` plus `page_0001.txt` where the text layer had text. Pages stay in memory until then, so leave the tab open. The title comes from the reader's title element, else from the tab title, else the ASIN. The ZIP also holds `dom-probe.json`, a record of the reader page's element structure (tags, ids, classes, counts; no book text), so that when the full-book reader stops matching the title or text-layer selectors, the fix can be read from a capture instead of guessed.
 4. Run:
 
 ```bash
 venv/bin/python img2txt.py ~/Downloads/<book title>.zip
 ```
 
-The script extracts the ZIP into `~/Downloads/<book title>/`, prints how many pages already have text and how many it will OCR, runs 4 OCR requests in parallel, and writes `<book title>.md` into that folder. OCR tries the models in `GEMINI_MODEL` in order (default `gemini-3.8-flash`, then `gemini-3.5-flash-lite` once the free tier's 20 daily requests run out, then `vision`). `vision` is the macOS Vision framework, running locally with no quota. It catches the pages Gemini refuses with `RECITATION`, which happens on many pages of well-known books, but it outputs plain paragraphs without `#` heading marks. It reads horizontal text only, so vertical Japanese needs Gemini. If `GOOGLE_DRIVE_FOLDER` is set, the file is also copied there.
+The script extracts the ZIP into `~/Downloads/<book title>/`, prints how many pages already have text and how many it will OCR, runs 4 OCR requests in parallel, and writes `<book title>.md` into that folder. OCR tries the models in `GEMINI_MODEL` in order (default `gemini-3.8-flash`, then `gemini-3.5-flash-lite` once the free tier's 20 daily requests run out, then `vision`). `vision` is the macOS Vision framework, running locally with no quota. It catches the pages Gemini refuses with `RECITATION`, which happens on many pages of well-known books. Vision gives no heading marks, so lines set in a type at least 1.5 times the page's body size become `#` headings, and a heading that is only a number has the decorative digits Vision misreads put back (`Z` → 7, `&` → 8). It reads horizontal text only, so vertical Japanese needs Gemini. If `GOOGLE_DRIVE_FOLDER` is set, the file is also copied there.
 
 If any page fails (quota, network), the script exits with an error and keeps the pages that succeeded. Run the same command again on the folder to retry only the missing pages. `--force` re-OCRs everything, `--model` picks another Gemini model, and `--title` sets the output name.
+
+## One command per book
+
+`capture_book.py` runs the steps above for one book, then checks the result and fixes what it can:
+
+```bash
+venv/bin/python capture_book.py B07HNMJV57 --title "How to Write a Lot"
+venv/bin/python capture_book.py B07HNMJV57 --zip ~/Downloads/kindle-book.zip   # from an existing capture
+```
+
+It opens the book in Brave with `#autocapture`, waits for the ZIP, closes only that book's tab, runs `img2txt.py` (`--model vision` by default), then `check_book.py`. Each check names a fix: no `#` headings or a heading read as `Z`/`&` re-OCRs with the current `img2txt.py`, duplicate pages, seams, foreign pages, dashes, stray symbols and homoglyphs run `proofread.py --apply`, and a page without text re-runs `img2txt.py`. The fixes run and the checks repeat, up to three rounds. `report.json` in the book folder records every check, and the exit code is 1 while a blocking check still fails. A default output name (`kindle-book` or the ASIN) and zero text-layer pages are warnings: they do not block, and the ZIP's `dom-probe.json` says where to look. `check_book.py <folder>` runs the checks alone.
+
+`capture_books.py books.tsv` runs a list (`ASIN<TAB>title` per line) the same way and decides from the checks what to do next: a clean book is done and the next one starts; a book whose ZIP is unusable (`pages` or `text` failed) is captured again once with `#recapture`, which is the only way a saved book auto-starts again; a book the fixes could not clean is recorded as failed, with the check names, and the list goes on. `books.progress.json` next to the list holds every verdict, so an interrupted run resumes at the next book, and the summary at the end lists what failed and why.
 
 ## Audiobook
 

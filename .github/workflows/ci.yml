@@ -12,3 +12,19 @@ jobs:
         with:
           node-version: 22
       - run: node --test
+  python:
+    # Linux runs everything but the Vision/AppKit paths; macOS runs the whole suite.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install google-genai pytest
+      - if: runner.os == 'macOS'
+        run: python -m pip install -r requirements.txt
+      - run: python -m pytest -q

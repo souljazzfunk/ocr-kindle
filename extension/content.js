@@ -18,8 +18,8 @@ function position() {
 }
 
 function bookTitle(asin) {
-  const title = document.querySelector('.book-title')?.textContent.trim() || asin || 'kindle-book';
-  return title.replace(/[\\/:*?"<>|~]/g, '_').slice(0, 120);
+  const element = document.querySelector('.book-title, [data-testid*="book-title" i], [class*="BookTitle"]');
+  return pickTitle([element?.textContent, document.title], asin);
 }
 
 // Cloud Reader overlays the page image with a screen-reader text layer of <p> and <h1>-<h6> elements.
@@ -77,6 +77,12 @@ async function captureBook(save, isRunning) {
     const data = await toPng(img);
     if (data !== previous) {
       count++;
+      // Recorded on the first page, where the reader has finished loading, so selectors can be fixed from the ZIP.
+      if (count === 1) {
+        let probe;
+        try { probe = probePage(document); } catch (e) { probe = { error: String(e) }; }
+        save('dom-probe.json', new TextEncoder().encode(JSON.stringify(probe, null, 1)), position());
+      }
       const name = `page_${String(count).padStart(4, '0')}`;
       save(`${name}.png`, Uint8Array.from(atob(data.split(',')[1]), (c) => c.charCodeAt(0)), position());
       const text = pageMarkdown();
@@ -146,9 +152,9 @@ function asinFromUrl() {
   return new URL(location.href).searchParams.get('asin') || '';
 }
 
-async function startCapture(asin, auto) {
+async function startCapture(asin, auto, again = false) {
   running = true; // set before the claim returns, so a second click stops rather than starts again
-  const { ok, reason } = await chrome.runtime.sendMessage({ claim: { asin, auto } });
+  const { ok, reason } = await chrome.runtime.sendMessage({ claim: { asin, auto, again } });
   if (!ok) {
     running = false;
     chrome.runtime.sendMessage({ badge: 'skip' });
@@ -164,6 +170,8 @@ async function startCapture(asin, auto) {
   };
   const count = await captureBook(save, () => running);
   running = false;
+  const textPages = files.filter((f) => f.name.endsWith('.txt')).length;
+  console.log(`[kindle-capture] title "${bookTitle(asin)}", text layer on ${textPages} of ${count} pages`);
   if (count) download(zip(files), `${bookTitle(asin)}.zip`);
   chrome.runtime.sendMessage({ finish: { asin, pages: count } });
   chrome.runtime.sendMessage({ badge: 'done' });
@@ -180,5 +188,5 @@ chrome.runtime.onMessage.addListener((msg) => {
 const autoStart = readAutoStart(location.href);
 if (autoStart) {
   history.replaceState(history.state, '', autoStart.cleanUrl);
-  startCapture(autoStart.asin, true);
+  startCapture(autoStart.asin, true, autoStart.again);
 }
