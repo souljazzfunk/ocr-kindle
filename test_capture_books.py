@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 
 import pytest
@@ -241,3 +242,33 @@ def test_a_gemini_failure_stops_the_list_and_the_book_resumes_from_its_folder(tm
         capture_books.main()
     # No new capture: the folder from the first run is converted again.
     assert started[1] == ('B1', False, capture_books.Path('/books/Facing the Mountain')) and started[2][0] == 'B2'
+
+
+def test_a_good_capture_saved_after_the_stop_is_converted_instead_of_captured_again(tmp_path):
+    # 2026-10-10: Facing the Mountain was captured to the end on 1.7 after the list stopped on it, but its entry still
+    # said stopped (capture_stop on 1.6), so the resumed list started paging through 673 screens again.
+    import zipfile
+    def save(name, made, at):
+        path = tmp_path / name
+        with zipfile.ZipFile(path, 'w') as archive:
+            archive.writestr('capture.json', json.dumps(made))
+        os.utime(path, (at, at))
+        return path
+    save('Facing the Mountain.zip', {'extension_version': '1.6', 'stopped': 'stuck at 540'}, 1000)
+    good = save('Facing the Mountain (1).zip', {'extension_version': '1.7', 'stopped': ''}, 3000)
+    save('Facing the Mountain (2).zip', {'extension_version': '1.7', 'stopped': 'turn cap'}, 4000)
+    save('Drive.zip', {'extension_version': '1.7', 'stopped': ''}, 5000)
+    assert capture_books.saved_capture(tmp_path, 'Facing the Mountain', 2000, version='1.7') == good
+    assert capture_books.saved_capture(tmp_path, 'Facing the Mountain', 3500, version='1.7') is None
+    assert capture_books.saved_capture(tmp_path, 'Facing the Mountain', 2000, version='1.8') is None
+
+
+def test_a_recapture_after_a_saved_zip_failed_does_not_reuse_that_zip():
+    calls = []
+
+    def convert(asin, title, recapture, **options):
+        calls.append((recapture, options.get('source')))
+        return {'blocking_failures': ['pages'] if len(calls) == 1 else [], 'warnings': []}
+
+    verdict, _ = capture_books.run_book('B0', 'Book', {'source': 'old.zip'}, convert=convert)
+    assert verdict == 'done' and calls == [(False, 'old.zip'), (True, None)]
