@@ -250,3 +250,31 @@ def test_a_gemini_failure_is_reported_with_its_reason_and_the_folder_to_convert_
     data = capture_book.convert('B0X', 'Facing the Mountain', source=folder)
     assert data['blocking_failures'] == ['gemini'] and data['source'] == str(folder)
     assert data['error'].endswith('429 PerDay')
+
+
+def test_a_book_tab_gone_with_no_zip_ends_the_wait_in_minutes_not_an_hour(tmp_path):
+    # 2026-10-11: For 91 Days In Tokyo's tab vanished a second after opening; the list waited the full hour.
+    now = [0]
+
+    def clock():
+        return now[0]
+
+    def sleep(s):
+        now[0] += s
+
+    counts = iter([None, 0, 1, 1, 0])  # not asked yet, not open yet, capturing, then gone for good
+    tabs = lambda asin: next(counts, 0)
+    assert capture_book.wait_for_zip(tmp_path, set(), timeout=3600, clock=clock, sleep=sleep, asin='B00S1MW0KM',
+                                     tabs=tabs) == capture_book.TAB_GONE
+    assert now[0] < 300
+
+
+def test_a_book_tab_still_open_keeps_the_wait_going(tmp_path):
+    now = [0]
+
+    def sleep(s):
+        now[0] += s
+
+    assert capture_book.wait_for_zip(tmp_path, set(), timeout=600, clock=lambda: now[0], sleep=sleep, asin='B0',
+                                     tabs=lambda asin: 1) is None
+    assert now[0] >= 600

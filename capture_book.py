@@ -31,6 +31,8 @@ BRAVE = 'Brave Browser'
 ROUNDS = 3
 ZIP_WAIT_S = 3600
 SETTLE_S = 5
+TAB_GONE_S = 120  # no tab on the book this long, and no ZIP: the capture is over without one
+TAB_GONE = 'tab_gone'
 TAB_TRIES = 3
 GEMINI_CHECK = 'gemini'
 PYTHON = sys.executable
@@ -83,9 +85,15 @@ def skip_notices(downloads, asin):
     return set(Path(downloads).glob(f'{asin}.skip*.json'))
 
 
-def wait_for_zip(downloads, before, timeout=ZIP_WAIT_S, clock=time.monotonic, sleep=time.sleep, asin=None):
-    """The first new .zip whose size has stopped changing, a new skip notice for asin, or None when neither appears."""
+def wait_for_zip(downloads, before, timeout=ZIP_WAIT_S, clock=time.monotonic, sleep=time.sleep, asin=None, tabs=None):
+    """The first new .zip whose size has stopped changing, a new skip notice for asin, TAB_GONE when the book's tab
+    has been gone TAB_GONE_S with neither, or None when nothing came in timeout.
+
+    2026-10-11: the tab on For 91 Days In Tokyo vanished a second after it opened, with no ZIP and no skip notice,
+    and the list waited the full hour for a ZIP that could no longer come.
+    """
     deadline = clock() + timeout
+    gone_since = None
     while clock() < deadline:
         skipped = skip_notices(downloads, asin) - before if asin else set()
         if skipped:
@@ -98,6 +106,15 @@ def wait_for_zip(downloads, before, timeout=ZIP_WAIT_S, clock=time.monotonic, sl
             if path.exists() and path.stat().st_size == size and size > 0:
                 return path
             continue
+        # Checked after the ZIP: the extension closes its own tab once the ZIP is saved.
+        if tabs and asin:
+            count = tabs(asin)
+            if count == 0:
+                gone_since = gone_since if gone_since is not None else clock()
+                if clock() - gone_since >= TAB_GONE_S:
+                    return TAB_GONE
+            elif count:
+                gone_since = None
         sleep(2)
     return None
 
@@ -186,8 +203,11 @@ def convert(asin, title=None, model='vision', domain='read.amazon.com', download
                                 recapture)
         before = set(downloads.glob('*.zip')) | skip_notices(downloads, asin)
         open_in_brave(asin, domain, recapture)
-        source = wait_for_zip(downloads, before, asin=asin)
+        source = wait_for_zip(downloads, before, asin=asin, tabs=book_tabs)
         tab_closed = ensure_tab_closed(asin)
+        if source == TAB_GONE:
+            return not_captured(asin, TAB_GONE, f'the book tab closed with no ZIP and no skip notice in {downloads}; '
+                                'Brave or the reader may have dropped it', recapture)
         if source is None:
             return not_captured(asin, 'no_zip', f'no ZIP in {downloads} within {ZIP_WAIT_S // 60} minutes; the book tab '
                                 f'was {"closed" if tab_closed else "left open"}', recapture)

@@ -35,7 +35,7 @@ RECAPTURES = 1
 # A capture that never made a ZIP (refused, cut off by a turn cap, a tab left from an earlier run, an hour with no ZIP)
 # stops it too: on 2026-10-10 a resumed run opened a second tab on a book the first was still paging through.
 STOP_CHECKS = {'download', 'extension_version', 'tab_closed', 'start_position', 'end_position',
-               'capture_refused', 'capture_stop', 'tab_before', 'no_zip'}
+               'capture_refused', 'capture_stop', 'tab_before', 'no_zip', 'tab_gone'}
 
 
 HERE = Path(__file__).resolve().parent
