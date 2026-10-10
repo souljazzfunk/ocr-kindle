@@ -34,16 +34,23 @@ test('a capture starts only at page 1, or where paging back stops when no page i
   assert.strictEqual(atStart(null, true), false);
 });
 
-const { turnGuard, EXTRA_TURNS, STUCK_TURNS } = require('./pagemeta.js');
+const { turnGuard, TURNS_PER_PAGE, EXTRA_TURNS, STUCK_TURNS } = require('./pagemeta.js');
 
 test('page turns stop past the book length, so a capture cannot run on without end', () => {
-  // Automate the Boring Stuff, 552 pages: paging back from 517 then forward must stay under 552 + EXTRA_TURNS each.
   const guard = turnGuard(552);
   let stop = '';
   let turns = 0;
   while (!stop && turns < 10000) stop = guard({ n: (turns++ % 552) + 1, m: 552 });
-  assert.strictEqual(turns, 552 + EXTRA_TURNS + 1);
-  assert.match(stop, /more than the 602/);
+  assert.strictEqual(turns, TURNS_PER_PAGE * 552 + EXTRA_TURNS + 1);
+  assert.match(stop, /more than the 1706/);
+});
+
+test('paging back through pages that take more than one turn each is not cut off', () => {
+  // Automate the Boring Stuff on 1.5: from page 517 to page 12 took 603 turns, and a one-turn-per-page cap stopped it.
+  const guard = turnGuard(552);
+  let stop = '';
+  for (let turn = 0; turn < 603 && !stop; turn++) stop = guard({ n: Math.max(1, 517 - Math.floor(turn * 505 / 603)), m: 552 });
+  assert.strictEqual(stop, '');
 });
 
 test('a reader stuck on one page stops the turns; screens without a number do not count as stuck', () => {
@@ -62,5 +69,5 @@ test('an unknown length still has a cap', () => {
   const guard = turnGuard(undefined);
   let turns = 0;
   while (!guard(null)) turns++;
-  assert.strictEqual(turns, 3000 + EXTRA_TURNS);
+  assert.strictEqual(turns, TURNS_PER_PAGE * 3000 + EXTRA_TURNS);
 });

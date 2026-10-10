@@ -6,7 +6,8 @@ and go on to the next by the checks' verdict, with no one asked in between.
     venv/bin/python capture_books.py books.tsv
 
 books.tsv has one `ASIN<TAB>title` per line (`#` lines are skipped). Progress goes to books.progress.json next
-to it: a book marked done or failed is not run again, so an interrupted run resumes at the next book.
+to it: a book marked done or failed is not run again, so an interrupted run resumes at the next book. A book the
+list stopped on (a Brave or extension failure, STOP_CHECKS) is run again, as #recapture.
 At the end the summary lists what was done and what failed and why; the exit code is 1 when anything failed.
 """
 
@@ -82,19 +83,24 @@ def main():
     progress = load_progress(progress_path)
     options = {'model': args.model, 'domain': args.domain, 'downloads': args.downloads}
     for asin, title in read_list(args.list):
-        if progress.get(asin, {}).get('verdict') in ('done', 'failed'):
+        entry = progress.get(asin, {})
+        if entry.get('verdict') == 'done' or (
+                entry.get('verdict') == 'failed' and not STOP_CHECKS & set(entry.get('failures', []))):
             continue
         print(f'=== {title or asin} ({asin})', flush=True)
         try:
-            again = bool(CAPTURE_CHECKS & set(progress.get(asin, {}).get('failures', [])))
+            # Any earlier attempt may have saved the ASIN in the extension, which then refuses #autocapture.
+            again = asin in progress
             verdict, data = run_book(asin, title, options, again=again)
         except Exception as e:  # a crash in one book must not stop the list, and must be in the summary
             verdict, data = 'failed', {'error': str(e), 'blocking_failures': ['crash'], 'warnings': []}
+        stop = STOP_CHECKS & set(data['blocking_failures'])
+        if stop:
+            verdict = 'stopped'  # not the book's fault: the next run tries it again
         progress[asin] = {'title': title, 'verdict': verdict, 'failures': data['blocking_failures'],
                           'warnings': data['warnings'], 'error': data.get('error'), 'at': time.strftime('%Y-%m-%dT%H:%M:%S')}
         progress_path.write_text(json.dumps(progress, ensure_ascii=False, indent=1), encoding='utf-8')
-        print(f'=== {verdict}: {title or asin}' + (f' ({", ".join(data["blocking_failures"])})' if verdict == 'failed' else ''), flush=True)
-        stop = STOP_CHECKS & set(data['blocking_failures'])
+        print(f'=== {verdict}: {title or asin}' + (f' ({", ".join(data["blocking_failures"])})' if verdict != 'done' else ''), flush=True)
         if stop:
             print(f'\nStopped the list: {", ".join(sorted(stop))} failed on {title or asin}. These come from Brave or the '
                   'extension, so every later book would fail too. Fix the cause, then run the same command to resume.')

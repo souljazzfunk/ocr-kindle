@@ -107,7 +107,7 @@ def test_the_list_stops_at_a_browser_or_extension_failure(tmp_path, monkeypatch,
         capture_books.main()
     assert exit_info.value.code == 2 and started == [('B1', False)]
     assert 'Stopped the list: download failed on AI for Educators' in capsys.readouterr().out
-    assert json.loads((tmp_path / 'books.progress.json').read_text())['B1']['verdict'] == 'failed'
+    assert json.loads((tmp_path / 'books.progress.json').read_text())['B1']['verdict'] == 'stopped'
 
 
 def test_a_partial_capture_is_recaptured_before_the_list_stops(tmp_path, monkeypatch):
@@ -142,3 +142,24 @@ def test_a_capture_that_made_no_zip_stops_the_list(tmp_path, monkeypatch, capsys
     assert exit_info.value.code == 2 and started == ['B1']
     progress = json.loads((tmp_path / 'books.progress.json').read_text())
     assert progress['B1']['error'] == 'could not page back to page 1'
+
+
+def test_a_book_the_list_stopped_on_is_tried_again_as_a_recapture(tmp_path, monkeypatch):
+    # 2026-10-10: extension 1.5 stopped paging back on Automate (a cap too tight), and the run recorded it as failed.
+    books = tmp_path / 'books.tsv'
+    books.write_text('B1\tAutomate\nB2\tTwo\nB3\tThree\n')
+    (tmp_path / 'books.progress.json').write_text(json.dumps({
+        'B1': {'title': 'Automate', 'verdict': 'failed', 'failures': ['capture_refused'], 'warnings': []},
+        'B2': {'title': 'Two', 'verdict': 'failed', 'failures': ['headings'], 'warnings': []}}))
+    started = []
+
+    def convert(asin, title=None, recapture=False, **options):
+        started.append((asin, recapture))
+        return {'blocking_failures': [], 'warnings': []}
+
+    monkeypatch.setattr(capture_books.capture_book, 'convert', convert)
+    monkeypatch.setattr(sys, 'argv', ['capture_books.py', str(books)])
+    with pytest.raises(SystemExit):
+        capture_books.main()
+    # B1 again with #recapture (the extension may have saved it), B2's own failure stays, B3 is new.
+    assert started == [('B1', True), ('B3', False)]
