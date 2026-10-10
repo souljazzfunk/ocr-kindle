@@ -8,6 +8,7 @@ with Gemini, falling back to macOS Vision, so re-running only touches pages that
 """
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -28,6 +29,9 @@ CONFIG_PATH = Path(os.environ.get('KINDLE_OCR_CONFIG', Path(__file__).with_name(
 DEFAULT_MODELS = 'gemini-3.8-flash,gemini-3.5-flash-lite,vision'
 VISION = 'vision'
 VISION_INDENT = 0.015
+PARAGRAPH_GAP = 1.4  # a gap this many line pitches wide ends a paragraph (reference entries: 1.5)
+ROW = 1e-4  # pieces of one printed line are this close in top (same_line)
+LEVEL = 0.5  # pieces whose middles are this many line heights apart, or less, are one line
 # Vision gives no heading marks, and its line heights vary by half again within one paragraph, so a heading is
 # found by its place on the page: set apart from the body (centred, or in a larger type), with space above or below.
 HEADING_RATIO = 1.5
@@ -51,9 +55,12 @@ VISION_WORKERS = os.cpu_count() or WORKERS
 PAGE_NUMBER = re.compile(r'_(\d+)\.png$')
 SENTENCE_END = tuple('。．.!?！？」』）)”')
 MIN_BODY_CHARS = 100
+FULL_LINE = 0.85  # a line this share of the body's median length runs to the margin
+FULL_LINE_TAIL = 400
 # Which reader produced each page's .txt, one `page<TAB>source` line per write; the last line for a page wins.
 SOURCES = 'ocr_sources.tsv'
 TEXT_LAYER = 'textlayer'
+LINES = '.lines.json'  # Vision's line boxes for a page, for layout.py
 
 OCR_PROMPT = """Transcribe the book text on this Kindle page image exactly as printed.
 
@@ -115,30 +122,62 @@ def ocr_pool(models):
     return (ProcessPoolExecutor, VISION_WORKERS) if models == [VISION] else (ThreadPoolExecutor, WORKERS)
 
 
-def vision_lines(image):
-    """Recognized lines as (left, top, height, text), normalized to the image with the origin at top left."""
+def vision_lines(image, region=None):
+    """Recognized lines as (left, top, height, text), normalized to the image with the origin at top left.
+
+    region (left, top, right, bottom, in the same terms) reads only that part of the page.
+    """
     import Vision
     from Foundation import NSURL
+    from Quartz import CGRectMake
     request = Vision.VNRecognizeTextRequest.alloc().init()
     request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
     request.setAutomaticallyDetectsLanguage_(True)
+    x, y, w, h = 0, 0, 1, 1
+    if region:
+        left, top, right, bottom = region
+        x, y, w, h = left, 1 - bottom, right - left, bottom - top  # Vision's origin is at the bottom left
+        request.setRegionOfInterest_(CGRectMake(x, y, w, h))
     handler = Vision.VNImageRequestHandler.alloc().initWithURL_options_(NSURL.fileURLWithPath_(str(image)), None)
     ok, error = handler.performRequests_error_([request], None)
     if not ok:
         raise RuntimeError(error)
     lines = []
     for result in request.results():
-        box = result.boundingBox()  # origin at bottom left
-        lines.append((box.origin.x, 1 - box.origin.y - box.size.height, box.size.height, result.topCandidates_(1)[0].string()))
-    return lines
+        box = result.boundingBox()  # origin at bottom left, relative to the region
+        lines.append((x + box.origin.x * w, 1 - y - (box.origin.y + box.size.height) * h, box.size.height * h,
+                      result.topCandidates_(1)[0].string()))
+    return same_line(lines)
+
+
+def same_line(lines):
+    """Put the pieces of one printed line in reading order. Vision can split a widely spaced line into pieces whose
+    tops differ a little, so sorting by top shuffled them (AI for Educators: "I've had when discussing This is the
+    visceral AI and its reaction"). Pieces whose middles are level share the top of the row, a hair apart from left
+    to right, so every later sort by top reads them in order. They stay apart: a chart's labels are pieces too."""
+    rows = []
+    for line in sorted(lines, key=lambda line: line[0]):
+        middle = line[1] + line[2] / 2
+        row = next((row for row in rows if abs(row[0][1] + row[0][2] / 2 - middle) < LEVEL * min(row[0][2], line[2])),
+                   None)
+        if row is None:
+            rows.append([line])
+        else:
+            row.append(line)
+    ordered = []
+    for row in rows:
+        top = min(piece[1] for piece in row)
+        ordered += [(piece[0], top + k * 1e-6, piece[2], piece[3]) for k, piece in enumerate(row)]
+    return ordered
 
 
 def vision_transcribe(image):
-    lines = vision_headings(vision_lines(image))
+    boxes = vision_lines(image)
     # Vision finds nothing in vertical Japanese, so an empty result must not mark the page done.
-    if not lines:
+    if not boxes:
         raise RuntimeError('no text found')
-    return vision_markdown(lines)
+    image.with_suffix(LINES).write_text(json.dumps(boxes, ensure_ascii=False), encoding='utf-8')
+    return vision_markdown(vision_headings(boxes))
 
 
 def vision_headings(lines):
@@ -204,22 +243,34 @@ def looks_like_title(text):
             and not text.endswith((',', ';', '-')) and not re.match(r'(?:FIGURE|TABLE|Figure|Table)\b', text))
 
 
-def vision_markdown(lines):
-    """Rebuild paragraphs from (left, top, text) line boxes: an indented line, a wide gap or a heading starts a new one."""
+def vision_markdown(lines, pitch=None):
+    """Rebuild paragraphs from (left, top, text) line boxes: a wide gap, a heading, or a line indented after one that
+    ends a sentence starts a new one. A line indented after one that runs on is a hanging indent (AI for Educators
+    sets its dialogue that way), so it continues the paragraph; a line back at the first line's place after a
+    hanging indent starts the next (the entries of a reference list)."""
     lines = sorted(lines, key=lambda line: line[1])
-    margin = min(left for left, _, _ in lines)
-    pitch = median([b[1] - a[1] for a, b in zip(lines, lines[1:])] or [1])
+    pitch = pitch or median([b[1] - a[1] for a, b in zip(lines, lines[1:]) if b[1] - a[1] > ROW] or [1])
     paragraphs = []
-    previous_top = None
+    previous = None
     previous_heading = False
+    starts = []  # left of each line of the current paragraph
     for left, top, text in lines:
-        heading = re.match(r'#+ ', text) is not None
-        if (previous_top is None or heading or previous_heading or left - margin > VISION_INDENT
-                or top - previous_top > 1.5 * pitch):
+        piece = previous is not None and top - previous[1] <= ROW  # the rest of a printed line
+        # Titles, block quotes and image notes stand alone; a list item starts a paragraph of its own.
+        heading = re.match(r'#+ |> |!\[', text) is not None
+        indented = (not piece and previous is not None and left - previous[0] > VISION_INDENT
+                    and previous[2].rstrip().endswith(SENTENCE_END))
+        hanging = (not piece and len(starts) >= 2 and starts[1] - starts[0] > VISION_INDENT
+                   and abs(left - starts[0]) < VISION_INDENT / 2)
+        if (previous is None or heading or previous_heading or indented or hanging or text.startswith('- ')
+                or top - previous[1] > PARAGRAPH_GAP * pitch):
             paragraphs.append(text)
+            starts = [left]
         else:
             paragraphs[-1] = join_lines(paragraphs[-1], text)
-        previous_top = top
+            if not piece:
+                starts.append(left)
+        previous = (left, top, text)
         previous_heading = heading
     return '\n\n'.join(paragraphs)
 
@@ -269,8 +320,26 @@ def read_sources(folder):
     return dict(line.split('\t') for line in path.read_text(encoding='utf-8').splitlines() if '\t' in line)
 
 
+def ends_open(image, text):
+    """Whether the page's last line runs to the right margin, so its paragraph may go on overleaf; None when Vision's
+    line boxes are not kept. A short last line ends the paragraph ("First printing: March 2023" on a copyright page
+    ran into the dedication overleaf)."""
+    path = image.with_suffix(LINES)
+    if not path.exists():
+        return None
+    lines = [line[3].strip() for line in sorted(json.loads(path.read_text(encoding='utf-8')), key=lambda l: l[1])]
+    body = [len(line) for line in lines if len(line) >= BODY_LINE_CHARS]
+    if len(body) < MIN_BODY_LINES:
+        return False
+    tail = text[-FULL_LINE_TAIL:]
+    last = next((line for line in reversed(lines) if line and line in tail), None)
+    return None if last is None else len(last) >= FULL_LINE * median(body)
+
+
 def write_book(folder, title, config):
-    book = join_pages(img.with_suffix('.txt').read_text(encoding='utf-8') for img in page_images(folder))
+    images = page_images(folder)
+    texts = [img.with_suffix('.txt').read_text(encoding='utf-8') for img in images]
+    book = join_pages(texts, [ends_open(img, text) for img, text in zip(images, texts)])
     output = folder / f'{title}.md'
     output.write_text(book, encoding='utf-8')
     print(f'Wrote {output} ({len(book)} chars)')
@@ -280,22 +349,29 @@ def write_book(folder, title, config):
         print(f'Copied to {drive_folder}')
 
 
-def join_pages(texts):
-    """Concatenate pages, gluing a sentence that runs over a page break back together."""
+def join_pages(texts, open_ends=None):
+    """Concatenate pages, gluing a sentence that runs over a page break back together.
+
+    open_ends says for each page whether its last line runs to the margin (ends_open); False keeps the next page apart.
+    """
     book = ''
     previous_len = 0
-    for text in texts:
+    previous_open = None
+    for text, open_end in zip(texts, open_ends or [None] * len(texts)):
         text = text.strip('\n')
         if not text.strip():
             continue
-        # Title pages and colophons are short and end without punctuation, but never continue.
-        continues = (previous_len >= MIN_BODY_CHARS and not text.startswith(('　', '#', '[', '!['))
+        # Title pages and colophons are short and end without punctuation, but never continue; nor does a title
+        # at the foot of a page (AI for Educators: "## CHESS" ran into the next page's first line).
+        ends_in_title = book.rstrip().rsplit('\n\n', 1)[-1].startswith('#')
+        continues = (previous_len >= MIN_BODY_CHARS and not ends_in_title and previous_open is not False and not text.startswith(('　', '#', '[', '![', '> ', '- '))
                      and (not book.rstrip().endswith(SENTENCE_END) or text[:1].islower()))
         if continues:
             book = join_lines(book.rstrip(), text.lstrip())
         else:
             book = (book.rstrip() + '\n\n' if book else '') + text
         previous_len = len(text)
+        previous_open = open_end
     return book + '\n'
 
 
@@ -319,22 +395,21 @@ def main():
         sys.exit(f'No page images found in {args.folder}')
     todo = [img for img in images if args.force or not has_text(img)]
     print(f'{len(images)} pages, {len(images) - len(todo)} already have text, {len(todo)} to OCR')
+    api_key = config.get('GEMINI_API_KEY')
+    client = genai.Client(api_key=api_key, http_options=types.HttpOptions(
+        retry_options=types.HttpRetryOptions(attempts=3, initial_delay=2, max_delay=30))) if api_key else None
+    read_now = set()
 
     if todo:
         models = (args.model or config.get('GEMINI_MODEL') or DEFAULT_MODELS).split(',')
-        client = None
-        if models != [VISION]:
-            api_key = config.get('GEMINI_API_KEY')
-            if not api_key:
-                sys.exit(f'GEMINI_API_KEY is not set in {CONFIG_PATH}')
-            client = genai.Client(api_key=api_key, http_options=types.HttpOptions(
-                retry_options=types.HttpRetryOptions(attempts=3, initial_delay=2, max_delay=30)))
+        if models != [VISION] and not client:
+            sys.exit(f'GEMINI_API_KEY is not set in {CONFIG_PATH}')
 
         failed = []
         executor, workers = ocr_pool(models)
         print(f'OCR with {workers} {"processes" if executor is ProcessPoolExecutor else "threads"}', flush=True)
         with executor(workers) as pool:
-            for done, (image, result, error) in enumerate(pool.map(partial(ocr_job, client, models), todo), 1):
+            for done, (image, result, error) in enumerate(pool.map(partial(ocr_job, None if models == [VISION] else client, models), todo), 1):
                 if error:
                     print(f'[{done}/{len(todo)}] {image.name} error: {error}', flush=True)
                     failed.append(image)
@@ -342,8 +417,21 @@ def main():
                 model, chars = result
                 print(f'[{done}/{len(todo)}] {image.name} {chars} chars ({model})', flush=True)
                 record_sources(args.folder, [(image.stem, model)])
+                read_now.add(image.stem)
         if failed:
             sys.exit(f'{len(failed)} pages failed. Re-run the same command to retry only those pages.')
+
+    # Pages read just now, and pages never laid out, take Gemini's layout; the rest keep their text and its proofreading.
+    from layout import mark_layout, read_layout
+    sources = read_sources(args.folder)
+    done = read_layout(args.folder)
+    vision = [img for img in images if sources.get(img.stem) == VISION and (img.stem in read_now or img.stem not in done)]
+    if vision and client:
+        left = mark_layout(args.folder, client, vision)
+        print(f'Layout read on {len(vision) - len(left)} of {len(vision)} Vision pages'
+              + (f'; {len(left)} left, run again to retry' if left else ''), flush=True)
+    elif vision:
+        print(f'GEMINI_API_KEY is not set in {CONFIG_PATH}: {len(vision)} Vision pages keep titles guessed from layout')
 
     write_book(args.folder, args.title or args.folder.resolve().name, config)
 

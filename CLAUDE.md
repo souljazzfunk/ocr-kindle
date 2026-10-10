@@ -20,7 +20,8 @@
 | ZIP はダイアログなしで保存する。保存できたと言うのは Brave の履歴で拡張が保存を終えたと確かめたときだけ | `brave.py`（読むだけ）。`capture_books.py` は Brave が保存場所を尋ねる設定のままなら始めない。`capture_book.py` の `download` が Brave の履歴で拡張による保存と完了を確かめる。テスト `test_brave.py` |
 | 取り込みのページめくりは際限なく続けない。取り込めないときは 1 時間待たずに理由を残して止まる。一覧を続きから再開するとき、同じ本のタブを 2 つ開かない | `extension/pagemeta.js` の `turnGuard`（戻る・進むとも、同じページで 30 回めくったら止める。回数の上限はページ数 × 3 + 50。1 ページに 2 回以上めくる本があるので、ページ数ぴったりにはしない）、ZIP の `capture.json` の `stopped` を `check_book.py` の `capture_stop` で落とす。拡張は自動取り込みを断ると `<ASIN>.skip.json` に理由を書いてタブを閉じ、`capture_book.py` はそれを見てすぐ `capture_refused` にする。`capture_book.py` は開く前に同じ本のタブを閉じ、閉じられなければ `tab_before`。どれも `STOP_CHECKS` で一覧を止め、その本は次に再開したとき `#recapture` でやり直す。テスト `extension/pagemeta.test.js`・`test_check_book.py`・`test_capture_books.py` |
 | 全文版リーダーの書名・テキスト層が取れないときに、当て推量で直さない | 拡張が ZIP に `dom-probe.json`（画面構造）を入れる。`extension/pagemeta.js`、テスト `extension/pagemeta.test.js` |
-| 出来上がった Markdown の不具合（見出しなし、7→Z・8→& の読み違い、ダッシュ、重複ページ、書名）は機械が見つけて直す。人が気づくのを待たない | `check_book.py`（不具合ごとに直すコマンドを返す）、`capture_book.py`（直して再検査を最大 3 周、`report.json` に残す）、テスト `test_check_book.py` |
+| 出来上がった Markdown の不具合（見出しなし、7→Z・8→& の読み違い、ダッシュ、重複ページ、書名、Al→AI、'11→'ll）は機械が見つけて直す。人が気づくのを待たない | `check_book.py`（不具合ごとに直すコマンドを返す）、`capture_book.py`（直して再検査を最大 3 周、校正は各周の最後、`report.json` に残す）、テスト `test_check_book.py`・`test_layout.py` |
+| Vision のページの構造（見出し・引用・図・飾り・頭文字）を位置と大きさだけで当て推量しない。同じ読み直しを修正として繰り返さない | `layout.py`（Gemini がページ画像と行番号から構造だけを答え、`layout.json` に残す。章の階層は本の目次で揃える）、`check_book.py` の `layout`（未読のページがあれば落として読み直す）、テスト `test_layout.py` |
 | 検査・フック・拡張のテストは CI で回す | `.github/workflows/ci.yml`（`node --test`、`pytest` を Linux と macOS で） |
 
 ## 取り込みの手順

@@ -101,12 +101,13 @@ def wait_for_zip(downloads, before, timeout=ZIP_WAIT_S, clock=time.monotonic, sl
 
 
 def plan_fixes(checks):
-    """Commands to run for the failed checks that have one, each at most once."""
+    """Commands to run for the failed checks that have one, each at most once, re-reading pages before proofreading:
+    a re-read rewrites the pages and would undo the proofreader's fixes (2026-10-10, AI for Educators)."""
     seen = []
     for c in checks:
         if not c.ok and c.fix and c.fix not in seen:
             seen.append(c.fix)
-    return seen
+    return sorted(seen, key=lambda fix: fix[0] == 'proofread.py')
 
 
 def correct(folder, title, rounds=ROUNDS, runner=run):

@@ -21,6 +21,8 @@ from img2txt import (TEXT_LAYER, VISION, load_config, page_images, read_sources,
                      write_book)
 
 SAMPLES = 6
+L_FOR_I_MIN = 3
+L_FOR_I_RATIO = 5  # the I spelling at least a fifth as common
 DUPLICATE_RATIO = 0.8
 MIN_OVERLAP_WORDS = 8
 OVERLAP_RATIO = 0.85
@@ -181,6 +183,61 @@ def stray_symbol(book):
             yield Finding('stray_symbol', stem, m.group(), '')
 
 
+def l_for_i(book):
+    """Vision reads a capital I after a capital as a small l: "Al" for AI, "AlforEDUbook" for AIforEDUbook. A letter
+    run is fixed when the book also spells it with the I (AI for Educators: AI 108 times, Al 265), unless a
+    capitalised word follows, as a name does (Al Gore)."""
+    runs = Counter(re.findall(r'[A-Za-z]+', book.corpus))
+    for stem, text in book.pages.items():
+        for m in re.finditer(r'(?<![A-Za-z])[A-Za-z]*[A-Z]l[A-Za-z]*(?![A-Za-z])', text):
+            run = m.group()
+            fixes = [run[:i] + 'I' + run[i + 1:] for i, c in enumerate(run) if c == 'l' and i and run[i - 1].isupper()]
+            best = max(fixes, key=lambda f: runs[f], default=None)
+            named = re.match(r' [A-Z][a-z]', text[m.end():m.end() + 3])
+            if best and not named and runs[best] >= L_FOR_I_MIN and runs[best] * L_FOR_I_RATIO >= runs[run]:
+                # The neighbouring characters keep the replacement off a longer word ("Also").
+                start, end = max(0, m.start() - 1), min(len(text), m.end() + 1)
+                before = text[start:end]
+                yield Finding('l_for_i', stem, before, before.replace(run, best, 1))
+
+
+def digits_for_ll(book):
+    """Vision reads the contraction 'll as '11 ("it'11")."""
+    for stem, text in book.pages.items():
+        for m in re.finditer(r"[A-Za-z]+['’]11(?![0-9])", text):
+            yield Finding('digits_for_ll', stem, m.group(), m.group()[:-2] + 'll')
+
+
+HEADING = re.compile(r'(?m)^(#+) (.*)$')
+MAX_PAGE_HEADINGS = 3
+
+
+def heading_noise(book):
+    """Headings on Vision pages that are not titles: cover or photo text, or a line cut from a sentence. The fix
+    makes them plain text again, so it holds where reading the page again would only repeat the guess.
+
+    Gemini and the text layer mark headings themselves, so only Vision's pages are judged; a page Gemini laid out
+    (layout.py) may be a chapter title alone, so only its titles that cannot be titles count.
+    """
+    from layout import read_layout
+    sources, laid = read_sources(book.folder), read_layout(book.folder)
+    for stem, text in book.pages.items():
+        if sources.get(stem) != VISION:
+            continue
+        titles = HEADING.findall(text)
+        has_body = any(len(p) >= 100 and not p.startswith('#') for p in text.split('\n\n'))
+        guessed = stem not in laid and titles and (not has_body or len(titles) > MAX_PAGE_HEADINGS)
+        for marks, title in titles:
+            if guessed or not_a_title(title):
+                yield Finding('heading_noise', stem, f'{marks} {title}', title)
+
+
+def not_a_title(text):
+    first = text.lstrip('"\'“‘(')[:1]
+    return (not first or not (first.isupper() or first.isdigit()) or text.endswith((',', ';', '-'))
+            or not re.search(r'[A-Za-z]*[AEIOUYaeiouy][A-Za-z]*', text))
+
+
 def decorative_digit(book):
     for stem, text in book.pages.items():
         for m in DECORATIVE_REF.finditer(text):
@@ -189,7 +246,7 @@ def decorative_digit(book):
 
 
 DETECTORS = [duplicate_page, seam_overlap, foreign_page, hyphen_break, dash_as_hyphen, homoglyph, odd_case, stray_symbol,
-             decorative_digit]
+             decorative_digit, l_for_i, digits_for_ll, heading_noise]
 
 
 def cross_read(folder, pages, sources):

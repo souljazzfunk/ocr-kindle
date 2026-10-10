@@ -14,7 +14,8 @@ BODY2 = ('Wozniak went with Allen Baum to the first meeting, held in a garage in
          'idea of building a terminal of his own. ')
 
 
-def book(tmp_path, pages, sources='vision', md=None, name='How to Write a Lot'):
+def book(tmp_path, pages, sources='vision', md=None, name='How to Write a Lot', laid=True):
+    """A converted book folder; laid says whether Gemini has read the layout of its Vision pages."""
     folder = tmp_path / name
     folder.mkdir()
     for n, text in enumerate(pages, 1):
@@ -22,6 +23,8 @@ def book(tmp_path, pages, sources='vision', md=None, name='How to Write a Lot'):
         if text is not None:
             (folder / f'page_{n:04d}.txt').write_text(text)
     (folder / SOURCES).write_text(''.join(f'page_{n:04d}\t{sources}\n' for n in range(1, len(pages) + 1)))
+    if laid:
+        (folder / 'layout.json').write_text(json.dumps({f'page_{n:04d}': {} for n in range(1, len(pages) + 1)}))
     if md is not None:
         (folder / f'{name}.md').write_text(md)
     return folder
@@ -45,7 +48,8 @@ def test_the_defects_of_how_to_write_a_lot_are_each_named_with_a_fix(tmp_path):
     checks = by_name(check_folder(folder))
     assert not checks['title'].ok and not checks['title'].blocking
     assert not checks['text_layer'].ok and not checks['text_layer'].blocking
-    assert not checks['headings'].ok and checks['headings'].fix[:2] == ['img2txt.py', str(folder)] and '--force' in checks['headings'].fix
+    # Reading the pages again would give the same headings, so none is tried.
+    assert not checks['headings'].ok and checks['headings'].fix is None
     assert not checks['proofread'].ok and checks['proofread'].fix == ['proofread.py', str(folder), '--apply', 'dash_as_hyphen']
     assert checks['pages'].ok
 
@@ -56,7 +60,7 @@ def test_decorative_digit_headings_and_gaps_are_caught(tmp_path):
     (folder / 'page_0002.txt').rename(folder / 'page_0004.txt')
     checks = by_name(check_folder(folder, title='How to Write a Lot'))
     assert not checks['decorative_digits'].ok and '2 headings' in checks['decorative_digits'].detail
-    assert checks['decorative_digits'].fix == ['img2txt.py', str(folder), '--force', '--model', 'vision', '--title', 'How to Write a Lot']
+    assert checks['decorative_digits'].fix is None
     assert not checks['pages'].ok and checks['pages'].fix is None
     assert checks['title'].ok  # a title was given
 
@@ -78,26 +82,28 @@ def test_cli_exit_code_follows_blocking_checks(tmp_path):
 
 
 def test_correct_runs_each_fix_once_and_stops_when_clean(tmp_path, monkeypatch):
-    folder = book(tmp_path, [BODY + 'appliance-a unit.'], md=BODY + 'appliance-a unit.')
+    folder = book(tmp_path, [BODY + 'appliance-a unit.'], md='# One\n\n' + BODY + 'appliance-a unit.', laid=False)
     commands = []
 
     def fake_run(command):
         commands.append(command[1:])
-        # The fixes "work": the book gets a heading and the dash is restored.
+        # The fixes "work": Gemini reads the layout and the dash is restored.
+        (folder / 'layout.json').write_text(json.dumps({'page_0001': {}}))
         (folder / 'page_0001.txt').write_text(BODY + 'appliance—a unit.')
         (folder / f'{folder.name}.md').write_text('# One\n\n' + BODY + 'appliance—a unit.')
 
     checks, rounds = capture_book.correct(folder, None, runner=fake_run)
+    # Proofreading goes last: re-reading pages after it would undo its fixes (AI for Educators, 2026-10-10).
     assert [c[0].split('/')[-1] for c in commands] == ['img2txt.py', 'proofread.py']
     assert rounds == 2 and all(c.ok or not c.blocking for c in checks)
 
 
 def test_correct_gives_up_after_the_round_limit(tmp_path):
-    folder = book(tmp_path, [BODY], md=BODY)
+    folder = book(tmp_path, [BODY], md=BODY, laid=False)
     calls = []
     checks, rounds = capture_book.correct(folder, None, rounds=2, runner=lambda c: calls.append(c))
     assert rounds == 2 and len(calls) == 2
-    assert [c.name for c in checks if not c.ok and c.blocking] == ['headings']
+    assert [c.name for c in checks if not c.ok and c.blocking] == ['layout', 'headings']
 
 
 def test_wait_for_zip_returns_the_new_settled_archive(tmp_path):
@@ -170,13 +176,15 @@ def test_heading_noise_missed_chapters_and_digits_in_the_text_are_caught(tmp_pat
     cover = '# How\n\n# Write\n\n# Iot'
     opening = '2\n\nSpecious Barriers to Writing a Lot\n\n' + BODY + BODY2
     mid = '# about the rates and slopes, people!\n\n' + BODY + 'In Chapter Z, we turn to books.'
-    folder = book(tmp_path, [cover, opening, mid], md='\n\n'.join([cover, opening, mid]))
+    folder = book(tmp_path, [cover, opening, mid], md='\n\n'.join([cover, opening, mid]), laid=False)
     checks = by_name(check_folder(folder, title='How to Write a Lot'))
     assert not checks['heading_noise'].ok and checks['heading_noise'].detail.startswith('4 headings')
     assert not checks['chapter_titles'].ok and checks['chapter_titles'].detail.startswith('1 chapter')
     assert not checks['decorative_digits'].ok and '1 chapter references' in checks['decorative_digits'].detail
     assert checks['proofread'].fix[3] == 'decorative_digit'
-    assert '--force' in checks['heading_noise'].fix and '--force' in checks['chapter_titles'].fix
+    # Noise is made plain text again; a missed chapter is reported, since reading again repeats it.
+    assert checks['heading_noise'].fix[:4] == ['proofread.py', str(folder), '--apply', 'heading_noise']
+    assert checks['chapter_titles'].fix is None
 
 
 def test_real_titles_are_not_noise(tmp_path):
