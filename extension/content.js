@@ -79,7 +79,8 @@ async function goToStart(isRunning) {
   while (img && isRunning()) {
     const pos = parsePosition(document.body.innerText);
     if (pos?.n === 1) return '';
-    const stop = guard(pos);
+    // turnPage only returns once the screen has changed, so every turn here moved.
+    const stop = guard(pos, true);
     if (stop) return `paging back to page 1 stopped: ${stop}`;
     const back = await turnPage(img.src, 'Previous page');
     if (!back) break;
@@ -97,9 +98,9 @@ async function captureBook(save, isRunning) {
   const guard = turnGuard(parsePosition(document.body.innerText)?.m);
   let stopped = '';
   while (img && isRunning()) {
-    stopped = guard(parsePosition(document.body.innerText));
-    if (stopped) break;
     const data = await toPng(img);
+    stopped = guard(parsePosition(document.body.innerText), data !== previous);
+    if (stopped) break;
     if (data !== previous) {
       count++;
       // Recorded on the first page, where the reader has finished loading, so selectors can be fixed from the ZIP.

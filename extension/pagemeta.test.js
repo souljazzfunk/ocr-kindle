@@ -65,6 +65,15 @@ test('a reader stuck on one page stops the turns; screens without a number do no
   assert.ok([5, 5, 5, 6, 7].every((n) => figure({ n, m: 552 }) === ''));
 });
 
+test('new screens under one page number are progress, not a stuck reader', () => {
+  // Facing the Mountain on 1.6: the notes ran past 30 screens all showing page 540 of 540.
+  const notes = turnGuard(540);
+  assert.ok(Array.from({ length: STUCK_TURNS * 2 }, () => notes({ n: 540, m: 540 }, true)).every((r) => r === ''));
+  const stuck = turnGuard(540);
+  const results = Array.from({ length: STUCK_TURNS + 1 }, () => stuck({ n: 540, m: 540 }, false));
+  assert.match(results.at(-1), /stayed on page 540/);
+});
+
 test('an unknown length still has a cap', () => {
   const guard = turnGuard(undefined);
   let turns = 0;

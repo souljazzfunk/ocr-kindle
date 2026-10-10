@@ -65,6 +65,8 @@ function atStart(pos, turned) {
 // with the reader's position and returns why to stop, or '' to go on.
 // One page can take more than one turn (figures, code listings): 1.5 paged back from 517 to 12 in 603 turns and was
 // stopped by a cap of one turn per page. The stuck check catches a reader that does not move; the cap is only a backstop.
+// A turn that brought a new screen is progress even when the page number stays: Facing the Mountain's notes run for
+// more than 30 screens all numbered 540 of 540, and 1.6 stopped there as stuck. The caller says so with fresh.
 const TURNS_PER_PAGE = 3;
 const EXTRA_TURNS = 50;
 const UNKNOWN_LENGTH = 3000;
@@ -75,11 +77,11 @@ function turnGuard(total) {
   let turns = 0;
   let last = null;
   let same = 0;
-  return (pos) => {
+  return (pos, fresh = false) => {
     turns++;
     if (turns > limit) return `${turns} turns, more than the ${limit} a book of ${total || 'unknown'} pages needs`;
     const n = pos ? pos.n : null;
-    if (n !== null && n === last) {
+    if (n !== null && n === last && !fresh) {
       if (++same >= STUCK_TURNS) return `the reader stayed on page ${n} for ${STUCK_TURNS} turns`;
     } else {
       same = 0;
