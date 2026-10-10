@@ -33,6 +33,7 @@ ZIP_WAIT_S = 3600
 SETTLE_S = 5
 TAB_GONE_S = 120  # no tab on the book this long, and no ZIP: the capture is over without one
 TAB_GONE = 'tab_gone'
+APP_ONLY = 'kindle_app_only'  # Cloud Reader shows "Kindle App Is Required"; the Kindle app is used only on Laiken's word
 TAB_TRIES = 3
 GEMINI_CHECK = 'gemini'
 PYTHON = sys.executable
@@ -213,7 +214,9 @@ def convert(asin, title=None, model='vision', domain='read.amazon.com', download
                                 f'was {"closed" if tab_closed else "left open"}', recapture)
         if source.suffix == '.json':
             reason = json.loads(source.read_text(encoding='utf-8')).get('reason', 'no reason given')
-            return not_captured(asin, 'capture_refused', f'the extension did not capture: {reason}', recapture)
+            # A book Cloud Reader cannot open is this book's failure, not the browser's: the list goes on.
+            check = APP_ONLY if reason.startswith('kindle app required') else 'capture_refused'
+            return not_captured(asin, check, f'the extension did not capture: {reason}', recapture)
     folder = source.with_suffix('') if source.suffix == '.zip' else source
     try:
         run([PYTHON, str(HERE / 'img2txt.py'), str(source), '--model', model] + (['--title', title] if title else []))

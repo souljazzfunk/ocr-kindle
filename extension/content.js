@@ -217,7 +217,10 @@ async function startCapture(asin, auto, again = false) {
   const { ok, reason } = await chrome.runtime.sendMessage({ claim: { asin, auto, again } });
   if (!ok) return refuse(asin, auto, reason);
   // Opened from a URL, the reader may still be loading its first page.
-  for (let t = 0; auto && !pageImage() && t < FIRST_PAGE_WAIT_MS; t += 500) await sleep(500);
+  for (let t = 0; auto && !pageImage() && t < FIRST_PAGE_WAIT_MS; t += 500) {
+    if (appOnly(document.body.innerText)) return refuse(asin, auto, `${APP_ONLY}: Cloud Reader cannot open this book`);
+    await sleep(500);
+  }
   if (auto) {
     chrome.runtime.sendMessage({ badge: 'back' });
     const problem = await goToStart(() => running);

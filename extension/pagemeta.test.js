@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { pickTitle } = require('./pagemeta.js');
+const { pickTitle, appOnly } = require('./pagemeta.js');
 
 test('the title element wins when it has text', () => {
   assert.strictEqual(pickTitle(['How to Write a Lot', 'Kindle'], 'B07HNMJV57'), 'How to Write a Lot');
@@ -79,4 +79,9 @@ test('an unknown length still has a cap', () => {
   let turns = 0;
   while (!guard(null)) turns++;
   assert.strictEqual(turns, TURNS_PER_PAGE * 3000 + EXTRA_TURNS);
+});
+
+test('a book Cloud Reader can only send to the Kindle app is recognised', () => {
+  assert.ok(appOnly('Kindle App Is Required\nThe book you’re trying to read can only be opened using Kindle app.\nBack to Library'));
+  assert.ok(!appOnly('Page 1 of 120'));
 });
