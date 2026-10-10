@@ -2,11 +2,11 @@
 
 Turn a Kindle book you own into one Markdown file for personal use (notes, study, feeding to an LLM).
 
-1. A Chrome extension pages through the book in Kindle Cloud Reader and downloads `<book title>.zip` with every page image. The ZIP also holds each page's exact text from Cloud Reader's screen-reader text layer when one is present.
-2. Cloud Reader often shows only the free sample, even for a purchased book. `kindle2img.applescript` then captures the rest from the Kindle for Mac app into the same folder, continuing the page numbers.
-3. `img2txt.py` OCRs, with Gemini, only the pages that have no text yet, then joins all pages into `<book title>.md`.
+1. A browser extension (loaded in Brave, which holds the read.amazon.com sign-in) pages through the book in Kindle Cloud Reader from page 1 and saves `<book title>.zip` with every page image. The sample reader also has a screen-reader text layer, saved as each page's exact text; the full-book reader has none.
+2. `img2txt.py` OCRs only the pages that have no text yet, then joins all pages into `<book title>.md`.
+3. `capture_books.py` runs both for a list of books and checks every result (see **One command per book**).
 
-Pages whose text comes from the text layer need no OCR, so they cost nothing and contain no recognition errors. Vertical Japanese (縦書き) works in all paths.
+The Kindle for Mac app is not part of this flow. `kindle2img.applescript` (last section) is used only when Laiken asks for it, and the capture hook blocks it otherwise.
 
 ## Setup
 
@@ -59,9 +59,9 @@ The file name is the book title. Chapters split at the shallowest heading level 
 
 `--split` writes one file per chapter instead of one file for the book, as `NN_<chapter title>.m4a` in the same `<book title>/` folder. The numbers are zero-padded to the chapter count, so the files sort in reading order, and each file is tagged with its chapter title, the book title as album, and its track number.
 
-## Kindle for Mac
+## Kindle for Mac (only when Laiken asks)
 
-If Cloud Reader stopped at the end of the sample, extract the ZIP, open the same book in the Kindle for Mac app at the page where the capture stopped, and run the AppleScript on the extracted folder:
+This path drives Laiken's screen and needs macOS permissions, so it is never a first step or a fallback an agent picks on its own. If Cloud Reader stopped at the end of the sample, extract the ZIP, open the same book in the Kindle for Mac app at the page where the capture stopped, and run the AppleScript on the extracted folder:
 
 ```bash
 unzip -d ~/Downloads/"<book title>" ~/Downloads/"<book title>.zip"

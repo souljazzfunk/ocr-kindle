@@ -6,6 +6,11 @@ import pytest
 import capture_books
 
 
+@pytest.fixture(autouse=True)
+def brave_saves_without_asking(monkeypatch):
+    monkeypatch.setattr(capture_books.brave, 'prompt_problem', lambda: None)
+
+
 def result(failures, warnings=()):
     return {'blocking_failures': list(failures), 'warnings': list(warnings)}
 
@@ -84,3 +89,38 @@ def test_a_book_an_earlier_run_captured_badly_is_captured_anew_from_the_start(tm
     with pytest.raises(SystemExit):
         capture_books.main()
     assert calls == [('B1', True), ('B2', False)]
+
+
+def test_the_list_stops_at_a_browser_or_extension_failure(tmp_path, monkeypatch, capsys):
+    books = tmp_path / 'books.tsv'
+    books.write_text('B1\tAI for Educators\nB2\tTwo\n')
+    started = []
+
+    def convert(asin, title=None, recapture=False, **options):
+        started.append((asin, recapture))
+        # The 2026-10-10 dialog: the ZIP came, but not through the extension's download.
+        return {'blocking_failures': ['download'], 'warnings': []}
+
+    monkeypatch.setattr(capture_books.capture_book, 'convert', convert)
+    monkeypatch.setattr(sys, 'argv', ['capture_books.py', str(books)])
+    with pytest.raises(SystemExit) as exit_info:
+        capture_books.main()
+    assert exit_info.value.code == 2 and started == [('B1', False)]
+    assert 'Stopped the list: download failed on AI for Educators' in capsys.readouterr().out
+    assert json.loads((tmp_path / 'books.progress.json').read_text())['B1']['verdict'] == 'failed'
+
+
+def test_a_partial_capture_is_recaptured_before_the_list_stops(tmp_path, monkeypatch):
+    books = tmp_path / 'books.tsv'
+    books.write_text('B1\tAI for Educators\nB2\tTwo\n')
+    started = []
+
+    def convert(asin, title=None, recapture=False, **options):
+        started.append((asin, recapture))
+        return {'blocking_failures': ['start_position'], 'warnings': []}  # opened at page 75 of 120, twice
+
+    monkeypatch.setattr(capture_books.capture_book, 'convert', convert)
+    monkeypatch.setattr(sys, 'argv', ['capture_books.py', str(books)])
+    with pytest.raises(SystemExit) as exit_info:
+        capture_books.main()
+    assert exit_info.value.code == 2 and started == [('B1', False), ('B1', True)]
