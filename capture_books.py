@@ -28,6 +28,9 @@ from check_book import CAPTURE
 
 # A failure in these checks means the ZIP itself is unusable, so the book is captured again (once).
 CAPTURE_CHECKS = {'pages', 'text', 'start_position', 'end_position'}
+# A capture that ended with no ZIP and no reason (the tab vanished, 2026-10-11 For 91 Days In Tokyo) is also tried
+# once more in a fresh tab before the list stops on it.
+NO_ZIP_CHECKS = {'tab_gone', 'no_zip'}
 RECAPTURES = 1
 # Failures that come from the browser or the extension, not from one book: every later book would fail the same
 # way, so the list stops at the first book that still has one (after its recapture). On 2026-10-10 a run went on
@@ -83,7 +86,7 @@ def decide(data, attempt):
         return 'done'
     # A tab left open is recorded but is no reason to capture again.
     capture = set(failures) - {'tab_closed'}
-    if capture and capture <= CAPTURE_CHECKS and attempt <= RECAPTURES:
+    if capture and capture <= CAPTURE_CHECKS | NO_ZIP_CHECKS and attempt <= RECAPTURES:
         return 'recapture'
     return 'failed'
 
