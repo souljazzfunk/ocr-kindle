@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from img2txt import SOURCES, TEXT_LAYER, VISION, page_images, read_sources
+from layout import read_layout
 from proofread import DECORATIVE_REF, Book, find_all, load_pages
 
 PROBE = 'dom-probe.json'
@@ -26,10 +27,9 @@ DECORATIVE_HEADING = re.compile(r'(?m)^#+\s*(?:Chapter\s+|Part\s+)?[Z&]+(?:\s.*)
 HEADING = re.compile(r'(?m)^(#+) (.*)$')
 # A bare chapter number on its own line, then a short title, then body text: a chapter opening with no heading.
 MISSED_CHAPTER = re.compile(r'(?m)^(?:[1-9]|1\d|20|[Z&])\n\n(?![#\d])[^\n]{1,80}\n\n[^#\n]{%d,}' % 100)
-MAX_PAGE_HEADINGS = 3
 # Proofread kinds whose fix is safe without a look at samples; the others are reported for a human.
 AUTO_KINDS = ('duplicate_page', 'foreign_page', 'seam_overlap', 'dash_as_hyphen', 'stray_symbol', 'homoglyph',
-              'decorative_digit')
+              'decorative_digit', 'l_for_i', 'digits_for_ll')
 REVIEW_KINDS = ('hyphen_break', 'odd_case')
 
 
@@ -77,32 +77,6 @@ def end_tolerance(total):
     return max(2, round(total * 0.02))
 
 
-def noisy_headings(folder, sources):
-    """Headings on Vision pages that are not titles: cover or photo text, or a line cut from a sentence.
-
-    Gemini and the text layer mark headings themselves, so only Vision's guesses are judged.
-    """
-    noise = []
-    for image in page_images(folder):
-        if sources.get(image.stem) != VISION or not image.with_suffix('.txt').exists():
-            continue
-        page = image.with_suffix('.txt').read_text(encoding='utf-8')
-        titles = [t for _, t in HEADING.findall(page)]
-        has_body = any(len(p) >= 100 and not p.startswith('#') for p in page.split('\n\n'))
-        # A page without body text may hold one title (Contents, Foreword, Part One); more are cover or photo words.
-        if (not has_body and len(titles) > 1) or len(titles) > MAX_PAGE_HEADINGS:
-            noise += titles
-            continue
-        noise += [t for t in titles if not_a_title(t)]
-    return noise
-
-
-def not_a_title(text):
-    first = text.lstrip('"\'“‘(')[:1]
-    return (not first or not (first.isupper() or first.isdigit()) or text.endswith((',', ';', '-'))
-            or not re.search(r'[A-Za-z]*[AEIOUYaeiouy][A-Za-z]*', text))
-
-
 def check_folder(folder, title=None):
     folder = Path(folder)
     images = page_images(folder)
@@ -148,26 +122,34 @@ def check_folder(folder, title=None):
                         blocking=False, fix=None))
 
     text = md.read_text(encoding='utf-8') if md.exists() else ''
-    from_vision = sources and all(s == VISION for s in sources.values())
-    reocr = ['img2txt.py', str(folder), '--force', '--model', VISION] + (['--title', title] if title else [])
+    # Vision's pages take their titles, quotes and figures from Gemini (layout.py); a page it has not read yet keeps
+    # titles guessed from the layout alone, which miss most of them. Running img2txt.py again asks for those pages.
+    laid = read_layout(folder)
+    unread = [img.stem for img in images if sources.get(img.stem) == VISION and img.stem not in laid]
+    checks.append(Check('layout', not unread, f'{len(unread)} Vision pages without a layout from Gemini'
+                        + (f', e.g. {unread[0]}' if unread else ''),
+                        fix=['img2txt.py', str(folder), '--model', VISION] + (['--title', title] if title else [])
+                        if unread else None))
+    # Reading the pages again gives the same titles, so these are reported, not retried.
     headings = len(re.findall(r'(?m)^#+ ', text))
-    checks.append(Check('headings', md.exists() and headings > 0, f'{headings} headings in {md.name}',
-                        fix=reocr if from_vision and not headings else None))
+    checks.append(Check('headings', md.exists() and headings > 0, f'{headings} headings in {md.name}', fix=None))
     decorative = DECORATIVE_HEADING.findall(text)
     in_text = [m.group() for m in DECORATIVE_REF.finditer(text) if re.search(r'[Z&]', m.group())]
     checks.append(Check('decorative_digits', not decorative and not in_text,
                         f'{len(decorative)} headings and {len(in_text)} chapter references read as Z or &',
                         # References in the text are fixed by the proofread check's decorative_digit.
-                        fix=reocr if from_vision and decorative else None))
-    noise = noisy_headings(folder, sources)
-    checks.append(Check('heading_noise', not noise, f'{len(noise)} headings that are not titles'
-                        + (': ' + ', '.join(f'"{t[:40]}"' for t in noise[:10]) if noise else ''), fix=reocr if from_vision and noise else None))
-    missed = MISSED_CHAPTER.findall(text)
-    checks.append(Check('chapter_titles', not missed, f'{len(missed)} chapter openings without a heading',
-                        fix=reocr if from_vision and missed else None))
-
+                        fix=None))
     pages = load_pages(folder)
     findings = find_all(Book(folder, pages)) if pages else []
+    noise = [f.after for f in findings if f.kind == 'heading_noise']
+    checks.append(Check('heading_noise', not noise, f'{len(noise)} headings that are not titles'
+                        + (f', e.g. "{noise[0][:40]}"' if noise else ''),
+                        fix=['proofread.py', str(folder), '--apply', 'heading_noise'] + (['--title', title] if title else [])
+                        if noise else None))
+    missed = MISSED_CHAPTER.findall(text)
+    # Reading the pages again gives the same headings, so a missed chapter is reported, not retried.
+    checks.append(Check('chapter_titles', not missed, f'{len(missed)} chapter openings without a heading', fix=None))
+
     counts = {}
     for f in findings:
         counts[f.kind] = counts.get(f.kind, 0) + 1
