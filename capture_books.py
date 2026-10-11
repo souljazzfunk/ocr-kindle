@@ -29,6 +29,7 @@ from pathlib import Path
 
 import brave
 import capture_book
+import check_book
 import locks
 from check_book import CAPTURE
 
@@ -66,6 +67,23 @@ def stale_failure(entry, converter):
     failures = set(entry.get('failures', []))
     return (entry.get('verdict') == 'failed' and not failures & (STOP_CHECKS | {capture_book.APP_ONLY})
             and entry.get('converter') != converter)
+
+
+def stale_pass(entry, converter, downloads, title, check=None):
+    """The saved capture of a book that passed under older code but fails a check of the code now, to convert again;
+    else None. Python Crash Course passed before code_blocks existed (2026-10-11), and a done book was never looked at
+    again. Only the converter's checks count: a capture check an old ZIP fails would send the book back to Brave."""
+    if entry.get('verdict') != 'done' or entry.get('converter') == converter:
+        return None
+    source = earlier_capture(entry, downloads, title)
+    folder = source and (source.with_suffix('') if source.suffix == '.zip' else source)
+    if not folder or not folder.is_dir():
+        return None
+    failed = {c.name for c in (check or check_book.check_folder)(folder, title) if c.blocking and not c.ok}
+    if not failed or failed & (CAPTURE_CHECKS | STOP_CHECKS | {'pages', 'text'}):
+        return None
+    entry['failures'] = sorted(failed)
+    return source
 
 
 def update_checkout(git=None, settle=lambda: None):
@@ -296,10 +314,17 @@ def main():
         waiting = entry.get('verdict') == 'waiting' and entry.get('source')
         stale = stale_failure(entry, converter)
         earlier = stale and earlier_capture(entry, args.downloads, title)
+        if entry.get('verdict') == 'done' and entry.get('converter') != converter:
+            stale = True
+            try:
+                earlier = stale_pass(entry, converter, args.downloads, title)
+            except Exception as e:  # a folder the checks cannot read is left as it was
+                print(f'=== could not check {title or asin} again: {e}', flush=True)
+                earlier = None
         if stale and not earlier:
-            entry['converter'] = converter  # no ZIP to convert again: look once per converter change
+            entry['converter'] = converter  # nothing to convert again: look once per converter change
             progress_path.write_text(json.dumps(progress, ensure_ascii=False, indent=1), encoding='utf-8')
-        if entry.get('verdict') == 'done' or (
+        if (entry.get('verdict') == 'done' and not earlier) or (
                 entry.get('verdict') == 'failed' and not STOP_CHECKS & set(entry.get('failures', [])) and not earlier):
             continue
         make_room()
@@ -307,7 +332,8 @@ def main():
         converting = Converting(slot)
         book_options = {**options, 'converting': converting}
         if earlier:
-            print(f'=== converting {earlier.name} again: it failed {", ".join(entry["failures"])} under older code',
+            print(f'=== converting {earlier.name} again: it {"failed" if entry["verdict"] == "failed" else "now fails"} '
+                  f'{", ".join(entry["failures"])} under {"older" if entry["verdict"] == "failed" else "this"} code',
                   flush=True)
             # Its capture was used before, so a capture defect found now is redone as for any unusable ZIP.
             work = (lambda a=asin, t=title, o={**book_options, 'source': earlier}: run_book(a, t, o, again=True))
