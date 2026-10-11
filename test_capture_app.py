@@ -156,23 +156,25 @@ def test_a_book_is_opened_paged_to_the_start_captured_then_converted(tmp_path):
     assert again['blocking_failures'] == ['app_folder']
 
 
-def test_the_toolbar_is_brought_by_resting_the_pointer_on_the_top_edge_before_any_click():
-    # Sri Lanka, 2026-10-11 20:34: four clicks on the page brought no toolbar (the run failed twice); one pointer move
-    # to the window's top edge brought it at once (20:36), and a move back to the page's middle takes it away.
+def test_the_toolbar_is_brought_by_resting_the_pointer_on_the_top_edge_never_by_a_click():
+    # Sri Lanka, 2026-10-11 20:34: four clicks on the page brought no toolbar; one pointer move to the window's top
+    # edge brought it at once (20:36). Clicks turn the page (a test's clicks moved the book from 3% to 30%, 20:40),
+    # so with a pointer the script never clicks the page to show the toolbar.
     moves = []
+    top, page = (489 + 1024 // 2, 1187 + capture_app.TOP_HOVER_PX), (489 + 512, 1187 + 843 // 2)
     app = App([READER, CHROME.format(at=1)])
     found = capture_app.show_chrome(app, sleep=lambda s: None, clock=app.clock, move=lambda x, y: moves.append((x, y)))
     assert capture_app.chrome_shown(found)
-    assert moves == [(489 + 1024 // 2, 1187 + capture_app.TOP_HOVER_PX)] and not any('click at' in c for c in app.calls)
+    assert moves == [page, top] and not any('click at' in c for c in app.calls)
     # The toolbar hidden again by the pointer, without a click.
     app = App([CHROME.format(at=1), READER])
     found = capture_app.hide_chrome(app, sleep=lambda s: None, clock=app.clock, move=lambda x, y: moves.append((x, y)))
-    assert not capture_app.chrome_shown(found) and moves[-1] == (489 + 512, 1187 + 843 // 2)
-    assert not any('click at' in c for c in app.calls)
-    # When the pointer brings nothing (Tokyo's reader answered clicks), the clicks follow as before.
-    app = App([READER] * 4 + [CHROME.format(at=1)])  # the pointer brings nothing; the first click does
+    assert not capture_app.chrome_shown(found) and moves[-1] == page and not any('click at' in c for c in app.calls)
+    # The run of 20:40 waited 14 s on one move and gave up: now the move is made afresh each try, and no click follows.
+    moves.clear()
+    app = App([READER] * 6 + [CHROME.format(at=1)])
     found = capture_app.show_chrome(app, sleep=lambda s: None, clock=app.clock, move=lambda x, y: moves.append((x, y)))
-    assert capture_app.chrome_shown(found) and sum('click at' in c for c in app.calls) == 1
+    assert capture_app.chrome_shown(found) and moves == [page, top, page, top] and not any('click at' in c for c in app.calls)
     # A fake script has no pointer: the tests above that count clicks are unchanged, and no Quartz is needed on Linux.
     assert capture_app.window_frame(App([READER])) == (489, 1187, 1024, 843)
     assert capture_app.hover_window(App(['frontmost=true\n']), move=lambda x, y: pytest.fail('moved')) == 'no window'
