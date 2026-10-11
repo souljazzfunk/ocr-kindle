@@ -42,27 +42,107 @@ def osascript(script, runner=subprocess.run):
     return result.returncode, (result.stdout or '').strip(), (result.stderr or '').strip()
 
 
-def window_title(script=osascript):
-    code, out, _ = script('tell application "System Events" to tell process "Kindle" to get name of window 1')
-    return out if code == 0 else ''
+def elements(script=osascript):
+    """The window's elements from the UI dump: dicts with role, subrole, title, description, value, position, size."""
+    _, out, _ = script(UI_DUMP)
+    found = []
+    for line in out.splitlines():
+        parts = line.split('|')
+        if parts[0] == 'element' and len(parts) >= 8:
+            found.append(dict(zip(('role', 'subrole', 'title', 'description', 'value', 'position', 'size'), parts[1:8])))
+    return found
+
+
+def cover_of(title, found):
+    """The library button of this book: its description starts with the title (then the author, New or RED)."""
+    key = capture_books.comparable(title)
+    for e in found:
+        if e['role'] == 'AXButton' and key and capture_books.comparable(e['description']).startswith(key[:30]):
+            return e
+    return None
+
+
+def in_library(found):
+    return any(e['title'] == 'Library Grid View' or e['description'] == 'Library Grid View' for e in found)
+
+
+def _quote(text):
+    return '"' + text.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
+PRESS_COVER = '''
+tell application "System Events" to tell process "Kindle"
+    set elems to entire contents of window 1
+    repeat with e in elems
+        set e to contents of e
+        try
+            if role of e is "AXButton" and description of e starts with {title} then
+                perform action "AXPress" of e
+                return "pressed"
+            end if
+        end try
+    end repeat
+    return "none"
+end tell
+'''
+SEARCH = '''
+tell application "System Events" to tell process "Kindle"
+    set elems to entire contents of window 1
+    repeat with e in elems
+        set e to contents of e
+        try
+            if role of e is "AXTextField" and subrole of e is "AXSearchField" then
+                set focused of e to true
+                set value of e to {title}
+                keystroke return
+                return "searched"
+            end if
+        end try
+    end repeat
+    return "none"
+end tell
+'''
 
 
 def open_book(asin, title, script=osascript, run=capture_book.run, clock=time.monotonic, sleep=time.sleep):
-    """Open the book in the app and wait for its window; when it stays in the library, open it once more so the app
-    downloads the book, and wait for that. Returns '' or why it could not."""
-    key = capture_books.comparable(title)
-    shown = ''
+    """Open the book from the library by pressing its cover, searching for it first when it is not on screen, and
+    wait until the library grid is gone. A cover not yet downloaded starts its download on the press (Laiken,
+    2026-10-11 17:21 JST); it is pressed once more and waited for. Returns '' or why it could not.
+
+    Written from the probe of 2026-10-11 17:46: the new app's kindle:// URL leaves the library in front; each cover is
+    an AXButton whose description starts with the title and whose value says Book Downloaded or Book Not Downloaded.
+    """
+    script('tell application "Amazon Kindle" to activate')
+    sleep(2)
+    found = elements(script)
+    if not in_library(found):
+        return 'the Kindle app is not showing its library (a book may be open already); it shows: ' + describe(found)
+    if cover_of(title, found) is None:
+        _, searched, _ = script(SEARCH.format(title=_quote(title)))
+        sleep(3)
+        found = elements(script)
+        if cover_of(title, found) is None:
+            return f'no cover for this title in the Kindle library (search: {searched}); it shows: ' + describe(found)
     for wait in (OPEN_WAIT_S, DOWNLOAD_WAIT_S):
-        run(['open', f'kindle://book?action=open&asin={asin}'])
+        _, pressed, _ = script(PRESS_COVER.format(title=_quote(title)))
         deadline = clock() + wait
         while clock() < deadline:
-            shown = window_title(script)
-            name = capture_books.comparable(shown)
-            if name and key and (name.startswith(key[:20]) or key.startswith(name)):
-                return ''
             sleep(2)
-    return (f'the Kindle app did not show this book within {OPEN_WAIT_S} s, nor within {DOWNLOAD_WAIT_S} s of opening '
-            f'it again to download it (front window: "{shown}")')
+            found = elements(script)
+            if not in_library(found):
+                return ''
+        cover = cover_of(title, found)
+        if cover is None or 'Not Downloaded' not in cover['value']:
+            break  # pressing again is for a download that has not started; anything else needs a new look
+    return (f'the Kindle app still shows its library {OPEN_WAIT_S} s after pressing the cover of this book'
+            + (' (and after pressing it again for its download)' if cover and 'Not Downloaded' in cover['value'] else '')
+            + '; the cover says: ' + (cover['value'] if cover else 'gone'))
+
+
+def describe(found):
+    """A short account of what is on screen, for an error message."""
+    names = [e['title'] or e['description'] for e in found if e['title'] or e['description']]
+    return ', '.join(names[:12]) + (' …' if len(names) > 12 else '')
 
 
 def go_to_start(script=osascript):
@@ -133,7 +213,7 @@ end tell
 EBOOKS = Path.home() / 'Library/Containers/com.amazon.Lassen/Data/Library/eBooks'
 
 
-def probe(asin, folder, script=osascript, run=capture_book.run, sleep=time.sleep, ebooks=EBOOKS):
+def probe(asin, title, folder, script=osascript, run=capture_book.run, sleep=time.sleep, ebooks=EBOOKS):
     """Open the book in the app and record what the app shows: a screenshot, the UI dump before and after the open,
     and whether the book is downloaded. Returns the folder; the files are what a fix is written from."""
     folder.mkdir(parents=True, exist_ok=True)
@@ -141,11 +221,10 @@ def probe(asin, folder, script=osascript, run=capture_book.run, sleep=time.sleep
     sleep(3)
     _, before, err = script(UI_DUMP)
     (folder / 'ui-library.txt').write_text(before or err, encoding='utf-8')
-    # On 2026-10-11 a plain `open kindle://` left the app behind the window Laiken was typing in; -a names it.
-    run(['open', '-a', 'Amazon Kindle', f'kindle://book?action=open&asin={asin}'])
-    sleep(10)
-    script('tell application "Amazon Kindle" to activate')
-    sleep(2)
+    # The kindle:// URL does not open a book in the new app (probe of 2026-10-11 17:46); the cover is pressed instead.
+    problem = open_book(asin, title, script=script, run=run, sleep=sleep)
+    (folder / 'open.txt').write_text(problem or 'opened', encoding='utf-8')
+    sleep(3)
     # One file per display: with one file screencapture records only the main display, and on 2026-10-11 the Kindle
     # window was on the other one (the Window menu offered "Move to BenQ EL2870U"), so screen.png showed no Kindle.
     run(['screencapture', '-x', *(str(folder / f'screen-{n}.png') for n in (1, 2, 3))])
@@ -192,8 +271,9 @@ def main(argv=None, env=os.environ, book=run_book):
     if env.get(OK_ENV) != '1':
         sys.exit(f'Not starting: the Kindle app is used only when Laiken asks for it; run with {OK_ENV}=1.')
     if args.probe:
-        folder = probe(args.probe, args.downloads / 'kindle-probe' / args.probe)
-        print(f'Probe written to {folder}: screen-<display>.png, ui-library.txt, ui-book.txt, probe.json')
+        titles = dict(capture_books.read_list(args.list))
+        folder = probe(args.probe, titles.get(args.probe, args.probe), args.downloads / 'kindle-probe' / args.probe)
+        print(f'Probe written to {folder}: open.txt, screen-<display>.png, ui-library.txt, ui-book.txt, probe.json')
         return
     try:
         # One run per list: two runs would each write back the whole progress file over the other's results.
