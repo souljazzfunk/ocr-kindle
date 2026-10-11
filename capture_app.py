@@ -6,7 +6,7 @@ check them the same way as every other book.
     KINDLE_APP_OK=1 venv/bin/python capture_app.py books.tsv
 
 Laiken chose this on 2026-10-11 for the books capture_books.py recorded as kindle_app_only, and only for them: every
-other book still comes from the Cloud Reader extension in Brave. The command needs KINDLE_APP_OK=1 (the guard hook
+other book still comes from the Cloud Reader extension in Chrome. The command needs KINDLE_APP_OK=1 (the guard hook
 asks for it too). Each book is opened in the app, paged back to its start through the app's Go menu, captured with
 kindle2img.applescript into ~/Downloads/<title>/, then converted by capture_book.convert. The first book is the pilot:
 the run stops at the first book that does not pass, and the same command resumes there.

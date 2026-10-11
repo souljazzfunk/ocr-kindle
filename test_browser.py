@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-import brave
+import browser
 import capture_book
 import capture_books
 
@@ -29,23 +29,23 @@ def profile(root, prompt=None, downloads=()):
 
 
 def test_finds_the_profile_that_loads_this_extension(tmp_path):
-    assert brave.extension_profile(profile(tmp_path)) == (tmp_path / 'Profile 1', EXT)
+    assert browser.extension_profile(profile(tmp_path)) == (tmp_path / 'Profile 1', EXT)
 
 
 def test_unset_prompt_setting_is_refused_as_on_2026_10_10(tmp_path):
     # The real state that opened the save dialog: Brave's default, prompt_for_download not written.
-    assert 'Ask where to save' in brave.prompt_problem(profile(tmp_path))
-    assert brave.prompt_problem(profile(tmp_path / 'b', prompt=True)) is not None
-    assert brave.prompt_problem(profile(tmp_path / 'c', prompt=False)) is None
+    assert 'Ask where to save' in browser.prompt_problem(profile(tmp_path))
+    assert browser.prompt_problem(profile(tmp_path / 'b', prompt=True)) is not None
+    assert browser.prompt_problem(profile(tmp_path / 'c', prompt=False)) is None
 
 
 def test_download_record_tells_the_extension_from_a_page_link(tmp_path):
     zip_path = '/Users/otchy/Downloads/AI for Educators (1).zip'
     root = profile(tmp_path, downloads=[(889, '/Users/otchy/Downloads/kindle-book.zip', '', 1),
                                         (890, zip_path, EXT, 1)])
-    assert brave.download_record(zip_path, root) == (True, True)
-    assert brave.download_record('/Users/otchy/Downloads/kindle-book.zip', root) == (False, True)  # downloads 885-889
-    assert brave.download_record('/nowhere.zip', root) is None
+    assert browser.download_record(zip_path, root) == (True, True)
+    assert browser.download_record('/Users/otchy/Downloads/kindle-book.zip', root) == (False, True)  # downloads 885-889
+    assert browser.download_record('/nowhere.zip', root) is None
 
 
 def test_download_check_passes_only_an_extension_save_that_completed():
@@ -58,7 +58,7 @@ def test_download_check_passes_only_an_extension_save_that_completed():
 def test_the_list_does_not_start_while_brave_would_ask(tmp_path, monkeypatch):
     books = tmp_path / 'books.tsv'
     books.write_text('B1\tOne\n')
-    monkeypatch.setattr(brave, 'prompt_problem', lambda: 'Brave asks where to save')
+    monkeypatch.setattr(browser, 'prompt_problem', lambda: 'Brave asks where to save')
     monkeypatch.setattr(capture_books.capture_book, 'convert', lambda *a, **k: pytest.fail('started a capture'))
     monkeypatch.setattr('sys.argv', ['capture_books.py', str(books)])
     with pytest.raises(SystemExit, match='Not starting: Brave asks'):

@@ -1,6 +1,6 @@
-"""What the Brave extension on this Mac is, compared with this repository's main branch.
+"""What the browser extension on this Mac is, compared with this repository's main branch.
 
-Brave loads the unpacked extension straight from this checkout's extension/ folder, so whatever branch or
+The browser loads the unpacked extension straight from this checkout's extension/ folder, so whatever branch or
 local edit sits there is what captures. Twice on 2026-10-10 Brave ran code that was not on main (an ad-hoc
 #autocapture edit, then the unmerged extension-dom-probe branch). capture_book.py refuses to capture unless
 the folder matches origin/main, and checks the version each ZIP says it was made by.
