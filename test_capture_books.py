@@ -335,3 +335,24 @@ def test_the_converter_version_follows_the_code_and_not_the_tests(tmp_path):
     assert capture_books.converter_version(tmp_path) == first
     (tmp_path / 'img2txt.py').write_text('a = 2\n')
     assert capture_books.converter_version(tmp_path) != first
+
+
+def test_a_second_run_on_the_same_list_does_not_start(tmp_path, monkeypatch, capsys):
+    # Two runs would each write back the whole progress file over the other's results (2026-10-11).
+    import subprocess
+    books = tmp_path / 'books.tsv'
+    books.write_text('B1\tDrive\n')
+    holder = subprocess.Popen([sys.executable, '-c', 'import sys, time, locks; locks.keep(sys.argv[1]); print("held", flush=True); time.sleep(30)',
+                               str(tmp_path / 'books.lock')], stdout=subprocess.PIPE, text=True,
+                              cwd=os.path.dirname(capture_books.__file__), env={k: v for k, v in os.environ.items() if k != 'KINDLE_LOCKS_HELD'})
+    try:
+        assert holder.stdout.readline().strip() == 'held'
+        monkeypatch.delenv('KINDLE_LOCKS_HELD', raising=False)
+        monkeypatch.setattr(capture_books.capture_book, 'convert', lambda *a, **k: pytest.fail('ran beside another run'))
+        monkeypatch.setattr(sys, 'argv', ['capture_books.py', str(books)])
+        with pytest.raises(SystemExit) as stop:
+            capture_books.main()
+        assert 'another run is working through books.tsv' in str(stop.value.code)
+    finally:
+        holder.kill()
+        holder.wait()

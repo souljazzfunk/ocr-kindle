@@ -26,6 +26,7 @@ from pathlib import Path
 
 import brave
 import capture_book
+import locks
 from check_book import CAPTURE
 
 # A failure in these checks means the ZIP itself is unusable, so the book is captured again (once).
@@ -174,6 +175,11 @@ def main():
     problem = brave.prompt_problem()
     if problem:
         sys.exit(f'Not starting: {problem}')
+    try:
+        # One run per list: two runs would each write back the whole progress file over the other's results.
+        locks.keep(args.list.with_suffix('.lock'), wait=False)
+    except locks.Busy:
+        sys.exit(f'Not starting: another run is working through {args.list.name}. Run this once it has ended.')
     progress_path = args.list.with_suffix('.progress.json')
     progress = load_progress(progress_path)
     options = {'model': args.model, 'domain': args.domain, 'downloads': args.downloads}
@@ -182,6 +188,7 @@ def main():
         update = update_checkout()
         if update == 'python':
             print('=== main changed: restarting with it (the list resumes here)', flush=True)
+            os.environ.pop(locks.HELD, None)  # exec lets go of the list lock, so the new run must take it again
             os.execv(sys.executable, [sys.executable, *sys.argv])
         if update == 'extension':
             print('\nStopped the list: main changed the extension. Ask Laiken to reload it once in Brave, then run the '

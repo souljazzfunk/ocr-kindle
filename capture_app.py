@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 
 import capture_book
+import locks
 import capture_books
 
 HERE = Path(__file__).resolve().parent
@@ -108,6 +109,11 @@ def main(argv=None, env=os.environ, book=run_book):
     args = parser.parse_args(argv)
     if env.get(OK_ENV) != '1':
         sys.exit(f'Not starting: the Kindle app is used only when Laiken asks for it; run with {OK_ENV}=1.')
+    try:
+        # One run per list: two runs would each write back the whole progress file over the other's results.
+        locks.keep(args.list.with_suffix('.lock'), wait=False)
+    except locks.Busy:
+        sys.exit(f'Not starting: another run is working through {args.list.name}. Run this once it has ended.')
     progress_path = args.list.with_suffix('.progress.json')
     progress = capture_books.load_progress(progress_path)
     todo = app_books(capture_books.read_list(args.list), progress)
