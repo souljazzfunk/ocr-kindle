@@ -1,17 +1,22 @@
-# ax.dump() lines of the Kindle for Mac 7.40 reader (Japan Travel Planner) after its last page, 2026-10-11 20:59 JST,
-# as the Mac described them: the end-of-book sheet over the copyright page, with the focus on the first rating
-# star after the capture's → keys. The toolbar is hidden. Quoted, not verbatim: the sheet's texts and buttons.
+# ax.dump() of the Kindle for Mac 7.40 reader (Japan Travel Planner) after its last page, 2026-10-11 21:12 JST:
+# the end-of-book sheet over the copyright page, every element line with a title, description or value, verbatim
+# (the other 11 lines are bare AXGroups). The texts sit in the description column. Every star reads "Not Selected".
+# The sheet's own control is the "Close" drag handle; Escape twice with Kindle frontmost took it down (15 lines left).
 frontmost=true
 windows=1
 window|Kindle|325,1187|1352,843
 element|AXGroup|iOSContentGroup||||325,1187|1352,843
-element|AXGroup|||||325,1187|1352,843
-element|AXStaticText|||Overall rating||760,1450|180,20
-element|AXRadioButton|||1 star||760,1480|40,40
-element|AXRadioButton|||2 stars||800,1480|40,40
-element|AXRadioButton|||3 stars||840,1480|40,40
-element|AXRadioButton|||4 stars||880,1480|40,40
-element|AXRadioButton|||5 stars||920,1480|40,40
-element|AXStaticText|||Review this book on Amazon||760,1540|300,20
-element|AXStaticText|||Recommend this book||760,1620|300,20
-element|AXButton|||Recommend||760,1660|120,40
+element|AXButton|||Close||989,1295|25,8
+element|AXHeading|||Japan Travel Planner: Japan travel guide with helpful tips for individual tours||829,1309|422,38
+element|AXStaticText|||Marion Harlow, Kye Hayashi||829,1351|422,18
+element|AXStaticText|||Overall rating||755,1400|101,19
+element|AXHeading|||Review this book on Amazon.|Review this book on Amazon.|752,1425|497,32
+element|AXButton|||1 Star Rating Not Selected||901,1467|34,34
+element|AXButton|||2 Star Rating Not Selected||943,1467|34,34
+element|AXButton|||3 Star Rating Not Selected||984,1467|34,34
+element|AXButton|||4 Star Rating Not Selected||1026,1467|34,34
+element|AXButton|||5 Star Rating Not Selected||1067,1467|34,34
+element|AXHeading|||Recommend this book||752,1537|194,23
+element|AXStaticText|||Enjoyed this book? Recommend it to a friend||752,1568|313,19
+element|AXButton|||Recommend||872,1595|258,31
+element|AXStaticText||||Kindle|978,1192|45,16
