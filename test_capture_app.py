@@ -163,14 +163,19 @@ CHROME = (READER + 'element|AXButton||Close Book||||500,1200|20,20\n'
 
 def test_a_reader_left_open_is_closed_with_its_close_book_button_never_file_close():
     # Probe of 2026-10-11 17:56: the app reopens into the last book; File > Close (Cmd+W) quits the app.
-    app = App([READER, LIBRARY, LIBRARY, READER])
+    # With the toolbar hidden the tree holds only groups (probe of 18:04), and in the pilot one click did not show it.
+    app = App([READER, READER, CHROME.format(at=12), LIBRARY, LIBRARY, READER])
     clock = iter(range(0, 1000, 2))
     assert capture_app.open_book('B2', 'For 91 Days In Tokyo', script=app, run=lambda c: None,
                                  clock=lambda: next(clock), sleep=lambda s: None) == ''
     presses = [c for c in app.calls if 'AXPress' in c]
     assert '"Close Book"' in presses[0] and '"For 91 Days In Tokyo"' in presses[1] and len(presses) == 2
+    assert sum('click at' in c for c in app.calls) == 2
+    app = App([READER])
+    problem = capture_app.open_book('B2', 'For 91 Days In Tokyo', script=app, run=lambda c: None, sleep=lambda s: None)
+    assert 'neither its library nor the reader toolbar' in problem and sum('click at' in c for c in app.calls) == 3
     assert not any('menu bar item "File"' in c or 'keystroke "w"' in c for c in app.calls)
-    app = App([READER, READER])
+    app = App([READER, CHROME.format(at=12), READER])
     problem = capture_app.open_book('B2', 'For 91 Days In Tokyo', script=app, run=lambda c: None, sleep=lambda s: None)
     assert problem.startswith('the Kindle app is not showing its library (Close Book: pressed)')
 
@@ -180,6 +185,11 @@ def test_the_start_is_reached_by_the_progress_bar_and_read_from_the_footer():
     app = App([READER, CHROME.format(at=12), CHROME.format(at=1), READER])
     assert capture_app.go_to_start(app, sleep=lambda s: None) == ''
     assert sum('set value of e to 0' in c for c in app.calls) == 1 and sum('click at' in c for c in app.calls) == 2
+    # The footer's total came back as 0 in the probe of 18:04; the start is judged by N alone.
+    app = App([CHROME.format(at=12), CHROME.format(at=1).replace('of 2594', 'of 0'), READER])
+    assert capture_app.go_to_start(app, sleep=lambda s: None) == ''
+    app = App([READER, READER, READER, READER])
+    assert 'no toolbar after clicks' in capture_app.go_to_start(app, sleep=lambda s: None)
     app = App([READER, CHROME.format(at=12), CHROME.format(at=12)])
     assert 'Location 12 of 2594' in capture_app.go_to_start(app, sleep=lambda s: None)
     app = App([READER, CHROME.format(at=12), CHROME.format(at=1), CHROME.format(at=1)])
