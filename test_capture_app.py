@@ -253,20 +253,56 @@ TOC = (CHROME + 'element|AXButton|||Close menu||866,1187|585,843\n'
        'element|AXStaticText|||Beginning||575,1330|59,15\n')
 
 
-def test_when_the_slider_does_not_move_the_table_of_contents_cover_row_is_clicked():
+def test_when_the_slider_does_not_move_the_topmost_table_of_contents_entry_is_clicked():
     # Probe of 2026-10-11 19:20 (Bolivia at Location 185): the TOC panel lists "Cover" and "Beginning" as static
-    # texts, so after the track click and the drag left the book where it was, "Cover" is clicked at its centre.
+    # texts after the "Close menu" X, so after the track click and the drag left the book where it was, the
+    # topmost entry is pressed (AXPress on the text moved Bolivia to Location 1 on the Mac at 19:26), whatever its
+    # name (Laiken, 19:26); a refused press falls back to a click at the row's centre.
     at = CHROME.format(at=185)
     app = App([at, at, at, TOC.format(at=185), CHROME.format(at=1), READER])
     assert capture_app.go_to_start(app, sleep=lambda s: None, drag=lambda *a: None) == ''
     assert any('"Table of Contents"' in c and 'AXPress' in c for c in app.calls)
-    assert sum('click at {590, 1294}' in c for c in app.calls) == 1
-    assert not any('"Close menu"' in c for c in app.calls)
-    # A table of contents without a "Cover" row is closed again and named.
-    app = App([at, at, at, TOC.format(at=185).replace('|Cover|', '|Chapter 1|'), at, at])
+    assert sum('"AXStaticText"' in c and '"Cover"' in c and 'AXPress' in c for c in app.calls) == 1
+    assert not any('click at {590, 1294}' in c for c in app.calls) and not any('"Close menu"' in c for c in app.calls)
+    # The topmost entry need not be "Cover": the first static text after the X is the one pressed.
+    app = App([at, at, at, TOC.format(at=185).replace('|Cover|', '|Chapter 1|'), CHROME.format(at=1), READER])
+    assert capture_app.go_to_start(app, sleep=lambda s: None, drag=lambda *a: None) == ''
+    assert sum('"AXStaticText"' in c and '"Chapter 1"' in c for c in app.calls) == 1
+    # When the press is refused, the row is clicked at its centre.
+    refusing = App([at, at, at, TOC.format(at=185), CHROME.format(at=1), READER])
+    inner = refusing.__call__
+    refusing.__call__ = None
+    def script(text, app=refusing):
+        if '"AXStaticText"' in text:
+            app.calls.append(text)
+            return 0, 'none', ''
+        return inner(text)
+    assert capture_app.go_to_start(script, sleep=lambda s: None, drag=lambda *a: None) == ''
+    assert sum('click at {590, 1294}' in c for c in refusing.calls) == 1
+    # The title and author above the X are not entries; a panel with no entry is closed again and named.
+    toc = TOC.format(at=185)
+    empty = toc[:toc.index('element|AXStaticText|||Cover')]
+    app = App([at, at, at, empty, at, at])
     problem = capture_app.go_to_start(app, sleep=lambda s: None, drag=lambda *a: None)
-    assert 'no Cover row in the table of contents' in problem and 'Location 185' in problem
-    assert any('"Close menu"' in c for c in app.calls) and not any('click at {590, 1294}' in c for c in app.calls)
+    assert 'no entry in the table of contents' in problem and 'Location 185' in problem
+    assert any('"Close menu"' in c for c in app.calls) and not any('click at' in c and '1294' in c for c in app.calls)
+    assert not any('"Powell, Michael"' in c for c in app.calls)  # the author line is not an entry
+
+
+def test_when_the_table_of_contents_does_not_move_the_book_pages_are_turned_back_one_at_a_time():
+    # Laiken, 2026-10-11 19:27: when nothing else works, page back with ← rather than stop. The footer is read after
+    # each batch of 20 presses, with the toolbar hidden while the keys are sent.
+    at = CHROME.format(at=185)
+    app = App([at, at, at, TOC.format(at=185), at,            # slider moves and the TOC entry leave Location 185
+               at, READER, CHROME.format(at=100), READER, CHROME.format(at=1),  # two batches of ←
+               CHROME.format(at=1), READER])
+    assert capture_app.go_to_start(app, sleep=lambda s: None, drag=lambda *a: None) == ''
+    assert sum('key code 123' in c for c in app.calls) == 40
+    # ← presses that leave the footer where it is are counted and named, and the loop stops.
+    app = App([at, at, at, TOC.format(at=185), at, at, READER, at, at, at])
+    problem = capture_app.go_to_start(app, sleep=lambda s: None, drag=lambda *a: None)
+    assert 'paged back 20 times and the footer stayed at Location 185' in problem
+    assert sum('key code 123' in c for c in app.calls) == 20
 
 
 def test_the_knob_is_dragged_from_its_percentage_to_the_track_start():
