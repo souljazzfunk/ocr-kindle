@@ -1,0 +1,25 @@
+# ax.dump() of the Kindle for Mac 7.40 reader (For 91 Days in Iceland) with the toolbar shown, 2026-10-11 20:19 JST.
+# Recorded on Laiken's Mac, verbatim. No AXSlider in this tree: the toolbar is known by its Close Book button.
+frontmost=false
+windows=1
+window|Kindle|325,1187|1352,843
+element|AXGroup|iOSContentGroup||||325,1187|1352,843
+element|AXGroup|||||325,1187|1352,843
+element|AXGroup|||||325,1187|1352,843
+element|AXGroup|||||325,1187|1352,843
+element|AXButton|||Close Book||337,1215|40,40
+element|AXButton|||Table of Contents||377,1215|40,40
+element|AXHeading|||For 91 Days in Iceland||936,1228|129,14
+element|AXButton|||In-book Search||1505,1215|40,40
+element|AXButton|||Annotations||1545,1215|40,40
+element|AXButton|||Reading Settings||1585,1215|40,40
+element|AXButton|||More options||1625,1215|40,40
+element|AXButton|||Add Bookmark||1625,1255|40,40
+element|AXStaticText|||Location 1 of 2344 , 1%||940,2019|122,11
+element|AXStaticText|||||325,1187|1352,843
+element|AXButton|AXCloseButton||||332,1193|14,16
+element|AXButton|AXFullScreenButton||||372,1193|14,16
+element|AXGroup|||||372,1193|14,16
+element|AXGroup|||||372,1193|14,16
+element|AXButton|AXMinimizeButton||||352,1193|14,16
+element|AXStaticText||||Kindle|978,1192|45,16

@@ -1,3 +1,5 @@
+import re
+from pathlib import Path
 import json
 
 import pytest
@@ -358,3 +360,13 @@ def test_a_probe_needs_laikens_word_too(tmp_path):
     finally:
         module.probe = module_probe
     assert seen == [('B2', 'For 91 Days In Tokyo', tmp_path / 'kindle-probe' / 'B2')]
+
+
+def test_the_run_path_waits_for_elements_not_for_fixed_seconds():
+    # Laiken, 2026-10-11 19:59: opening a book took minutes; fixed sleeps of 2-5 s stood at a dozen places (main
+    # 0699510) on top of a 114 s tree read. A wait is wait_for(ready, ...) until the element appears; only probe(),
+    # which records screens for a person to read, may pause for a fixed time.
+    src = Path(capture_app.__file__).read_text(encoding='utf-8')
+    run_path = src[:src.index('def probe(')]
+    fixed = re.findall(r'sleep\((?:[2-9]|\d{2,})\b', run_path)
+    assert not fixed, f'{len(fixed)} fixed sleeps on the run path; wait with wait_for(ready, script, sleep, clock) instead'
