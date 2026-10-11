@@ -338,7 +338,8 @@ def _convert_folder(asin, title, model, source, folder, recapture, tab_closed, s
         checks.append(download_check(source))
     data = report(folder, checks, {'asin': asin, 'source': str(source), 'recapture': recapture, 'rounds': rounds,
                                    'tab_closed': tab_closed, 'seconds': round(time.time() - started)})
-    publish(folder, title)
+    if not data['blocking_failures']:
+        publish(folder, title)
     start_wiki_ingest(data)
     return data
 

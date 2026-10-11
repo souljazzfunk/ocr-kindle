@@ -333,6 +333,22 @@ def test_only_the_runner_copies_a_book_to_drive_and_a_trial_conversion_does_not(
     assert capture_book.publish(folder, 'AI for Educators', {'GOOGLE_DRIVE_FOLDER': str(tmp_path / 'gone')}) is None
 
 
+def test_a_book_that_failed_its_checks_is_not_copied_to_drive(tmp_path, monkeypatch):
+    # 2026-10-11: _convert_folder called publish() whatever the report said, so a failed book replaced its copy on Drive.
+    drive = tmp_path / 'Kindle_md'
+    drive.mkdir()
+    folder = tmp_path / 'Book'
+    folder.mkdir()
+    (folder / 'Book.md').write_text('# One\n\n' + BODY, encoding='utf-8')
+    monkeypatch.setattr(capture_book, 'load_config', lambda: {'GOOGLE_DRIVE_FOLDER': str(drive)})
+    monkeypatch.setattr(capture_book, 'run', lambda *a, **k: None)
+    monkeypatch.setattr(capture_book, 'correct', lambda f, t: ([capture_book.Check('headings', False, '0 headings')], 1))
+    monkeypatch.setattr(capture_book, 'start_wiki_ingest', lambda data: None)
+    data = capture_book._convert_folder('B0', 'Book', 'vision', folder, folder, False, None, 0)
+    assert data['blocking_failures'] == ['headings']
+    assert not list(drive.iterdir())
+
+
 def stalled_wait(tmp_path, titles, seconds=3600):
     now = [0]
     def sleep(s):
