@@ -191,16 +191,17 @@ def test_the_table_of_contents_is_scrolled_to_its_top_and_its_button_row_pressed
     # above the rows. Scroll-wheel up over the panel brought "Cover" to the top; AXPress on that button through
     # the Accessibility API put the book on its cover, whose toolbar shows no "Location N of M" (20:45).
     scrolls, presses = [], []
-    app = App([COVER, SCROLLED_TOC, TOP_TOC, TOP_TOC, COVER])
+    app = App([COVER, SCROLLED_TOC, SCROLLED_TOC, TOP_TOC, TOP_TOC, TOP_TOC, COVER])
     how = capture_app.toc_first(app, sleep=lambda s: None, clock=app.clock,
                                 scroll=lambda x, y, n: scrolls.append((x, y, n)),
                                 press=lambda role, name: presses.append((role, name)) or True)
     assert how == 'pressed "Cover" at the top of the table of contents'
     assert presses == [('AXButton', 'Cover')] and not any('AXPress' in c and '"Cover"' in c for c in app.calls)
-    # The pointer rests inside the panel (below its first row) and scrolls until the topmost row stops changing.
-    assert scrolls[0] == (325 + 473 // 2, 1276 + 4 * 43, capture_app.TOC_SCROLL_LINES) and len(scrolls) == 2
+    # The pointer rests inside the panel (below its first row) and scrolls until the topmost row has not changed
+    # over two scrolls (Japan Travel Planner, 20:58: one unchanged read while the panel still moved left it at 1.5).
+    assert scrolls[0] == (325 + 473 // 2, 1276 + 4 * 43, capture_app.TOC_SCROLL_LINES) and len(scrolls) == 3
     # The cover is the start although its toolbar shows no footer.
-    app = App([COVER, SCROLLED_TOC, TOP_TOC, TOP_TOC, COVER, COVER, READER])
+    app = App([COVER, SCROLLED_TOC, SCROLLED_TOC, TOP_TOC, TOP_TOC, TOP_TOC, COVER, COVER, READER])
     problem = capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock, scroll=lambda x, y, n: None,
                                       press=lambda role, name: True)
     assert problem == '' and 'start: Location 1 after' in capsys.readouterr().out
@@ -210,6 +211,23 @@ def test_the_table_of_contents_is_scrolled_to_its_top_and_its_button_row_pressed
     how = capture_app.toc_first(app, sleep=lambda s: None, clock=app.clock)
     assert how == 'pressed "After One Month in Sri Lanka" at the top of the table of contents'  # no scroll without a pointer
     assert any('AXButton' in c and '"After One Month in Sri Lanka"' in c and 'AXPress' in c for c in app.calls)
+
+
+def test_the_end_of_book_sheet_is_closed_and_its_image_dropped_after_a_capture(tmp_path):
+    END_SHEET = (READER + 'element|AXStaticText|||Overall rating||600,1400|200,20\n'
+                 'element|AXButton|||Recommend this book||600,1700|200,40\n')
+    # Japan Travel Planner, 2026-10-11 20:59: page_0072.png was the rating sheet, with the focus on its first star.
+    for n in (1, 2, 3):
+        (tmp_path / f'page_000{n}.png').write_bytes(b'')
+    app = App([END_SHEET, READER])
+    pages = capture_app.capture(tmp_path, run=lambda cmd: None, script=app, sleep=lambda s: None)
+    assert [p.name for p in pages] == ['page_0001.png', 'page_0002.png'] and not (tmp_path / 'page_0003.png').exists()
+    assert sum('key code 53' in c for c in app.calls) == 2 and not any('key code 36' in c or 'key code 49' in c for c in app.calls)
+    # A book that ends on a plain page keeps every image.
+    (tmp_path / 'page_0003.png').write_bytes(b'')
+    app = App([READER])
+    assert len(capture_app.capture(tmp_path, run=lambda cmd: None, script=app, sleep=lambda s: None)) == 3
+    assert not capture_app.end_sheet_shown(capture_app.elements(App([CHROME.format(at=1)])))
 
 
 def test_a_book_the_app_does_not_open_or_cannot_page_back_is_named_with_what_the_app_showed(tmp_path):
