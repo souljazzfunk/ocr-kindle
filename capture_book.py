@@ -15,6 +15,7 @@ first ZIP was unusable (the extension otherwise refuses to auto-start a saved bo
 """
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -265,41 +266,55 @@ def start_wiki_ingest(data, watch=WIKI_WATCH, spawn=subprocess.Popen):
 
 
 def convert(asin, title=None, model='vision', domain='read.amazon.com', downloads=Path.home() / 'Downloads',
-            source=None, recapture=False):
-    """Capture (unless source is given), convert, check and fix one book. Returns the report data."""
+            source=None, recapture=False, brave=None, converting=None):
+    """Capture (unless source is given), convert, check and fix one book. Returns the report data.
+
+    brave and converting are held around the capture and the conversion: capture_books.py captures the next book in
+    Brave while this one converts, and these keep it to one capture and one conversion at a time.
+    """
     started = time.time()
     tab_closed = None  # no tab when converting an existing ZIP
     if source is None:
-        problem = folder_problem()
-        if problem:
-            raise RuntimeError(f'Brave loads the extension from this checkout, and it is not main: {problem}')
-        # A tab left from an earlier run may still be capturing this book; a second one must not start beside it
-        # (2026-10-10: a resumed run opened Automate the Boring Stuff again while the first tab was still paging).
-        if not ensure_tab_closed(asin):
-            return not_captured(asin, 'tab_before', 'a Brave tab on this book was already open and could not be closed',
-                                recapture)
-        before = set(downloads.glob('*.zip')) | skip_notices(downloads, asin)
-        open_in_brave(asin, domain, recapture)
-        source = wait_for_zip(downloads, before, asin=asin, tabs=book_tabs, beats=book_heartbeat)
-        tab_closed = ensure_tab_closed(asin)
-        if isinstance(source, Stalled):
-            return not_captured(asin, STALL, f'the capture stopped moving for {STALL_S // 60} minutes at "{source}" '
-                                '(stage, page, and whether the tab was on screen); the tab was '
-                                f'{"closed" if tab_closed else "left open"}', recapture)
-        if source == TAB_GONE:
-            return not_captured(asin, TAB_GONE, f'the book tab closed with no ZIP and no skip notice in {downloads}; '
-                                'Brave or the reader may have dropped it', recapture)
-        if source is None:
-            return not_captured(asin, 'no_zip', f'no ZIP in {downloads} within {ZIP_WAIT_S // 60} minutes; the book tab '
-                                f'was {"closed" if tab_closed else "left open"}', recapture)
-        if source.suffix == '.json':
-            reason = json.loads(source.read_text(encoding='utf-8')).get('reason', 'no reason given')
-            # A book Cloud Reader cannot open is this book's failure, not the browser's: the list goes on.
-            check = APP_ONLY if reason.startswith('kindle app required') else 'capture_refused'
-            return not_captured(asin, check, f'the extension did not capture: {reason}', recapture)
+        with brave or contextlib.nullcontext():
+            captured = _capture(asin, domain, downloads, recapture)
+        if isinstance(captured, dict):
+            return captured
+        source, tab_closed = captured
     folder = source.with_suffix('') if source.suffix == '.zip' else source
-    with locks.holding(locks.book_lock(source)):
+    with converting or contextlib.nullcontext(), locks.holding(locks.book_lock(source)):
         return _convert_folder(asin, title, model, source, folder, recapture, tab_closed, started)
+
+
+def _capture(asin, domain, downloads, recapture):
+    """Capture one book in Brave: (ZIP, whether its tab closed), or the result of a capture that made no ZIP."""
+    problem = folder_problem()
+    if problem:
+        raise RuntimeError(f'Brave loads the extension from this checkout, and it is not main: {problem}')
+    # A tab left from an earlier run may still be capturing this book; a second one must not start beside it
+    # (2026-10-10: a resumed run opened Automate the Boring Stuff again while the first tab was still paging).
+    if not ensure_tab_closed(asin):
+        return not_captured(asin, 'tab_before', 'a Brave tab on this book was already open and could not be closed',
+                            recapture)
+    before = set(downloads.glob('*.zip')) | skip_notices(downloads, asin)
+    open_in_brave(asin, domain, recapture)
+    source = wait_for_zip(downloads, before, asin=asin, tabs=book_tabs, beats=book_heartbeat)
+    tab_closed = ensure_tab_closed(asin)
+    if isinstance(source, Stalled):
+        return not_captured(asin, STALL, f'the capture stopped moving for {STALL_S // 60} minutes at "{source}" '
+                            '(stage, page, and whether the tab was on screen); the tab was '
+                            f'{"closed" if tab_closed else "left open"}', recapture)
+    if source == TAB_GONE:
+        return not_captured(asin, TAB_GONE, f'the book tab closed with no ZIP and no skip notice in {downloads}; '
+                            'Brave or the reader may have dropped it', recapture)
+    if source is None:
+        return not_captured(asin, 'no_zip', f'no ZIP in {downloads} within {ZIP_WAIT_S // 60} minutes; the book tab '
+                            f'was {"closed" if tab_closed else "left open"}', recapture)
+    if source.suffix == '.json':
+        reason = json.loads(source.read_text(encoding='utf-8')).get('reason', 'no reason given')
+        # A book Cloud Reader cannot open is this book's failure, not the browser's: the list goes on.
+        check = APP_ONLY if reason.startswith('kindle app required') else 'capture_refused'
+        return not_captured(asin, check, f'the extension did not capture: {reason}', recapture)
+    return source, tab_closed
 
 
 def _convert_folder(asin, title, model, source, folder, recapture, tab_closed, started):

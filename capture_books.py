@@ -10,6 +10,8 @@ to it: a book marked done or failed is not run again, so an interrupted run resu
 list stopped on (a Brave or extension failure, STOP_CHECKS) is run again, as #recapture, unless a good capture of it
 was saved after it stopped: then that ZIP is converted with no new capture. A book that failed its Markdown checks is
 converted again from its ZIP, once, when the converter's code has changed since.
+While one book converts, the next is captured in Brave (one capture and one conversion at a time); books are recorded
+in list order, and a stop waits for the book already captured to be converted and recorded.
 At the end the summary lists what was done and what failed and why; the exit code is 1 when anything failed.
 """
 
@@ -20,6 +22,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import zipfile
 from pathlib import Path
@@ -65,16 +68,20 @@ def stale_failure(entry, converter):
             and entry.get('converter') != converter)
 
 
-def update_checkout(git=None):
+def update_checkout(git=None, settle=lambda: None):
     """Pull main before each book, so a fix merged mid-list is used without anyone asking for it.
 
     Returns 'same', 'python' (this run restarts to load it), 'extension' (Brave must reload it first) or an error.
     On 2026-10-10 each merge needed Laiken to type "pull main" to a session on the Mac.
+    settle() finishes the book still converting before the pull, so no conversion runs on half old, half new code.
     """
     git = git or (lambda *args: subprocess.run(['git', '-C', str(HERE), *args], capture_output=True, text=True))
     if git('rev-parse', '--abbrev-ref', 'HEAD').stdout.strip() != 'main':
         return 'same'  # capture_book.py refuses a checkout that is not main and says why
     before = git('rev-parse', 'HEAD').stdout.strip()
+    if git('fetch', '-q', 'origin', 'main').returncode == 0 and git('rev-parse', 'FETCH_HEAD').stdout.strip() == before:
+        return 'same'
+    settle()
     pulled = git('pull', '--ff-only', '-q', 'origin', 'main')
     if pulled.returncode:
         return f'could not pull main: {pulled.stderr.strip()}'
@@ -162,6 +169,44 @@ def run_book(asin, title, options, convert=None, again=False):
     return 'failed', data  # not reached: decide() stops recapturing at RECAPTURES
 
 
+class Converting:
+    """Held around a conversion: one at a time, and started is set once it begins, so the next capture can start."""
+
+    def __init__(self, slot):
+        self.slot, self.started = slot, threading.Event()
+
+    def __enter__(self):
+        self.slot.acquire()
+        self.started.set()
+
+    def __exit__(self, *exc):
+        self.slot.release()
+
+
+class Job:
+    """One book worked on in its own thread: its capture, then its conversion while the next book is captured."""
+
+    def __init__(self, asin, title, work, converting):
+        self.asin, self.title, self.converting, self.outcome = asin, title, converting, None
+        self.thread = threading.Thread(target=self._run, args=(work,), daemon=True)
+        self.thread.start()
+
+    def _run(self, work):
+        try:
+            self.outcome = work()
+        except Exception as e:  # a crash in one book must not stop the list, and must be in the summary
+            self.outcome = 'failed', {'error': str(e), 'blocking_failures': ['crash'], 'warnings': []}
+
+    def captured(self, poll=1):
+        """Wait until Brave is free of this book: its conversion began, or it ended (refused, failed, done)."""
+        while self.thread.is_alive() and not self.converting.started.wait(poll):
+            pass
+
+    def result(self):
+        self.thread.join()
+        return self.outcome
+
+
 def main():
     parser = argparse.ArgumentParser(description='Capture, convert and check a list of Kindle books in order')
     parser.add_argument('list', type=Path, help='ASIN<TAB>title per line')
@@ -182,10 +227,61 @@ def main():
         sys.exit(f'Not starting: another run is working through {args.list.name}. Run this once it has ended.')
     progress_path = args.list.with_suffix('.progress.json')
     progress = load_progress(progress_path)
-    options = {'model': args.model, 'domain': args.domain, 'downloads': args.downloads}
+    brave_tab, slot = threading.Lock(), threading.Lock()
+    options = {'model': args.model, 'domain': args.domain, 'downloads': args.downloads, 'brave': brave_tab}
     converter = converter_version()
+    jobs = []  # started in list order: at most one converting and one in Brave
+
+    def record(job):
+        """Write one finished book to the progress file. Returns why the list must stop, or None."""
+        verdict, data = job.result()
+        asin, title = job.asin, job.title
+        stop = STOP_CHECKS & set(data['blocking_failures'])
+        if stop:
+            verdict = 'stopped'  # not the book's fault: the next run tries it again
+        gemini = capture_book.GEMINI_CHECK in data['blocking_failures']
+        if gemini:
+            verdict = 'waiting'  # Gemini failed; every later book would fail its layout too
+        progress[asin] = {'title': title, 'verdict': verdict, 'failures': data['blocking_failures'],
+                          'warnings': data['warnings'], 'error': data.get('error'), 'at': time.strftime('%Y-%m-%dT%H:%M:%S'),
+                          'converter': converter}
+        if data.get('source'):
+            progress[asin]['source'] = data['source']
+        progress_path.write_text(json.dumps(progress, ensure_ascii=False, indent=1), encoding='utf-8')
+        print(f'=== {verdict}: {title or asin}' + (f' ({", ".join(data["blocking_failures"])})' if verdict != 'done' else ''), flush=True)
+        if gemini:
+            return (f'Stopped the list: Gemini failed on {title or asin}: {data.get("error")}\nOnce the cause is gone, '
+                    'run the same command: this book is converted from its folder with no new capture.')
+        if stop:
+            return (f'Stopped the list: {", ".join(sorted(stop))} failed on {title or asin}. These come from Brave or the '
+                    'extension, so every later book would fail too. Fix the cause, then run the same command to resume.')
+        # Laiken, 2026-10-10: try one book, and run the rest only once a book comes out right. Every later book goes
+        # through the same converter, so a book that fails its Markdown checks stops the list until the fix is in.
+        if verdict == 'failed' and not args.keep_going and capture_book.APP_ONLY not in data['blocking_failures']:
+            return (f'Stopped the list: {title or asin} failed {", ".join(data["blocking_failures"])}. Fix the converter, '
+                    'reconvert this book from its ZIP until it passes, then run the same command to go on.')
+        return None
+
+    def settle(keep=0):
+        """Record finished books in list order until at most keep are left; stop the list once every book has ended."""
+        while len(jobs) > keep:
+            stop = record(jobs.pop(0))
+            if stop:
+                for job in jobs:  # a book already captured is converted and recorded, not thrown away
+                    record(job)
+                print(f'\n{stop}', flush=True)
+                sys.exit(2)
+
+    def make_room():
+        """Wait until the next book may use Brave: the books before have ended, but for one that is converting."""
+        settle(keep=1)
+        if jobs:
+            jobs[0].captured()
+            if not jobs[0].thread.is_alive():
+                settle()
+
     for asin, title in read_list(args.list):
-        update = update_checkout()
+        update = update_checkout(settle=settle)
         if update == 'python':
             print('=== main changed: restarting with it (the list resumes here)', flush=True)
             os.environ.pop(locks.HELD, None)  # exec lets go of the list lock, so the new run must take it again
@@ -206,53 +302,29 @@ def main():
         if entry.get('verdict') == 'done' or (
                 entry.get('verdict') == 'failed' and not STOP_CHECKS & set(entry.get('failures', [])) and not earlier):
             continue
+        make_room()
         print(f'=== {title or asin} ({asin})', flush=True)
-        try:
-            if earlier:
-                print(f'=== converting {earlier.name} again: it failed {", ".join(entry["failures"])} under older code',
-                      flush=True)
-                # Its capture was used before, so a capture defect found now is redone as for any unusable ZIP.
-                verdict, data = run_book(asin, title, {**options, 'source': earlier}, again=True)
-            else:
-                # Any earlier attempt may have saved the ASIN in the extension, which then refuses #autocapture.
-                again = asin in progress and not waiting
-                # A book stopped by a Gemini failure was captured well: convert its folder again, without Brave.
-                book_options = {**options, 'source': Path(entry['source'])} if waiting else options
-                saved = again and entry.get('at') and saved_capture(
-                    args.downloads, title, time.mktime(time.strptime(entry['at'], '%Y-%m-%dT%H:%M:%S')))
-                if saved:
-                    print(f'=== converting {saved.name}, captured after the list stopped on this book', flush=True)
-                    book_options, again = {**options, 'source': saved}, False
-                verdict, data = run_book(asin, title, book_options, again=again)
-        except Exception as e:  # a crash in one book must not stop the list, and must be in the summary
-            verdict, data = 'failed', {'error': str(e), 'blocking_failures': ['crash'], 'warnings': []}
-        stop = STOP_CHECKS & set(data['blocking_failures'])
-        if stop:
-            verdict = 'stopped'  # not the book's fault: the next run tries it again
-        gemini = capture_book.GEMINI_CHECK in data['blocking_failures']
-        if gemini:
-            verdict = 'waiting'  # Gemini failed; every later book would fail its layout too
-        progress[asin] = {'title': title, 'verdict': verdict, 'failures': data['blocking_failures'],
-                          'warnings': data['warnings'], 'error': data.get('error'), 'at': time.strftime('%Y-%m-%dT%H:%M:%S'),
-                          'converter': converter}
-        if data.get('source'):
-            progress[asin]['source'] = data['source']
-        progress_path.write_text(json.dumps(progress, ensure_ascii=False, indent=1), encoding='utf-8')
-        print(f'=== {verdict}: {title or asin}' + (f' ({", ".join(data["blocking_failures"])})' if verdict != 'done' else ''), flush=True)
-        if gemini:
-            print(f'\nStopped the list: Gemini failed on {title or asin}: {data.get("error")}\nOnce the cause is gone, '
-                  'run the same command: this book is converted from its folder with no new capture.')
-            sys.exit(2)
-        if stop:
-            print(f'\nStopped the list: {", ".join(sorted(stop))} failed on {title or asin}. These come from Brave or the '
-                  'extension, so every later book would fail too. Fix the cause, then run the same command to resume.')
-            sys.exit(2)
-        # Laiken, 2026-10-10: try one book, and run the rest only once a book comes out right. Every later book goes
-        # through the same converter, so a book that fails its Markdown checks stops the list until the fix is in.
-        if verdict == 'failed' and not args.keep_going and capture_book.APP_ONLY not in data['blocking_failures']:
-            print(f'\nStopped the list: {title or asin} failed {", ".join(data["blocking_failures"])}. Fix the converter, '
-                  'reconvert this book from its ZIP until it passes, then run the same command to go on.')
-            sys.exit(2)
+        converting = Converting(slot)
+        book_options = {**options, 'converting': converting}
+        if earlier:
+            print(f'=== converting {earlier.name} again: it failed {", ".join(entry["failures"])} under older code',
+                  flush=True)
+            # Its capture was used before, so a capture defect found now is redone as for any unusable ZIP.
+            work = (lambda a=asin, t=title, o={**book_options, 'source': earlier}: run_book(a, t, o, again=True))
+        else:
+            # Any earlier attempt may have saved the ASIN in the extension, which then refuses #autocapture.
+            again = asin in progress and not waiting
+            # A book stopped by a Gemini failure was captured well: convert its folder again, without Brave.
+            if waiting:
+                book_options['source'] = Path(entry['source'])
+            saved = again and entry.get('at') and saved_capture(
+                args.downloads, title, time.mktime(time.strptime(entry['at'], '%Y-%m-%dT%H:%M:%S')))
+            if saved:
+                print(f'=== converting {saved.name}, captured after the list stopped on this book', flush=True)
+                book_options, again = {**book_options, 'source': saved}, False
+            work = (lambda a=asin, t=title, o=book_options, g=again: run_book(a, t, o, again=g))
+        jobs.append(Job(asin, title, work, converting))
+    settle()
 
     done = [p['title'] or a for a, p in progress.items() if p['verdict'] == 'done']
     failed = {p['title'] or a: p['failures'] for a, p in progress.items() if p['verdict'] == 'failed'}
