@@ -12,7 +12,7 @@ update_checkout = capture_books.update_checkout  # the real one; tests below stu
 @pytest.fixture(autouse=True)
 def brave_saves_without_asking(monkeypatch):
     monkeypatch.setattr(capture_books.brave, 'prompt_problem', lambda: None)
-    monkeypatch.setattr(capture_books, 'update_checkout', lambda: 'same')
+    monkeypatch.setattr(capture_books, 'update_checkout', lambda **_: 'same')
 
 
 def result(failures, warnings=()):
@@ -187,13 +187,15 @@ def test_a_book_the_list_stopped_on_is_tried_again_as_a_recapture(tmp_path, monk
     assert started == [('B1', True), ('B3', False)]
 
 
-def fake_git(heads, changed='', branch='main', pull_code=0):
+def fake_git(heads, changed='', branch='main', pull_code=0, fetched=''):
     heads = iter(heads)
 
     def git(*args):
         out = {'--abbrev-ref': branch}.get(args[1], '') if args[0] == 'rev-parse' else ''
         if args[:2] == ('rev-parse', 'HEAD'):
             out = next(heads)
+        if args[:2] == ('rev-parse', 'FETCH_HEAD'):
+            out = fetched
         if args[0] == 'diff':
             out = changed
         return type('R', (), {'stdout': out, 'stderr': 'diverged', 'returncode': pull_code if args[0] == 'pull' else 0})()
@@ -212,7 +214,7 @@ def test_main_is_pulled_before_each_book_and_says_what_a_change_needs():
 def test_an_extension_change_on_main_stops_the_list_before_the_next_book(tmp_path, monkeypatch, capsys):
     books = tmp_path / 'books.tsv'
     books.write_text('B1\tOne\n')
-    monkeypatch.setattr(capture_books, 'update_checkout', lambda: 'extension')
+    monkeypatch.setattr(capture_books, 'update_checkout', lambda **_: 'extension')
     monkeypatch.setattr(capture_books.capture_book, 'convert', lambda *a, **k: pytest.fail('captured with a stale extension'))
     monkeypatch.setattr(sys, 'argv', ['capture_books.py', str(books)])
     with pytest.raises(SystemExit) as exit_info:
@@ -356,3 +358,80 @@ def test_a_second_run_on_the_same_list_does_not_start(tmp_path, monkeypatch, cap
     finally:
         holder.kill()
         holder.wait()
+
+
+def pipelined_convert(log, release, failures=lambda asin: []):
+    """A convert that captures under brave, then converts under converting until release[asin] is set."""
+    import threading
+    lock = threading.Lock()
+
+    def convert(asin, title=None, recapture=False, brave=None, converting=None, **options):
+        with brave:
+            with lock:
+                log.append(('capture', asin))
+        with converting:
+            with lock:
+                log.append(('convert', asin))
+            release.setdefault(asin, threading.Event()).wait(5)
+            with lock:
+                log.append(('converted', asin))
+        return result(failures(asin))
+    return convert
+
+
+def test_the_next_book_is_captured_while_this_one_converts(tmp_path, monkeypatch):
+    # Laiken, 2026-10-11: use the time in parallel. Python Crash Course spent 45 Sonnet rounds converting with Brave idle.
+    import threading
+    books = tmp_path / 'books.tsv'
+    books.write_text('B1\tOne\nB2\tTwo\nB3\tThree\n')
+    log, release = [], {asin: threading.Event() for asin in ('B1', 'B2', 'B3')}
+    monkeypatch.setattr(capture_books.capture_book, 'convert', pipelined_convert(log, release))
+    monkeypatch.setattr(sys, 'argv', ['capture_books.py', str(books)])
+    done = []
+    runner = threading.Thread(target=lambda: done.append(pytest.raises(SystemExit, capture_books.main)), daemon=True)
+    runner.start()
+
+    def wait_for(entry):
+        for _ in range(500):
+            if entry in log:
+                return
+            threading.Event().wait(0.01)
+        pytest.fail(f'{entry} never happened: {log}')
+
+    wait_for(('capture', 'B2'))  # B2 is in Brave while B1 still converts
+    assert ('converted', 'B1') not in log and ('convert', 'B2') not in log  # one conversion at a time
+    assert ('capture', 'B3') not in log  # and one book in Brave
+    release['B1'].set()
+    wait_for(('convert', 'B2'))
+    wait_for(('capture', 'B3'))
+    release['B2'].set()
+    release['B3'].set()
+    runner.join(5)
+    progress = json.loads((tmp_path / 'books.progress.json').read_text())
+    assert [progress[a]['verdict'] for a in ('B1', 'B2', 'B3')] == ['done'] * 3
+
+
+def test_a_stop_found_while_the_next_book_was_captured_converts_that_book_then_stops(tmp_path, monkeypatch, capsys):
+    import threading
+    books = tmp_path / 'books.tsv'
+    books.write_text('B1\tOne\nB2\tTwo\nB3\tThree\n')
+    log, release = [], {'B1': threading.Event(), 'B2': threading.Event()}
+    convert = pipelined_convert(log, release, failures=lambda asin: ['extension_version'] if asin == 'B1' else [])
+    monkeypatch.setattr(capture_books.capture_book, 'convert', convert)
+    monkeypatch.setattr(sys, 'argv', ['capture_books.py', str(books)])
+    threading.Timer(0.3, release['B1'].set).start()
+    release['B2'].set()
+    with pytest.raises(SystemExit) as exit_info:
+        capture_books.main()
+    assert exit_info.value.code == 2 and ('capture', 'B3') not in log
+    progress = json.loads((tmp_path / 'books.progress.json').read_text())
+    assert progress['B1']['verdict'] == 'stopped' and progress['B2']['verdict'] == 'done' and 'B3' not in progress
+    assert 'Stopped the list: extension_version failed on One' in capsys.readouterr().out
+
+
+def test_a_conversion_in_progress_ends_before_main_is_pulled_under_it():
+    settled = []
+    assert update_checkout(fake_git(['a', 'a'], fetched='a'), settle=lambda: settled.append(1)) == 'same'
+    assert settled == []  # nothing new on main: the conversion goes on beside the next capture
+    assert update_checkout(fake_git(['a', 'b'], 'img2txt.py', fetched='b'), settle=lambda: settled.append(1)) == 'python'
+    assert settled == [1]
