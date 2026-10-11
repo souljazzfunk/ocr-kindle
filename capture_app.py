@@ -334,21 +334,28 @@ def location_of(found):
     return None
 
 
+HOVER_WAIT_S = 3  # after each pointer move to the top edge, before the move is repeated
+
+
 def show_chrome(script=osascript, sleep=time.sleep, clock=time.monotonic, tries=3, found=None, move=None):
-    """Bring the toolbar into the element tree: rest the pointer on the window's top edge, then click the page if it
-    still does not show. With the toolbar hidden the reader's tree holds only groups and the window buttons (probe of
-    2026-10-11 18:04); clicks brought it for Tokyo but not for Sri Lanka (20:34, four clicks), a pointer move to the
-    top did at once (20:36). Each attempt is checked and repeated. Returns what the app shows."""
+    """Bring the toolbar into the element tree by resting the pointer on the window's top edge, with a fresh move
+    each try (away to the page, then to the top). Never by a click: a click on the page turns the page (Sri Lanka,
+    2026-10-11 20:40: the clicks of a test moved the book from 3% to 30%), and in a two-column spread the window's
+    centre is the gutter where a click does nothing (Laiken 20:39). The pointer brought the toolbar at once at
+    20:36 but not in the run at 20:40 (one move, 14 s), so the move is repeated. The clicks remain only for a
+    script without a pointer (the fakes in the tests). Returns what the app shows."""
     found = elements(script) if found is None else found
-    move = move or (hover if script is osascript else None)  # a fake script in the tests has no pointer
-    if move and not chrome_shown(found):
-        hover_window(script, 'top', move)
-        found = wait_for(chrome_shown, script, sleep, clock, timeout=2)
+    move = move or (hover if script is osascript else None)
     for _ in range(tries):
         if chrome_shown(found):
             break
-        reveal_chrome(script, sleep)
-        found = wait_for(chrome_shown, script, sleep, clock, timeout=2)
+        if move:
+            hover_window(script, 'page', move)
+            hover_window(script, 'top', move)
+            found = wait_for(chrome_shown, script, sleep, clock, timeout=HOVER_WAIT_S)
+        else:
+            reveal_chrome(script, sleep)
+            found = wait_for(chrome_shown, script, sleep, clock, timeout=2)
     return found
 
 
