@@ -16,6 +16,7 @@ first ZIP was unusable (the extension otherwise refuses to auto-start a saved bo
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -38,6 +39,8 @@ TAB_TRIES = 3
 GEMINI_CHECK = 'gemini'
 PYTHON = sys.executable
 HERE = Path(__file__).resolve().parent
+# The LLM wiki's watcher (llm-wiki/scripts/watch.sh). It takes only books whose report.json passed.
+WIKI_WATCH = Path(os.environ.get('WIKI_WATCH', Path.home() / 'Documents/GitHub.nosync/llm-wiki/scripts/watch.sh'))
 
 
 def run(command, **kwargs):
@@ -200,6 +203,16 @@ def report(folder, checks, extra):
     return data
 
 
+def start_wiki_ingest(data, watch=WIKI_WATCH, spawn=subprocess.Popen):
+    """Start the wiki's watcher for a book that passed, detached, so the note is written while the next book captures
+    instead of at the watcher's next hourly run. The watcher queues a rerun when one is already going."""
+    if data['blocking_failures'] or not watch.is_file():
+        return None
+    print(f'Wiki: started {watch}', flush=True)
+    return spawn(['/bin/bash', str(watch)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                 stderr=subprocess.DEVNULL, start_new_session=True)
+
+
 def convert(asin, title=None, model='vision', domain='read.amazon.com', downloads=Path.home() / 'Downloads',
             source=None, recapture=False):
     """Capture (unless source is given), convert, check and fix one book. Returns the report data."""
@@ -247,8 +260,10 @@ def convert(asin, title=None, model='vision', domain='read.amazon.com', download
         checks.append(Check('tab_closed', tab_closed, f'book tab {"closed" if tab_closed else "still open"} after the capture'))
         checks.append(version_check(folder))
         checks.append(download_check(source))
-    return report(folder, checks, {'asin': asin, 'source': str(source), 'recapture': recapture, 'rounds': rounds,
+    data = report(folder, checks, {'asin': asin, 'source': str(source), 'recapture': recapture, 'rounds': rounds,
                                    'tab_closed': tab_closed, 'seconds': round(time.time() - started)})
+    start_wiki_ingest(data)
+    return data
 
 
 def main():

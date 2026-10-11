@@ -302,3 +302,14 @@ def test_book_tabs_are_closed_one_by_one_from_the_last():
     assert 'whose URL' not in script
     assert 'repeat with i from (count of tabs of w) to 1 by -1' in script
     assert 'if URL of tab i of w contains "asin=B005RR0XRG" then close tab i of w' in script
+
+
+def test_a_book_that_passed_starts_the_wiki_watcher_and_a_failed_one_does_not(tmp_path):
+    watch = tmp_path / 'watch.sh'
+    watch.write_text('')
+    started = []
+    spawn = lambda command, **kwargs: started.append((command, kwargs['start_new_session'])) or 'proc'
+    assert capture_book.start_wiki_ingest({'blocking_failures': ['headings']}, watch, spawn) is None
+    assert capture_book.start_wiki_ingest({'blocking_failures': []}, tmp_path / 'missing.sh', spawn) is None
+    assert capture_book.start_wiki_ingest({'blocking_failures': []}, watch, spawn) == 'proc'
+    assert started == [(['/bin/bash', str(watch)], True)]
