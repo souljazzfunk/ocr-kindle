@@ -211,12 +211,26 @@ def chrome_shown(found):
 
 
 def location_of(found):
-    """(location, of) from the footer's "Location N of M , P%", or None."""
+    """(location, of) from the footer's "Location N of M , P%", or None. M came back as 0 in the probe of 2026-10-11
+    18:04 ("Location 1 of 0 , 1%"), so only N says whether the start was reached."""
     for e in found:
         m = LOCATION.search(e['value']) or LOCATION.search(e['title'])
         if m:
             return int(m.group(1)), int(m.group(2))
     return None
+
+
+def show_chrome(script=osascript, sleep=time.sleep, tries=3, found=None):
+    """Click the page until the toolbar is in the element tree. With the toolbar hidden the reader's tree holds only
+    groups and the window buttons (probe of 2026-10-11 18:04), and in the pilot run just before it one click did not
+    bring it (Close Book: none), so each click is checked and repeated. Returns what the app shows."""
+    found = elements(script) if found is None else found
+    for _ in range(tries):
+        if chrome_shown(found):
+            break
+        reveal_chrome(script, sleep)
+        found = elements(script)
+    return found
 
 
 def ensure_library(script=osascript, sleep=time.sleep):
@@ -226,8 +240,9 @@ def ensure_library(script=osascript, sleep=time.sleep):
     found = elements(script)
     if in_library(found):
         return found, ''
+    found = show_chrome(script, sleep, found=found)
     if not chrome_shown(found):
-        reveal_chrome(script, sleep)
+        return found, 'the Kindle app shows neither its library nor the reader toolbar after clicks on the page; it shows: ' + describe(found)
     _, pressed, _ = script(PRESS_TITLED.format(title='"Close Book"'))
     sleep(3)
     found = elements(script)
@@ -241,12 +256,9 @@ def go_to_start(script=osascript, sleep=time.sleep):
     to 0, read the footer's "Location N of M", then hide the toolbar again so the pages are captured bare.
     Returns '' or why it could not. Written from the probe of 2026-10-11 17:56, not guessed."""
     dismiss_sheet(script, sleep)
-    found = elements(script)
+    found = show_chrome(script, sleep)
     if not chrome_shown(found):
-        reveal_chrome(script, sleep)
-        found = elements(script)
-    if not chrome_shown(found):
-        return 'the reader shows no toolbar after a click on the page; it shows: ' + describe(found)
+        return 'the reader shows no toolbar after clicks on the page; it shows: ' + describe(found)
     _, set_, _ = script(SET_SLIDER)
     sleep(3)
     found = elements(script)
