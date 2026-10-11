@@ -98,26 +98,70 @@ def test_a_book_the_app_does_not_open_or_cannot_page_back_is_named_with_what_the
     assert 'Next Page, Previous Page' in reason and sum('click' in c for c in calls) == len(capture_app.START_ITEMS)
 
 
-def test_the_book_window_is_found_by_its_title(tmp_path):
-    shown = iter(['Library', 'For 91 Days in Tokyo – Kindle'])
-    clock = iter(range(0, 100, 2))
-    problem = capture_app.open_book('B2', 'For 91 Days In Tokyo', script=lambda s: (0, next(shown), ''),
-                                    run=lambda c: None, clock=lambda: next(clock), sleep=lambda s: None)
-    assert problem == ''
+LIBRARY = ('frontmost=true\nwindow|Kindle|489,1187|1024,843\n'
+           'element|AXTextField|AXSearchField||Search Kindle||506,1229|975,27\n'
+           'element|AXGroup||Library Grid View|||489,1273|1024,710\n'
+           'element|AXButton|||For 91 Days In Tokyo, Powell, Michael, New, |Book Downloaded.  Reading is 1 percent completed|1332,1279|147,220\n'
+           'element|AXButton|||For 91 Days in Bolivia, Powell, Michael, |Book Not Downloaded|1332,1536|147,220\n')
+READER = 'frontmost=true\nwindow|Kindle|489,1187|1024,843\nelement|AXGroup|||page||489,1273|1024,710\n'
 
 
-def test_a_book_left_in_the_library_is_opened_again_to_download_it_as_on_2026_10_11():
-    # For 91 Days In Tokyo was not on the Mac: the first open left the library in front, the second started the
-    # download (Laiken: もう 1 回クリックすればダウンロードが始まる), and the book appeared later.
-    opens, clock = [], iter(range(0, 1000, 2))
-    shown = ['Kindle'] * 40 + ['For 91 Days in Tokyo – Kindle']
-    problem = capture_app.open_book('B2', 'For 91 Days In Tokyo', script=lambda s: (0, shown.pop(0) if len(shown) > 1 else shown[0], ''),
-                                    run=opens.append, clock=lambda: next(clock), sleep=lambda s: None)
-    assert problem == '' and len(opens) == 2 and opens[0] == opens[1]
-    shown = ['Kindle']
-    problem = capture_app.open_book('B2', 'For 91 Days In Tokyo', script=lambda s: (0, 'Kindle', ''),
-                                    run=opens.append, clock=lambda: next(clock), sleep=lambda s: None)
-    assert 'opening it again to download it' in problem and len(opens) == 4
+class App:
+    """A fake System Events: the dump it answers, and what pressing a cover does."""
+
+    def __init__(self, screens):
+        self.screens, self.calls = list(screens), []
+
+    def __call__(self, text):
+        self.calls.append(text)
+        if 'entire contents' in text and 'AXPress' not in text and 'keystroke' not in text:
+            return 0, self.screens.pop(0) if len(self.screens) > 1 else self.screens[0], ''
+        return 0, 'pressed' if 'AXPress' in text else 'searched', ''
+
+
+def test_a_book_is_opened_by_pressing_its_cover_in_the_library_as_the_probe_showed():
+    # Probe of 2026-10-11 17:46: the kindle:// URL leaves the library; each cover is a button named after the book.
+    app = App([LIBRARY, LIBRARY, READER])
+    clock = iter(range(0, 1000, 2))
+    assert capture_app.open_book('B2', 'For 91 Days In Tokyo', script=app, run=lambda c: None,
+                                 clock=lambda: next(clock), sleep=lambda s: None) == ''
+    presses = [c for c in app.calls if 'AXPress' in c]
+    assert len(presses) == 1 and '"For 91 Days In Tokyo"' in presses[0] and not any('keystroke' in c for c in app.calls)
+
+
+def test_a_cover_off_screen_is_searched_for_first():
+    app = App([LIBRARY, LIBRARY.replace('For 91 Days in Bolivia, Powell, Michael, ', 'Japan Travel Planner, Someone, '), READER])
+    clock = iter(range(0, 1000, 2))
+    assert capture_app.open_book('B3', 'Japan Travel Planner', script=app, run=lambda c: None,
+                                 clock=lambda: next(clock), sleep=lambda s: None) == ''
+    assert any('keystroke return' in c and '"Japan Travel Planner"' in c for c in app.calls)
+    app = App([LIBRARY, LIBRARY])
+    problem = capture_app.open_book('B9', 'Drive', script=app, run=lambda c: None, clock=lambda: next(clock), sleep=lambda s: None)
+    assert problem.startswith('no cover for this title') and 'Search Kindle' in problem
+
+
+def test_a_cover_not_downloaded_is_pressed_again_and_waited_for_as_laiken_said():
+    # Laiken, 2026-10-11 17:21: もう 1 回クリックすればダウンロードが始まる.
+    app = App([LIBRARY] * 40 + [READER])
+    clock = iter(range(0, 2000, 2))
+    assert capture_app.open_book('B4', 'For 91 Days in Bolivia', script=app, run=lambda c: None,
+                                 clock=lambda: next(clock), sleep=lambda s: None) == ''
+    assert sum('AXPress' in c for c in app.calls) == 2
+    app = App([LIBRARY])
+    problem = capture_app.open_book('B4', 'For 91 Days in Bolivia', script=app, run=lambda c: None,
+                                    clock=lambda: next(clock), sleep=lambda s: None)
+    assert 'pressing it again for its download' in problem and 'Book Not Downloaded' in problem
+    # A downloaded book that stays in the library is not pressed twice: something else is wrong.
+    app = App([LIBRARY])
+    problem = capture_app.open_book('B2', 'For 91 Days In Tokyo', script=app, run=lambda c: None,
+                                    clock=lambda: next(clock), sleep=lambda s: None)
+    assert sum('AXPress' in c for c in app.calls) == 1 and 'Book Downloaded' in problem
+
+
+def test_a_reader_already_open_is_reported_not_pressed():
+    app = App([READER])
+    problem = capture_app.open_book('B2', 'For 91 Days In Tokyo', script=app, run=lambda c: None, sleep=lambda s: None)
+    assert problem.startswith('the Kindle app is not showing its library') and not any('AXPress' in c for c in app.calls)
 
 
 def test_a_probe_records_what_the_new_app_shows_before_and_after_opening_a_book(tmp_path):
@@ -125,19 +169,14 @@ def test_a_probe_records_what_the_new_app_shows_before_and_after_opening_a_book(
     calls, ebooks = [], tmp_path / 'eBooks'
     ebooks.mkdir()
     (ebooks / 'B2_EBOK').mkdir()
-    dumps = iter(['frontmost=true\nmenu|Kindle\n', 'frontmost=true\nelement|AXGroup|||page 1|\n'])
-
-    def script(text):
-        calls.append(text[:40])
-        return (0, next(dumps) if 'entire contents' in text else '', '')
-
-    folder = capture_app.probe('B2', tmp_path / 'probe', script=script, run=calls.append, sleep=lambda s: None, ebooks=ebooks)
-    assert (folder / 'ui-library.txt').read_text() == 'frontmost=true\nmenu|Kindle\n'
-    assert 'page 1' in (folder / 'ui-book.txt').read_text()
+    app = App([LIBRARY, LIBRARY, LIBRARY, READER.replace('page', 'page 1')])
+    folder = capture_app.probe('B2', 'For 91 Days In Tokyo', tmp_path / 'probe', script=app, run=calls.append,
+                               sleep=lambda s: None, ebooks=ebooks)
+    assert 'Library Grid View' in (folder / 'ui-library.txt').read_text()
+    assert 'page 1' in (folder / 'ui-book.txt').read_text() and (folder / 'open.txt').read_text() == 'opened'
     assert json.loads((folder / 'probe.json').read_text())['downloaded'] == ['B2_EBOK']
-    opened = ['open', '-a', 'Amazon Kindle', 'kindle://book?action=open&asin=B2']
     shots = ['screencapture', '-x', *(str(folder / f'screen-{n}.png') for n in (1, 2, 3))]  # every display
-    assert opened in calls and calls.index(opened) < calls.index(shots)
+    assert shots in calls and any('AXPress' in c for c in app.calls)
 
 
 def test_the_ui_dump_resolves_elements_before_reading_them():
@@ -153,8 +192,9 @@ def test_a_probe_needs_laikens_word_too(tmp_path):
     import capture_app as module
     module_probe = module.probe
     try:
-        module.probe = lambda asin, folder, **k: seen.append((asin, folder)) or folder
+        (tmp_path / 'books.tsv').write_text('B2\tFor 91 Days In Tokyo\n')
+        module.probe = lambda asin, title, folder, **k: seen.append((asin, title, folder)) or folder
         capture_app.main([str(tmp_path / 'books.tsv'), '--probe', 'B2', '--downloads', str(tmp_path)], env={'KINDLE_APP_OK': '1'})
     finally:
         module.probe = module_probe
-    assert seen == [('B2', tmp_path / 'kindle-probe' / 'B2')]
+    assert seen == [('B2', 'For 91 Days In Tokyo', tmp_path / 'kindle-probe' / 'B2')]
