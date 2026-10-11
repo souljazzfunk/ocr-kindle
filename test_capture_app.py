@@ -149,11 +149,15 @@ def test_a_cover_not_downloaded_is_pressed_again_and_waited_for_as_laiken_said()
     problem = capture_app.open_book('B4', 'For 91 Days in Bolivia', script=app, run=lambda c: None,
                                     clock=lambda: next(clock), sleep=lambda s: None)
     assert 'pressing it again for its download' in problem and 'Book Not Downloaded' in problem
-    # A downloaded book that stays in the library is not pressed twice: something else is wrong.
+    # A downloaded book that stays in the library is pressed once more: in the run of 2026-10-11 18:12 the first
+    # press went to a window that was not frontmost ("Claude" was). Kindle is activated before every press.
     app = App([LIBRARY])
     problem = capture_app.open_book('B2', 'For 91 Days In Tokyo', script=app, run=lambda c: None,
                                     clock=lambda: next(clock), sleep=lambda s: None)
-    assert sum('AXPress' in c for c in app.calls) == 1 and 'Book Downloaded' in problem
+    assert sum('AXPress' in c for c in app.calls) == 2 and 'Book Downloaded' in problem and 'pressing it again)' in problem
+    activations = [i for i, c in enumerate(app.calls) if 'frontmost is true' in c]
+    presses = [i for i, c in enumerate(app.calls) if 'AXPress' in c]
+    assert len(activations) == 2 and all(a < p for a, p in zip(activations, presses)) and 'frontmost before' in problem
 
 
 # The reader's toolbar as the dump of 2026-10-11 18:04 recorded it: the names are in the description column.

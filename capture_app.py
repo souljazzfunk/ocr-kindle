@@ -167,8 +167,14 @@ def open_book(asin, title, script=osascript, run=capture_book.run, clock=time.mo
         found = elements(script)
         if cover_of(title, found) is None:
             return f'no cover for this title in the Kindle library (search: {searched}); it shows: ' + describe(found)
-    for wait in (OPEN_WAIT_S, DOWNLOAD_WAIT_S):
+    # Two presses at most: the second is for a download that has not started (Laiken, 17:21), or for a first press
+    # that only focused the window (run of 18:12: Kindle was not frontmost, the library stayed).
+    presses = []
+    while len(presses) < 2:
+        presses.append(bring_front(script, sleep))
         _, pressed, _ = script(PRESS_COVER.format(title=_quote(title)))
+        cover = cover_of(title, found)
+        wait = DOWNLOAD_WAIT_S if len(presses) == 2 and cover and 'Not Downloaded' in cover['value'] else OPEN_WAIT_S
         deadline = clock() + wait
         while clock() < deadline:
             sleep(2)
@@ -176,11 +182,13 @@ def open_book(asin, title, script=osascript, run=capture_book.run, clock=time.mo
             if not in_library(found):
                 return ''
         cover = cover_of(title, found)
-        if cover is None or 'Not Downloaded' not in cover['value']:
-            break  # pressing again is for a download that has not started; anything else needs a new look
+        if cover is None:
+            break
     return (f'the Kindle app still shows its library {OPEN_WAIT_S} s after pressing the cover of this book'
             + (' (and after pressing it again for its download)' if cover and 'Not Downloaded' in cover['value'] else '')
-            + '; the cover says: ' + (cover['value'] if cover else 'gone'))
+            + (' (and after pressing it again)' if cover and 'Not Downloaded' not in cover['value'] and len(presses) == 2 else '')
+            + '; the cover says: ' + (cover['value'] if cover else 'gone')
+            + '; frontmost before the presses: ' + ', '.join(presses))
 
 
 def describe(found):
@@ -236,6 +244,18 @@ def show_chrome(script=osascript, sleep=time.sleep, tries=3, found=None):
     return found
 
 
+FRONTMOST = ('tell application "Amazon Kindle" to activate\n'
+             'tell application "System Events" to get name of first process whose frontmost is true')
+
+
+def bring_front(script=osascript, sleep=time.sleep):
+    """Activate Kindle and say which process is frontmost afterwards. In the run of 2026-10-11 18:12 the cover was
+    pressed while "Claude" was frontmost and the library stayed, so every press is preceded by this."""
+    _, front, err = script(FRONTMOST)
+    sleep(1)
+    return front or err
+
+
 def ensure_library(script=osascript, sleep=time.sleep):
     """Bring the app to its library: a book left open (the app reopens into the last book, 2026-10-11 17:56) is closed
     with the reader's Close Book button. File > Close quits the app, so it is never used.
@@ -243,6 +263,7 @@ def ensure_library(script=osascript, sleep=time.sleep):
     found = elements(script)
     if in_library(found):
         return found, ''
+    bring_front(script, sleep)
     found = show_chrome(script, sleep, found=found)
     if not chrome_shown(found):
         return found, 'the Kindle app shows neither its library nor the reader toolbar after clicks on the page; it shows: ' + describe(found)
