@@ -190,3 +190,25 @@ def test_a_few_pages_without_words_are_pictures_but_a_book_of_them_stays_pending
     with pytest.raises(SystemExit):
         img2txt.main()
     assert not list(vertical.glob('*.txt'))
+
+
+def test_a_photo_heavy_travel_book_keeps_its_photos_as_pictures(tmp_path, monkeypatch):
+    # 2026-10-11: For 91 Days in Oviedo had 49 photo pages of 265 and failed the 5% limit.
+    import img2txt
+
+    def ocr_job(client, models, image):
+        if int(image.stem[-4:]) % 5 == 0:
+            return image, None, RuntimeError(img2txt.NO_TEXT)
+        image.with_suffix('.txt').write_text('Words on the page.')
+        return image, ('vision', 18), None
+
+    monkeypatch.setattr(img2txt, 'ocr_job', ocr_job)
+    monkeypatch.setattr(img2txt, 'ocr_pool', lambda models: (img2txt.ThreadPoolExecutor, 2))
+    monkeypatch.setattr(img2txt, 'load_config', lambda: {})
+    book = tmp_path / 'For 91 Days in Oviedo'
+    book.mkdir()
+    for n in range(1, 266):
+        (book / f'page_{n:04d}.png').write_bytes(b'png')
+    monkeypatch.setattr(sys, 'argv', ['img2txt.py', str(book), '--model', 'vision'])
+    img2txt.main()
+    assert (book / 'page_0010.txt').read_text() == '![Picture]()'

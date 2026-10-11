@@ -64,7 +64,7 @@ GEMINI_ERROR = 'gemini_error.txt'  # why, for capture_book.py
 TEXT_LAYER = 'textlayer'
 PICTURE = 'picture'  # a page Vision found no words on, in a book it reads
 NO_TEXT = 'no text found'
-PICTURE_SHARE = 0.05
+PICTURE_SHARE = 0.5  # below half the book: photos in a book Vision reads (For 91 Days in Oviedo: 49 of 265)
 LINES = '.lines.json'  # Vision's line boxes for a page, for layout.py
 
 OCR_PROMPT = """Transcribe the book text on this Kindle page image exactly as printed.
@@ -425,11 +425,11 @@ def main():
                 print(f'[{done}/{len(todo)}] {image.name} {chars} chars ({model})', flush=True)
                 record_sources(args.folder, [(image.stem, model)])
                 read_now.add(image.stem)
-        # A photo or a blank page has no words for Vision to find (Dilla Time: a Rhodes piano on page 207). A few
-        # such pages in a book that Vision reads are pictures; a book where most pages fail is vertical Japanese,
-        # which Vision cannot read, so those stay pending.
+        # A photo or a blank page has no words for Vision to find (Dilla Time: a Rhodes piano on page 207). In a book
+        # Vision reads on most pages, such pages are pictures, even many of them in a travel book; a book where most
+        # pages fail is vertical Japanese, which Vision cannot read, so those stay pending.
         blank = [image for image, error in failed if NO_TEXT in str(error)]
-        if blank and models == [VISION] and len(blank) <= PICTURE_SHARE * len(images):
+        if blank and models == [VISION] and len(blank) < PICTURE_SHARE * len(images):
             for image in blank:
                 image.with_suffix('.txt').write_text('![Picture]()', encoding='utf-8')
             record_sources(args.folder, [(image.stem, PICTURE) for image in blank])
