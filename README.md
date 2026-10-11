@@ -62,6 +62,14 @@ A failure is one of two kinds, set by check name in `RULES` in `book.py`. A book
 
 `KINDLE_APP_OK=1 venv/bin/python capture_app.py ~/Downloads/kindle/books.tsv` captures the listed books parked as `kindle_app_only` from the Kindle for Mac app, only when Laiken asks for it (the capture hook blocks it otherwise), and records them as captured; the convert job converts them like any other book.
 
+## Cases
+
+Every failure that parks a book or pauses a job leaves a case, so the failure can be studied and replayed without the Mac. `cases.py` writes it to `~/Downloads/kindle/cases/<YYYYmmddTHHMMSS>-<ASIN>-<stage>/`: `case.json` (the book, the stage, the failed checks and error, the attempt, every stage version, the checkout's commit, and whether the failure was the book's or systemic), the capture's `trace.jsonl`, `dom-probe.json`, `capture.json`, `positions.json` and `report.json` when they exist, and at most three page images: the page a failed check points at (with its text for a convert check), the first and the last. A case stays under 5 MB; an image that would pass that is left out and named in `skipped`. The same book failing the same checks with the same versions again leaves no new case.
+
+Each case is then copied to `KINDLE_CASES_FOLDER` in `config.env`, by default `Kindle_cases` beside `GOOGLE_DRIVE_FOLDER`, so Drive syncs it to where the cloud can read it. With no Drive configured, or when the copy fails, the case stays only on the Mac.
+
+A case copied into `fixtures/cases/` becomes a regression test: `test_cases.py` feeds the observations of its `trace.jsonl` through `extension/policy.js` (`node scripts/replay_trace.mjs <trace.jsonl>`) and checks that the actions match the ones the Mac recorded.
+
 ## Audiobook
 
 `md2audio.py` reads the Markdown aloud with a macOS `say` voice and writes one `.m4a` with a chapter marker per chapter. The voice and speed follow the book's language: Kyoko (Enhanced) at 220 words per minute when kana and kanji outnumber English words, Zoe (Premium) at 170 otherwise. `--voice` and `--rate` override them. It needs `ffmpeg` (`brew install ffmpeg`) and nothing from `venv`. Download the voices once in System Settings → Accessibility → Spoken Content → System Voice → Manage Voices, or pass another with `--voice`, e.g. `--voice Kyoko` for the built-in one.

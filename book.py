@@ -5,6 +5,7 @@
     <root>/<ASIN>/failure.<stage>.json  a stage that failed on this book: the checks, the version, and whether to retry
     <root>/<ASIN>/pages/                the capture (page images, capture.json) and what the converter writes beside it
     <root>/pause.<job>.json             a job paused for every book (a systemic failure), with when it resumes
+    <root>/cases/<id>/                  the evidence of a parked book or a paused job, for replay (cases.py)
 
 Book.state() is Ready(stage), Parked(failure) or Done. A stage's version is the sha256 of its own source files, so a
 fix to the converter makes every book Ready for conversion again, and a book parked on a check is retried once the
@@ -21,6 +22,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+import cases
 
 HERE = Path(__file__).resolve().parent
 ROOT = Path.home() / 'Downloads' / 'kindle'
@@ -325,8 +328,24 @@ class Library:
         return max(outcomes, default=None)
 
 
-def record_failure(library, books, book, stage, checks, error, upstream=None, attempt=1, current=None, now=None):
-    """Record what a stage found wrong, by the RULES table. Returns 'paused' or 'parked' or 'retry'."""
+def leave_case(library, book, stage, checks, error, attempt, kind, current, now, config):
+    """The case of a parked book or a paused job, copied to Drive. Evidence, not state: a case that cannot be written
+    is reported in the log and the failure stays recorded."""
+    try:
+        case = cases.write_case(book, stage, {'checks': list(checks), 'error': error, 'attempt': attempt, 'kind': kind},
+                                library.root, versions=current, now=now)
+    except Exception as e:
+        print(f'No case written for {book.asin} {stage}: {type(e).__name__}: {e}', flush=True)
+        return None
+    if case:
+        cases.publish_case(case, config or {})
+    return case
+
+
+def record_failure(library, books, book, stage, checks, error, upstream=None, attempt=1, current=None, now=None,
+                   config=None):
+    """Record what a stage found wrong, by the RULES table, and leave a case (cases.py) unless the book is captured
+    again. config holds the Drive folders the case is copied to. Returns 'paused' or 'parked' or 'retry'."""
     current = current or versions()
     now = time.time() if now is None else now
     rule = classify(checks)
@@ -335,6 +354,7 @@ def record_failure(library, books, book, stage, checks, error, upstream=None, at
         library.set_pause(job, {'stage': stage, 'checks': list(checks), 'reason': error, 'book': book.asin,
                                 'waits_on': stage, 'version': current[stage],
                                 'until': rule.resume(error, now) if rule.resume else None})
+        leave_case(library, book, stage, checks, error, attempt, SYSTEMIC, current, now, config)
         return 'paused'
     retry = rule.recapture and attempt <= RECAPTURES
     previous = library.last_outcome(stage, books, skip=book.asin) if rule.breaker else None
@@ -352,5 +372,9 @@ def record_failure(library, books, book, stage, checks, error, upstream=None, at
                 'version': current[waits_on], 'until': None,
                 'reason': f'{", ".join(repeated)} failed on {previous[3]} and {book.asin} in a row; waiting for new '
                           f'{"" if waits_on == "code" else blamed + " "}code'})
+            leave_case(library, book, stage, checks, error, attempt, SYSTEMIC, current, now, config)
             return 'paused'
-    return 'retry' if retry else 'parked'
+    if retry:
+        return 'retry'
+    leave_case(library, book, stage, checks, error, attempt, BOOK, current, now, config)
+    return 'parked'

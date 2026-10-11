@@ -62,9 +62,9 @@ def home(tmp_path):
     return tmp_path
 
 
-def step(home, job, now=NOON, lists=None):
+def step(home, job, now=NOON, lists=None, config=None):
     return kc_run.step(job, root=home / 'kindle', lists=lists or [home / 'books.tsv'], checkout=home / 'checkout',
-                       sleep=lambda s: None, now=lambda: now)
+                       sleep=lambda s: None, now=lambda: now, config=config or {})
 
 
 def state(home, asin):
@@ -99,6 +99,16 @@ def test_a_book_that_fails_its_checks_is_parked_and_the_list_goes_on(home, mac):
     parked = state(home, 'B1')
     assert parked.stage == 'convert' and parked.failure['checks'] == ['headings']
     assert parked.failure['error'] == 'headings: headings on B1'
+
+
+def test_a_parked_book_leaves_a_case_on_drive_with_its_report_and_pages(home, mac):
+    mac.converts['B1'] = [['headings']]
+    step(home, 'capture')
+    assert step(home, 'convert', config={'KINDLE_CASES_FOLDER': str(home / 'Kindle_cases')}) == 'parked: B1'
+    copied = sorted((home / 'Kindle_cases').iterdir())
+    assert [p.name for p in copied] == [f'{datetime.fromtimestamp(NOON).strftime("%Y%m%dT%H%M%S")}-B1-convert']
+    assert sorted(p.name for p in copied[0].iterdir()) == ['case.json', 'page_0001.png', 'report.json']
+    assert json.loads((copied[0] / 'case.json').read_text())['checks'] == ['headings']
 
 
 def test_an_unusable_capture_is_captured_once_more_then_the_book_is_parked(home, mac):

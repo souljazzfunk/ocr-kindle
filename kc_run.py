@@ -52,7 +52,7 @@ def capture(library, listed, book, ready, current, args):
     title, failure = capture_book.capture(book.asin, book.title, book.domain, folder, recapture=ready.recapture)
     if failure:
         return record_failure(library, listed, book, 'capture', failure['blocking_failures'], failure.get('error'),
-                              attempt=attempt, current=current, now=args.now)
+                              attempt=attempt, current=current, now=args.now, config=args.config)
     book.succeed('capture', {'pages': str(folder), 'title': title, 'attempt': attempt, 'via': 'extension',
                              'version': current['capture']})
     return 'captured'
@@ -65,7 +65,7 @@ def convert(library, listed, book, ready, current, args):
     if data['blocking_failures']:
         return record_failure(library, listed, book, 'convert', data['blocking_failures'],
                               data.get('error') or failed_checks(data), upstream=captured['at'],
-                              attempt=captured.get('attempt', 1), current=current, now=args.now)
+                              attempt=captured.get('attempt', 1), current=current, now=args.now, config=args.config)
     book.succeed('convert', {'report': str(Path(data['folder']) / 'report.json'), 'version': current['convert']},
                  upstream=captured['at'])
     return 'converted'
@@ -96,8 +96,8 @@ def progress_of(lists):
 
 
 def step(job, root=ROOT, lists=None, downloads=Path.home() / 'Downloads', model='vision', checkout=HERE,
-         sleep=time.sleep, now=time.time):
-    """Run one step of job. Returns what it did, for the log."""
+         sleep=time.sleep, now=time.time, config=None):
+    """Run one step of job. Returns what it did, for the log. config (default config.env) names the Drive folders."""
     library = Library(root)
     library.root.mkdir(parents=True, exist_ok=True)
     problem = pull_main(checkout)
@@ -116,7 +116,8 @@ def step(job, root=ROOT, lists=None, downloads=Path.home() / 'Downloads', model=
     if pause:
         sleep(IDLE_S)
         return f'paused: {pause["reason"]}'
-    options = argparse.Namespace(model=model, now=moment)
+    config = capture_book.load_config() if config is None else config
+    options = argparse.Namespace(model=model, now=moment, config=config)
     for book in listed:
         state = book.state(current)
         if isinstance(state, Ready) and state.stage in JOBS[job]:
@@ -126,7 +127,8 @@ def step(job, root=ROOT, lists=None, downloads=Path.home() / 'Downloads', model=
                 outcome = STEPS[state.stage](library, listed, book, state, current, options)
             except Exception as e:  # recorded like any other failure, so the book is parked with the reason
                 outcome = record_failure(library, listed, book, state.stage, ['crash'], f'{type(e).__name__}: {e}',
-                                         upstream=_upstream(book, state.stage), current=current, now=moment)
+                                         upstream=_upstream(book, state.stage), current=current, now=moment,
+                                         config=config)
             return f'{outcome}: {book.asin}'
     sleep(IDLE_S)
     return 'nothing to do'
