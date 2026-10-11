@@ -85,3 +85,14 @@ test('a book Cloud Reader can only send to the Kindle app is recognised', () => 
   assert.ok(appOnly('Kindle App Is Required\nThe book you’re trying to read can only be opened using Kindle app.\nBack to Library'));
   assert.ok(!appOnly('Page 1 of 120'));
 });
+
+const { heartbeat, withoutHeartbeat } = require('./pagemeta.js');
+
+test('the heartbeat in the tab title says the stage, position and visibility, and comes off cleanly', () => {
+  const once = heartbeat('In the Plex - Kindle', 'page', '37/540', 'hidden');
+  assert.strictEqual(once, '[kc page 37/540 hidden] In the Plex - Kindle');
+  assert.strictEqual(heartbeat(once, 'page', '38/540', 'visible'), '[kc page 38/540 visible] In the Plex - Kindle');
+  assert.strictEqual(withoutHeartbeat(once), 'In the Plex - Kindle');
+  assert.strictEqual(pickTitle([undefined, withoutHeartbeat(once)], 'B0'), 'In the Plex');
+  assert.strictEqual(heartbeat('Kindle', 'back', '', 'visible'), '[kc back ? visible] Kindle');
+});
