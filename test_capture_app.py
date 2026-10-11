@@ -269,10 +269,14 @@ def test_a_probe_records_what_the_new_app_shows_before_and_after_opening_a_book(
     assert 'Close' in (folder / 'ui-book.txt').read_text()
     # The sheet is closed and the page clicked once, and each state is kept (probe of 2026-10-11 17:51).
     assert 'Close' not in (folder / 'ui-reader.txt').read_text() and 'AXSlider' in (folder / 'ui-chrome.txt').read_text()
-    assert (folder / 'open.txt').read_text() == 'opened\nsheet: pressed\npage: pressed'
+    assert (folder / 'open.txt').read_text().startswith('opened\nsheet: pressed\npage: pressed')
     assert any('"Close"' in c and 'AXPress' in c for c in app.calls) and any('click at' in c for c in app.calls)
     assert ['screencapture', '-x', *(str(folder / f'chrome-{n}.png') for n in (1, 2, 3))] in calls
     assert json.loads((folder / 'probe.json').read_text())['downloaded'] == ['B2_EBOK']
+    # Runs of 2026-10-11 19:02 and 19:11: the slider ignored everything, so the probe also records what the
+    # Table of Contents and More options buttons open.
+    assert (folder / 'ui-toc.txt').exists() and (folder / 'ui-more.txt').exists()
+    assert 'Table of Contents: pressed' in (folder / 'open.txt').read_text() and 'More options: pressed' in (folder / 'open.txt').read_text()
     shots = ['screencapture', '-x', *(str(folder / f'screen-{n}.png') for n in (1, 2, 3))]  # every display
     assert shots in calls and any('AXPress' in c for c in app.calls)
 
