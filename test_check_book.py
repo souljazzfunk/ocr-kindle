@@ -313,3 +313,20 @@ def test_a_book_that_passed_starts_the_wiki_watcher_and_a_failed_one_does_not(tm
     assert capture_book.start_wiki_ingest({'blocking_failures': []}, tmp_path / 'missing.sh', spawn) is None
     assert capture_book.start_wiki_ingest({'blocking_failures': []}, watch, spawn) == 'proc'
     assert started == [(['/bin/bash', str(watch)], True)]
+
+
+def test_only_the_runner_copies_a_book_to_drive_and_a_trial_conversion_does_not(tmp_path):
+    # 2026-10-11: img2txt.py --layout sonnet on AI for Educators, run only to compare, replaced the book on Drive.
+    from img2txt import write_book
+    drive = tmp_path / 'Kindle_md'
+    drive.mkdir()
+    folder = tmp_path / 'AI for Educators'
+    folder.mkdir()
+    (folder / 'page_0001.png').write_bytes(b'')
+    (folder / 'page_0001.txt').write_text('# One\n\n' + BODY, encoding='utf-8')
+    write_book(folder, 'AI for Educators')
+    assert (folder / 'AI for Educators.md').exists() and not list(drive.iterdir())
+    copied = capture_book.publish(folder, 'AI for Educators', {'GOOGLE_DRIVE_FOLDER': str(drive)})
+    assert copied == drive / 'AI for Educators.md' and copied.read_text(encoding='utf-8').startswith('# One')
+    assert capture_book.publish(folder, 'AI for Educators', {}) is None
+    assert capture_book.publish(folder, 'AI for Educators', {'GOOGLE_DRIVE_FOLDER': str(tmp_path / 'gone')}) is None
