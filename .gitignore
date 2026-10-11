@@ -6,6 +6,7 @@ config.env
 *.json
 !extension/manifest.json
 !.claude/settings.json
+!fixtures/kindle/expect.json
 service-account*.json
 credentials/
 
