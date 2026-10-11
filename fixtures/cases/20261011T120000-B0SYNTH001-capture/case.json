@@ -1,0 +1,29 @@
+{
+ "id": "20261011T120000-B0SYNTH001-capture",
+ "asin": "B0SYNTH001",
+ "title": "Synthetic Stuck Reader",
+ "domain": "read.amazon.com",
+ "stage": "capture",
+ "kind": "book",
+ "checks": [
+  "end_position",
+  "capture_stop"
+ ],
+ "error": "the reader stayed on page 5 for 30 turns",
+ "attempt": 2,
+ "versions": {
+  "capture": "e8fcf9923900",
+  "convert": "46f32337c189",
+  "publish": "46f32337c189",
+  "code": "2296c3edf18a"
+ },
+ "commit": "f1f11d43d5e2f2639eab5c82dc5188f40b4cbaff",
+ "files": [
+  "trace.jsonl",
+  "capture.json",
+  "positions.json",
+  "page_0003.png",
+  "page_0001.png"
+ ],
+ "skipped": []
+}
