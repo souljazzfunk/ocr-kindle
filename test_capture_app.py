@@ -170,6 +170,23 @@ CHROME = (READER + 'element|AXButton|||Close Book||524,194|40,40\n'
           'element|AXStaticText|||Location {at} of 2594 , 1%||974,999|100,10\n')
 
 
+def test_the_recent_book_whose_cover_has_no_frame_is_opened_from_the_tab_bar():
+    # Probe of 2026-10-11 18:42: the recently read book's cover is "0,1152|0,0"; the tab bar holds a button for it.
+    recent = (LIBRARY.replace('|1332,1279|147,220', '|0,1152|0,0')
+              + 'element|AXRadioButton|AXTabButton||For 91 Days In Tokyo|0|730,1958|46,70\n'
+              + 'element|AXRadioButton|AXTabButton||LIBRARY|1|866,1984|251,45\n')
+    app = App([recent, recent, READER])
+    clock = iter(range(0, 1000, 2))
+    assert capture_app.open_book('B2', 'For 91 Days In Tokyo', script=app, run=lambda c: None,
+                                 clock=lambda: next(clock), sleep=lambda s: None) == ''
+    presses = [c for c in app.calls if 'AXPress' in c]
+    assert len(presses) == 1 and 'AXRadioButton' in presses[0] and '"For 91 Days In Tokyo"' in presses[0]
+    app = App([recent])
+    problem = capture_app.open_book('B2', 'For 91 Days In Tokyo', script=app, run=lambda c: None,
+                                    clock=lambda: next(clock), sleep=lambda s: None)
+    assert any('click at {753, 1993}' in c for c in app.calls) and 'at 0,1152 0,0' in problem and "tab bar's button at 730,1958" in problem
+
+
 def test_a_reader_left_open_is_closed_with_its_close_book_button_never_file_close():
     # Probe of 2026-10-11 17:56: the app reopens into the last book; File > Close (Cmd+W) quits the app.
     # With the toolbar hidden the tree holds only groups (probe of 18:04), and in the pilot one click did not show it.
