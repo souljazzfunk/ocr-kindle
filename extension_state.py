@@ -1,9 +1,10 @@
 """What the browser extension on this Mac is, compared with this repository's main branch.
 
-The browser loads the unpacked extension straight from this checkout's extension/ folder, so whatever branch or
-local edit sits there is what captures. Twice on 2026-10-10 Brave ran code that was not on main (an ad-hoc
-#autocapture edit, then the unmerged extension-dom-probe branch). capture_book.py refuses to capture unless
-the folder matches origin/main, and checks the version each ZIP says it was made by.
+Chrome loads the unpacked extension straight from this checkout's extension/ folder, and reloads it from there when
+the channel reports another version, so whatever branch or local edit sits there is what captures. Twice on
+2026-10-10 Brave ran code that was not on main (an ad-hoc edit, then the unmerged extension-dom-probe branch).
+capture_book.py refuses to capture unless the folder matches origin/main, and checks the version each capture.json
+says it was made by.
 """
 
 import json
@@ -42,11 +43,11 @@ def _folder_problem(git):
     if behind:
         problems.append(f'extension/ differs from origin/main: {" ".join(behind.split())}')
     if problems:
-        return '; '.join(problems) + '. Run `git checkout main && git pull` here, then ask Laiken to reload the extension once.'
+        return '; '.join(problems) + '. Run `git checkout main && git pull` here; the extension reloads itself on its next poll.'
     return None
 
 
-def zip_version(folder):
+def capture_version(folder):
     path = Path(folder) / CAPTURE
     if not path.exists():
         return None

@@ -21,10 +21,10 @@ def check(command):
     """Returns the reason to block, or None."""
     if KINDLE_APP.search(command) and 'KINDLE_APP_OK=1' not in command:
         return ('Kindle for Mac app capture is off by default. Use the Cloud Reader extension in Chrome '
-                '(open -a "Google Chrome" \'https://read.amazon.com/?asin=<ASIN>#autocapture\'). '
+                '(venv/bin/python capture_book.py <ASIN> --title "<title>"). '
                 'Only if Laiken\'s own message asks for the Kindle app, prefix the command with KINDLE_APP_OK=1.')
     if BROWSER_RESTART.search(command):
-        return 'Never quit or restart Chrome or Brave; Laiken keeps using them. Close only the book tab when a capture ends.'
+        return 'Never quit or restart Chrome or Brave; Laiken keeps using them. The extension closes its own window when a capture ends.'
     return None
 
 

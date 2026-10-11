@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { pickTitle, appOnly } = require('./pagemeta.js');
+const { pickTitle, parsePosition, appOnly, parseLibraryGuess } = require('./pagemeta.js');
 
 test('the title element wins when it has text', () => {
   assert.strictEqual(pickTitle(['How to Write a Lot', 'Kindle'], 'B07HNMJV57'), 'How to Write a Lot');
@@ -19,66 +19,10 @@ test('nothing usable gives the old default name', () => {
   assert.strictEqual(pickTitle([], ''), 'kindle-book');
 });
 
-const { parsePosition, atStart } = require('./pagemeta.js');
-
 test('the footer position is read as page and page count', () => {
-  assert.deepStrictEqual(parsePosition('Page 75 of 120 ● 59%'), { n: 75, m: 120 });
+  assert.deepStrictEqual(parsePosition('Page 75 of 120 ● 59%'), { n: 75, m: 120 });
   assert.deepStrictEqual(parsePosition('Location 12 of 4021'), { n: 12, m: 4021 });
   assert.strictEqual(parsePosition('Learning reading speed...'), null);
-});
-
-test('a capture starts only at page 1, or where paging back stops when no page is shown', () => {
-  assert.strictEqual(atStart({ n: 75, m: 120 }, true), false); // AI for Educators reopened at its saved place
-  assert.strictEqual(atStart({ n: 1, m: 120 }, false), true);
-  assert.strictEqual(atStart(null, false), true);
-  assert.strictEqual(atStart(null, true), false);
-});
-
-const { turnGuard, TURNS_PER_PAGE, EXTRA_TURNS, STUCK_TURNS } = require('./pagemeta.js');
-
-test('page turns stop past the book length, so a capture cannot run on without end', () => {
-  const guard = turnGuard(552);
-  let stop = '';
-  let turns = 0;
-  while (!stop && turns < 10000) stop = guard({ n: (turns++ % 552) + 1, m: 552 });
-  assert.strictEqual(turns, TURNS_PER_PAGE * 552 + EXTRA_TURNS + 1);
-  assert.match(stop, /more than the 1706/);
-});
-
-test('paging back through pages that take more than one turn each is not cut off', () => {
-  // Automate the Boring Stuff on 1.5: from page 517 to page 12 took 603 turns, and a one-turn-per-page cap stopped it.
-  const guard = turnGuard(552);
-  let stop = '';
-  for (let turn = 0; turn < 603 && !stop; turn++) stop = guard({ n: Math.max(1, 517 - Math.floor(turn * 505 / 603)), m: 552 });
-  assert.strictEqual(stop, '');
-});
-
-test('a reader stuck on one page stops the turns; screens without a number do not count as stuck', () => {
-  const stuck = turnGuard(552);
-  const results = Array.from({ length: STUCK_TURNS + 1 }, () => stuck({ n: 517, m: 552 })); // seen once, then 30 turns that did not move
-  assert.ok(results.slice(0, -1).every((r) => r === ''));
-  assert.match(results.at(-1), /stayed on page 517/);
-  const unnumbered = turnGuard(552);
-  assert.ok(Array.from({ length: STUCK_TURNS * 2 }, () => unnumbered(null)).every((r) => r === ''));
-  // A long figure spread over a few screens of one page number is fine.
-  const figure = turnGuard(552);
-  assert.ok([5, 5, 5, 6, 7].every((n) => figure({ n, m: 552 }) === ''));
-});
-
-test('new screens under one page number are progress, not a stuck reader', () => {
-  // Facing the Mountain on 1.6: the notes ran past 30 screens all showing page 540 of 540.
-  const notes = turnGuard(540);
-  assert.ok(Array.from({ length: STUCK_TURNS * 2 }, () => notes({ n: 540, m: 540 }, true)).every((r) => r === ''));
-  const stuck = turnGuard(540);
-  const results = Array.from({ length: STUCK_TURNS + 1 }, () => stuck({ n: 540, m: 540 }, false));
-  assert.match(results.at(-1), /stayed on page 540/);
-});
-
-test('an unknown length still has a cap', () => {
-  const guard = turnGuard(undefined);
-  let turns = 0;
-  while (!guard(null)) turns++;
-  assert.strictEqual(turns, TURNS_PER_PAGE * 3000 + EXTRA_TURNS);
 });
 
 test('a book Cloud Reader can only send to the Kindle app is recognised', () => {
@@ -86,27 +30,24 @@ test('a book Cloud Reader can only send to the Kindle app is recognised', () => 
   assert.ok(!appOnly('Page 1 of 120'));
 });
 
-const { heartbeat, withoutHeartbeat } = require('./pagemeta.js');
+function element(attributes, text = '', alt = null) {
+  return {
+    getAttribute: (name) => attributes[name] ?? null,
+    textContent: text,
+    querySelector: () => (alt === null ? null : { getAttribute: () => alt }),
+  };
+}
 
-test('the heartbeat in the tab title says the stage, position and visibility, and comes off cleanly', () => {
-  const once = heartbeat('In the Plex - Kindle', 'page', '37/540', 'hidden');
-  assert.strictEqual(once, '[kc page 37/540 hidden] In the Plex - Kindle');
-  assert.strictEqual(heartbeat(once, 'page', '38/540', 'visible'), '[kc page 38/540 visible] In the Plex - Kindle');
-  assert.strictEqual(withoutHeartbeat(once), 'In the Plex - Kindle');
-  assert.strictEqual(pickTitle([undefined, withoutHeartbeat(once)], 'B0'), 'In the Plex');
-  assert.strictEqual(heartbeat('Kindle', 'back', '', 'visible'), '[kc back ? visible] Kindle');
-});
-
-const { contentsControl, startEntry } = require('./pagemeta.js');
-
-test('page 1 is reached through the contents: its control is found by label', () => {
-  assert.strictEqual(contentsControl(['Previous page', 'Next page', 'Table of Contents', 'Settings']), 2);
-  assert.strictEqual(contentsControl(['目次', 'メモ']), 0);
-  assert.strictEqual(contentsControl(['Previous page', 'Contents and notes']), -1);
-});
-
-test('the contents entry nearest the start is a cover or beginning entry, else the first one', () => {
-  assert.strictEqual(startEntry(['', 'Chapter 1', 'Cover', 'Contents']), 2);
-  assert.strictEqual(startEntry(['', 'Introduction', 'Chapter 1']), 1);
-  assert.strictEqual(startEntry([]), -1);
+test('the library guess takes each ASIN once, with the best title it carries', () => {
+  const doc = { querySelectorAll: () => [
+    element({ id: 'cover-B07HNMJV57' }, '', 'How to Write a Lot'),
+    element({ 'data-asin': 'B07HNMJV57' }, 'ignored, already titled'),
+    element({ href: '/?asin=B0ZEROSOLD' }),
+    element({ href: '/?asin=B0ZEROSOLD', 'aria-label': 'Zero to Sold' }),
+    element({ id: 'library-header' }, 'Library'),
+  ] };
+  assert.deepStrictEqual(parseLibraryGuess(doc), [
+    { asin: 'B07HNMJV57', title: 'How to Write a Lot' },
+    { asin: 'B0ZEROSOLD', title: 'Zero to Sold' },
+  ]);
 });

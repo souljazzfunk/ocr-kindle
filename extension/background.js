@@ -1,73 +1,121 @@
-importScripts('autostart.js', 'download.js');
+importScripts('job.js');
 
-// active lives in session storage, so a browser restart (which ends any capture) clears it.
-async function loadState() {
-  const { active = null } = await chrome.storage.session.get('active');
-  const { saved = [] } = await chrome.storage.local.get('saved');
-  return { active, saved };
+// The channel run by capture_book.py (channel.py, KC_PORT there). Only this worker talks to it.
+const CHANNEL = 'http://127.0.0.1:8765';
+const FAST_MS = 2000; // polling while a job runs, and for a minute after, when the next book usually follows
+const AFTER_JOB_MS = 60000;
+const VERSION = chrome.runtime.getManifest().version;
+
+// active lives in session storage, so a worker woken again mid-job still knows its tab and window.
+const loadActive = async () => (await chrome.storage.session.get('active')).active ?? null;
+const storeActive = (active) => chrome.storage.session.set({ active });
+let opening = false;
+let ticking = false;
+let fastUntil = 0;
+
+async function post(path, init) {
+  const response = await fetch(`${CHANNEL}${path}`, { method: 'POST', ...init });
+  if (!response.ok) throw new Error(`${path} answered ${response.status}: ${await response.text()}`);
 }
 
-async function storeState({ active, saved }) {
-  await chrome.storage.session.set({ active });
-  await chrome.storage.local.set({ saved });
+async function endJob(active) {
+  await storeActive(null);
+  fastUntil = Date.now() + AFTER_JOB_MS;
+  if (active) await chrome.windows.remove(active.windowId).catch(() => {});
 }
 
-// Claims from two tabs can arrive together; handle them one at a time.
-let queue = Promise.resolve();
-function update(change) {
-  const next = queue.then(async () => {
-    const result = change(await loadState());
-    await storeState(result.state ?? result);
-    return result;
-  });
-  queue = next.catch(() => {});
-  return next;
+async function openJob(job) {
+  opening = true;
+  try {
+    // A normal window of its own, not minimized and not a background tab, so the reader renders and its timers run.
+    const win = await chrome.windows.create({ url: readerUrl(job), focused: false, state: 'normal' });
+    await storeActive({ job, tabId: win.tabs[0].id, windowId: win.id, handed: false });
+  } finally {
+    opening = false;
+  }
 }
 
-chrome.action.onClicked.addListener((tab) => chrome.tabs.sendMessage(tab.id, 'toggle'));
+async function poll() {
+  let reply = null;
+  try {
+    reply = await (await fetch(`${CHANNEL}/job?v=${encodeURIComponent(VERSION)}`)).json();
+  } catch (e) {
+    // No channel: nothing is being captured right now.
+  }
+  const active = await loadActive();
+  const { lastReload = 0 } = await chrome.storage.local.get('lastReload');
+  const step = pollStep(active, reply, VERSION, Date.now(), lastReload);
+  if (step === 'reload') {
+    await chrome.storage.local.set({ lastReload: Date.now() });
+    chrome.runtime.reload();
+  } else if (step === 'open') {
+    await openJob(reply.job);
+  } else if (step === 'end') {
+    await endJob(active); // the channel dropped it (stalled, or restarted); a new job opens on the next poll
+  }
+}
 
-chrome.runtime.onMessage.addListener((msg, sender, reply) => {
-  const tabId = sender.tab.id;
-  if (msg.badge) chrome.action.setBadgeText({ tabId, text: msg.badge });
-  if (msg.claim) {
-    update((state) => claimCapture(state, { tabId, ...msg.claim })).then(({ ok, reason }) => reply({ ok, reason }));
-    return true;
+async function tick() {
+  if (ticking) return;
+  ticking = true;
+  try {
+    for (;;) {
+      await poll();
+      if (!(await loadActive()) && Date.now() >= fastUntil) break;
+      await new Promise((r) => setTimeout(r, FAST_MS));
+    }
+  } finally {
+    ticking = false;
   }
-  if (msg.finish) {
-    update((state) => finishCapture(state, { tabId, ...msg.finish }));
-    const close = tabToClose({ tabId, ...msg.finish });
-    if (close !== null) chrome.tabs.remove(close);
+}
+
+async function forward(message, active) {
+  if (message.kc === 'page') {
+    const png = await (await fetch(message.png)).blob();
+    const text = btoa(Array.from(new TextEncoder().encode(message.text || ''), (b) => String.fromCharCode(b)).join(''));
+    await post(`/page?job=${message.job}&n=${message.n}`, { body: png, headers: {
+      'Content-Type': 'image/png', 'X-Position': message.position, 'X-Text': text, 'X-Sha': message.sha } });
+    return;
   }
-  if (msg.download) {
-    save(msg.download).then(() => reply({ ok: true }), (e) => reply({ ok: false, reason: String(e) }));
-    return true;
-  }
+  await post('/event', { body: JSON.stringify(message.event), headers: { 'Content-Type': 'application/json' } });
+  if (['done', 'refused', 'library'].includes(message.event.type)) await endJob(active);
+}
+
+chrome.runtime.onMessage.addListener((message, sender, reply) => {
+  (async () => {
+    const active = await loadActive();
+    const mine = active && active.tabId === sender.tab?.id;
+    if (message.kc === 'job') {
+      if (opening) return null;
+      if (!mine || active.handed) return { none: true }; // a reload of the job's tab does not start it twice
+      await storeActive({ ...active, handed: true });
+      return active.job;
+    }
+    if (!mine) return { ok: false, reason: 'not the job tab' };
+    try {
+      await forward(message, active);
+      return { ok: true };
+    } catch (e) {
+      await endJob(active);
+      return { ok: false, reason: String(e) };
+    }
+  })().then(reply);
+  return true;
 });
 
-// Resolves once the download is over, so the tab keeps its blob URL alive until then.
-// Downloads that end are noted from before the download starts, so a quick finish is not missed.
-async function save({ url, filename }) {
-  const ended = new Map();
-  let id;
-  let finish;
-  const over = new Promise((resolve) => { finish = resolve; });
-  const done = (delta) => {
-    const state = delta.state?.current;
-    if (state === 'complete' || state === 'interrupted') ended.set(delta.id, state);
-    if (ended.has(id)) finish(ended.get(id));
-  };
-  chrome.downloads.onChanged.addListener(done);
-  try {
-    id = await chrome.downloads.download(downloadOptions(url, filename));
-    if (ended.has(id)) finish(ended.get(id));
-    const state = await over;
-    if (state !== 'complete') throw new Error(`download ${id} was ${state}`);
-  } finally {
-    chrome.downloads.onChanged.removeListener(done);
-  }
+async function abandon(tabId, reason) {
+  const active = await loadActive();
+  if (!active || active.tabId !== tabId) return;
+  await post('/event', { body: JSON.stringify({ job: active.job.id, type: 'refused', reason }),
+    headers: { 'Content-Type': 'application/json' } }).catch(() => {});
+  await endJob(active);
 }
 
-// A closed or reloaded tab has lost its capture, so it no longer holds the lock.
-const release = (tabId) => update((state) => finishCapture(state, { tabId, asin: '', pages: 0 }));
-chrome.tabs.onRemoved.addListener(release);
-chrome.tabs.onUpdated.addListener((tabId, info) => { if (info.status === 'loading') release(tabId); });
+chrome.tabs.onRemoved.addListener((tabId) => abandon(tabId, 'the reader tab was closed'));
+chrome.tabs.onUpdated.addListener((tabId, info) => {
+  if (info.url && /\/ap\/signin/.test(info.url)) abandon(tabId, 'signed out of Amazon: the reader went to the sign-in page');
+});
+
+chrome.alarms.onAlarm.addListener(tick);
+chrome.alarms.create('poll', { periodInMinutes: 0.5 });
+tick();

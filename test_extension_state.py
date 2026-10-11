@@ -34,18 +34,18 @@ def test_an_ad_hoc_local_edit_is_refused():
     assert 'local changes in extension/: M extension/content.js' in problem
 
 
-def test_capture_refuses_before_opening_brave(monkeypatch, tmp_path):
+def test_capture_refuses_before_offering_the_job(monkeypatch, tmp_path):
     monkeypatch.setattr(capture_book, 'folder_problem', lambda: 'branch is extension-dom-probe, not main')
-    monkeypatch.setattr(capture_book, 'open_in_browser', lambda *a: pytest.fail('opened Brave'))
+    monkeypatch.setattr(capture_book, 'channel', lambda: pytest.fail('offered the job'))
     with pytest.raises(RuntimeError, match='not main'):
         capture_book.convert('B1', downloads=tmp_path)
 
 
-def test_version_check_names_a_brave_that_was_not_reloaded(tmp_path):
+def test_version_check_names_an_extension_that_did_not_reload(tmp_path):
     assert not capture_book.version_check(tmp_path, expected='1.4').ok  # no capture.json: the 1.3 ZIPs of 2026-10-10
     (tmp_path / 'capture.json').write_text(json.dumps({'extension_version': '1.3'}))
     check = capture_book.version_check(tmp_path, expected='1.4')
-    assert not check.ok and 'reload the extension' in check.detail
+    assert not check.ok and 'did not reload itself' in check.detail
     (tmp_path / 'capture.json').write_text(json.dumps({'extension_version': '1.4'}))
     assert capture_book.version_check(tmp_path, expected='1.4').ok
 
