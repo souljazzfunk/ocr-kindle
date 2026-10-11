@@ -86,27 +86,44 @@ def capture(folder, script_path=HERE / 'kindle2img.applescript', run=capture_boo
 
 
 # What the app's window holds, read through System Events: role, title, description and value of every element, plus
-# the menu bar. The new Kindle app (7.40, "Amazon Kindle") shows no book title in its window name and has no Go
+# the menu bar. The elements are resolved first (`set elems to entire contents of w`, `contents of e`): read through
+# the `repeat with e in entire contents of w` reference chain, every property failed with "Can't make «class role»
+# ... into type Unicode text" (2026-10-11), which looked like an opaque window and was only the script. The new Kindle app (7.40, "Amazon Kindle") shows no book title in its window name and has no Go
 # menu, so the capture steps are written from this dump rather than guessed (Laiken chose the new app, 2026-10-11).
 UI_DUMP = '''
+on txt(x)
+    if x is missing value then return ""
+    try
+        set AppleScript's text item delimiters to ","
+        return x as text
+    on error
+        return "?"
+    end try
+end txt
 tell application "System Events" to tell process "Kindle"
     set out to "frontmost=" & (frontmost as text) & linefeed
     set out to out & "windows=" & (count of windows) & linefeed
-    repeat with w in windows
-        set out to out & "window|" & (name of w) & "|" & (position of w as text) & "|" & (size of w as text) & linefeed
-        repeat with e in entire contents of w
+    set wins to every window
+    repeat with w in wins
+        set w to contents of w
+        set out to out & "window|" & my txt(name of w) & "|" & my txt(position of w) & "|" & my txt(size of w) & linefeed
+        set elems to entire contents of w
+        repeat with e in elems
+            set e to contents of e
             try
-                set out to out & "element|" & (role of e) & "|" & (subrole of e) & "|" & (title of e) & "|" & (description of e) & "|" & (value of e as text) & "|" & (position of e as text) & "|" & (size of e as text) & linefeed
+                set out to out & "element|" & my txt(role of e) & "|" & my txt(subrole of e) & "|" & my txt(title of e) & "|" & my txt(description of e) & "|" & my txt(value of e) & "|" & my txt(position of e) & "|" & my txt(size of e) & linefeed
             on error m
                 set out to out & "element|?|" & m & linefeed
             end try
         end repeat
     end repeat
     repeat with b in menu bar items of menu bar 1
-        set out to out & "menu|" & (name of b) & linefeed
+        set b to contents of b
+        set out to out & "menu|" & my txt(name of b) & linefeed
         try
             repeat with i in menu items of menu 1 of b
-                set out to out & "item|" & (name of b) & "|" & (name of i) & "|" & (enabled of i as text) & linefeed
+                set i to contents of i
+                set out to out & "item|" & my txt(name of b) & "|" & my txt(name of i) & "|" & my txt(enabled of i) & linefeed
             end repeat
         end try
     end repeat
@@ -124,11 +141,14 @@ def probe(asin, folder, script=osascript, run=capture_book.run, sleep=time.sleep
     sleep(3)
     _, before, err = script(UI_DUMP)
     (folder / 'ui-library.txt').write_text(before or err, encoding='utf-8')
-    run(['open', f'kindle://book?action=open&asin={asin}'])
+    # On 2026-10-11 a plain `open kindle://` left the app behind the window Laiken was typing in; -a names it.
+    run(['open', '-a', 'Amazon Kindle', f'kindle://book?action=open&asin={asin}'])
     sleep(10)
     script('tell application "Amazon Kindle" to activate')
     sleep(2)
-    run(['screencapture', '-x', str(folder / 'screen.png')])
+    # One file per display: with one file screencapture records only the main display, and on 2026-10-11 the Kindle
+    # window was on the other one (the Window menu offered "Move to BenQ EL2870U"), so screen.png showed no Kindle.
+    run(['screencapture', '-x', *(str(folder / f'screen-{n}.png') for n in (1, 2, 3))])
     _, after, err = script(UI_DUMP)
     (folder / 'ui-book.txt').write_text(after or err, encoding='utf-8')
     downloaded = sorted(p.name for p in ebooks.glob(f'*{asin}*')) if ebooks.exists() else []
@@ -173,7 +193,7 @@ def main(argv=None, env=os.environ, book=run_book):
         sys.exit(f'Not starting: the Kindle app is used only when Laiken asks for it; run with {OK_ENV}=1.')
     if args.probe:
         folder = probe(args.probe, args.downloads / 'kindle-probe' / args.probe)
-        print(f'Probe written to {folder}: screen.png, ui-library.txt, ui-book.txt, probe.json')
+        print(f'Probe written to {folder}: screen-<display>.png, ui-library.txt, ui-book.txt, probe.json')
         return
     try:
         # One run per list: two runs would each write back the whole progress file over the other's results.

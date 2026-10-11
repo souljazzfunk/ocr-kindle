@@ -135,8 +135,15 @@ def test_a_probe_records_what_the_new_app_shows_before_and_after_opening_a_book(
     assert (folder / 'ui-library.txt').read_text() == 'frontmost=true\nmenu|Kindle\n'
     assert 'page 1' in (folder / 'ui-book.txt').read_text()
     assert json.loads((folder / 'probe.json').read_text())['downloaded'] == ['B2_EBOK']
-    assert ['open', 'kindle://book?action=open&asin=B2'] in calls and any('screencapture' in c for c in calls)
-    assert calls.index(['open', 'kindle://book?action=open&asin=B2']) < calls.index(['screencapture', '-x', str(folder / 'screen.png')])
+    opened = ['open', '-a', 'Amazon Kindle', 'kindle://book?action=open&asin=B2']
+    shots = ['screencapture', '-x', *(str(folder / f'screen-{n}.png') for n in (1, 2, 3))]  # every display
+    assert opened in calls and calls.index(opened) < calls.index(shots)
+
+
+def test_the_ui_dump_resolves_elements_before_reading_them():
+    # 2026-10-11: read through the reference chain, every element's role failed to coerce; resolved first, they read.
+    assert 'set elems to entire contents of w' in capture_app.UI_DUMP and 'set e to contents of e' in capture_app.UI_DUMP
+    assert 'my txt(role of e)' in capture_app.UI_DUMP and 'on txt(x)' in capture_app.UI_DUMP
 
 
 def test_a_probe_needs_laikens_word_too(tmp_path):
