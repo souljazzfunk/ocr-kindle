@@ -306,6 +306,14 @@ def bring_front(script=osascript, sleep=time.sleep):
     return front or err
 
 
+def dismiss_overlays(script=osascript, sleep=time.sleep):
+    """Close a menu or sheet over the reader: Escape twice, then the sheet's Close button if one is in the tree."""
+    for _ in range(2):
+        script('tell application "System Events" to tell process "Kindle" to key code 53')  # Escape
+        sleep(1)
+    return dismiss_sheet(script, sleep)
+
+
 def ensure_library(script=osascript, sleep=time.sleep):
     """Bring the app to its library: a book left open (the app reopens into the last book, 2026-10-11 17:56) is closed
     with the reader's Close Book button. File > Close quits the app, so it is never used.
@@ -315,6 +323,11 @@ def ensure_library(script=osascript, sleep=time.sleep):
         return found, ''
     bring_front(script, sleep)
     found = show_chrome(script, sleep, found=found)
+    if not chrome_shown(found):
+        # The end of a book leaves an end-of-book sheet (rating, recommend, follow the author), and a share menu
+        # had opened over it (run of 2026-10-11 18:59, the book read to 99%); both hide the toolbar.
+        dismiss_overlays(script, sleep)
+        found = show_chrome(script, sleep)
     if not chrome_shown(found):
         return found, 'the Kindle app shows neither its library nor the reader toolbar after clicks on the page; it shows: ' + describe(found)
     _, pressed, _ = script(PRESS_TITLED.format(title='"Close Book"'))
