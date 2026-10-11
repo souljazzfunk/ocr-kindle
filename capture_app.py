@@ -247,23 +247,6 @@ def describe(found):
     return ', '.join(names[:12]) + (' …' if len(names) > 12 else '')
 
 
-SET_SLIDER = '''
-tell application "System Events" to tell process "Kindle"
-    set elems to entire contents of window 1
-    repeat with e in elems
-        set e to contents of e
-        try
-            if role of e is "AXSlider" and (title of e is "{bar}" or description of e is "{bar}") then
-                set value of e to 0
-                return "set"
-            end if
-        end try
-    end repeat
-    return "none"
-end tell
-'''.format(bar=PROGRESS_BAR)
-
-
 def chrome_shown(found):
     """The toolbar is in the tree. The reader's controls carry their names in the description, not the title
     (dump of 2026-10-11 18:04: element|AXSlider|||Reading Progress Bar|Location 1 , 1%|…), and the run of 18:09
@@ -338,24 +321,70 @@ def ensure_library(script=osascript, sleep=time.sleep):
     return found, f'the Kindle app is not showing its library (Close Book: {pressed}); it shows: ' + describe(found)
 
 
-def go_to_start(script=osascript, sleep=time.sleep):
-    """Back to the start of the open book: close the details sheet, show the toolbar, drag the Reading Progress Bar
-    to 0, read the footer's "Location N of M", then hide the toolbar again so the pages are captured bare.
+def slider_of(found):
+    return next((e for e in found if e['role'] == 'AXSlider' and PROGRESS_BAR in (e['title'], e['description'])), None)
+
+
+def _frame(e):
+    x, y = (int(v) for v in e['position'].split(','))
+    w, h = (int(v) for v in e['size'].split(','))
+    return x, y, w, h
+
+
+def click_track_start(slider, script=osascript, sleep=time.sleep, drag=None):
+    """Click the progress bar's track at its left end."""
+    if slider is None:
+        return 'no slider'
+    x, y, w, h = _frame(slider)
+    script(CLICK_AT.format(x=x + 2, y=y + h // 2))
+    return 'clicked the track start'
+
+
+def drag_knob_to_start(slider, script=osascript, sleep=time.sleep, drag=None):
+    """Drag the knob from where the slider's percentage puts it to the left end, with a real mouse drag."""
+    if slider is None:
+        return 'no slider'
+    x, y, w, h = _frame(slider)
+    m = re.search(r'(\d+)%', slider['value'])
+    knob = x + w * int(m.group(1)) // 100 if m else x + w // 2
+    try:
+        (drag or _quartz_drag)(knob, y + h // 2, x + 1, y + h // 2, sleep)
+    except Exception as e:  # pyobjc missing, or no event tap
+        return f'drag failed: {e}'
+    return 'dragged the knob'
+
+
+def _quartz_drag(x0, y0, x1, y1, sleep=time.sleep):
+    from Quartz import (CGEventCreateMouseEvent, CGEventPost, kCGEventLeftMouseDown, kCGEventLeftMouseDragged,
+                        kCGEventLeftMouseUp, kCGHIDEventTap, kCGMouseButtonLeft)
+    for kind, x, y in ((kCGEventLeftMouseDown, x0, y0), (kCGEventLeftMouseDragged, (x0 + x1) // 2, y1),
+                       (kCGEventLeftMouseDragged, x1, y1), (kCGEventLeftMouseUp, x1, y1)):
+        CGEventPost(kCGHIDEventTap, CGEventCreateMouseEvent(None, kind, (x, y), kCGMouseButtonLeft))
+        sleep(0.3)
+
+
+def go_to_start(script=osascript, sleep=time.sleep, drag=None):
+    """Back to the start of the open book: close the details sheet, show the toolbar, click and then drag the
+    Reading Progress Bar to its start, read the footer's "Location N of M", then hide the toolbar again.
     Returns '' or why it could not. Written from the probe of 2026-10-11 17:56, not guessed."""
     dismiss_sheet(script, sleep)
     found = show_chrome(script, sleep)
     if not chrome_shown(found):
         return 'the reader shows no toolbar after clicks on the page; it shows: ' + describe(found)
     where = location_of(found)
-    set_ = 'not needed'
-    if where is None or where[0] > 1:  # a book already at Location 1 (run of 2026-10-11 18:19) is not moved
+    tried = ['not needed']
+    # Setting the slider's value is not honoured (run of 2026-10-11 19:02: "slider: set" and the knob stayed at
+    # 13%, Location 185), so the slider's track is clicked at its left end, then the knob dragged there.
+    for move in (click_track_start, drag_knob_to_start):
+        if where is not None and where[0] <= 1:
+            break
         bring_front(script, sleep)
-        _, set_, _ = script(SET_SLIDER)
+        tried.append(move(slider_of(found), script, sleep, drag))
         sleep(3)
-        found = elements(script)
+        found = show_chrome(script, sleep)
         where = location_of(found)
-    if set_ not in ('set', 'not needed') or where is None or where[0] > 1:
-        return (f'could not go to the start (slider: {set_}, footer: '
+    if where is None or where[0] > 1:
+        return (f'could not go to the start (slider: {", ".join(tried)}, footer: '
                 f'{"Location %d of %d" % where if where else "no location"})')
     bring_front(script, sleep)
     reveal_chrome(script, sleep)  # the same click hides the toolbar again

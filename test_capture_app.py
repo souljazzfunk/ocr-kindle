@@ -218,26 +218,41 @@ def test_a_reader_left_open_is_closed_with_its_close_book_button_never_file_clos
     assert problem.startswith('the Kindle app is not showing its library (Close Book: pressed)')
 
 
-def test_the_start_is_reached_by_the_progress_bar_and_read_from_the_footer():
+def test_the_start_is_reached_by_clicking_the_progress_bar_track_and_read_from_the_footer():
     # Probe of 2026-10-11 17:56: the toolbar holds the Reading Progress Bar; the footer says "Location N of M , P%".
+    # Run of 19:02: setting the slider's value moved nothing, so the track is clicked at its left end (533+2, 954+23).
     app = App([READER, CHROME.format(at=12), CHROME.format(at=1), READER])
     assert capture_app.go_to_start(app, sleep=lambda s: None) == ''
-    assert sum('set value of e to 0' in c for c in app.calls) == 1 and sum('click at' in c for c in app.calls) == 2
-    slider = next(c for c in app.calls if 'set value of e to 0' in c)
-    assert 'description of e is "Reading Progress Bar"' in slider  # the name is in the description (run of 18:19)
+    assert sum('click at {535, 977}' in c for c in app.calls) == 1 and sum('click at' in c for c in app.calls) == 3
     # A book already at Location 1 is not moved (run of 2026-10-11 18:19 opened on the cover).
     app = App([CHROME.format(at=1), READER])
     assert capture_app.go_to_start(app, sleep=lambda s: None) == ''
-    assert not any('set value of e to 0' in c for c in app.calls)
+    assert sum('click at' in c for c in app.calls) == 1
     # The footer's total came back as 0 in the probe of 18:04; the start is judged by N alone.
     app = App([CHROME.format(at=12), CHROME.format(at=1).replace('of 2594', 'of 0'), READER])
     assert capture_app.go_to_start(app, sleep=lambda s: None) == ''
     app = App([READER, READER, READER, READER])
     assert 'no toolbar after clicks' in capture_app.go_to_start(app, sleep=lambda s: None)
-    app = App([READER, CHROME.format(at=12), CHROME.format(at=12)])
-    assert 'Location 12 of 2594' in capture_app.go_to_start(app, sleep=lambda s: None)
-    app = App([READER, CHROME.format(at=12), CHROME.format(at=1), CHROME.format(at=1)])
-    assert 'toolbar stayed' in capture_app.go_to_start(app, sleep=lambda s: None)
+    # When the click leaves the book where it was, the knob is dragged; here the drag cannot run, and both are named.
+    app = App([CHROME.format(at=12), CHROME.format(at=12), CHROME.format(at=12)])
+    drags = []
+    problem = capture_app.go_to_start(app, sleep=lambda s: None, drag=lambda *a: drags.append(a))
+    assert 'clicked the track start' in problem and 'dragged the knob' in problem and 'Location 12 of 2594' in problem
+    assert drags and drags[0][:4] == (533 + 980 * 1 // 100, 977, 534, 977)
+    # A drag that cannot run (no Quartz, no event tap) is named rather than raised.
+    def no_drag(*a):
+        raise RuntimeError('no event tap')
+    problem = capture_app.go_to_start(App([CHROME.format(at=12)] * 3), sleep=lambda s: None, drag=no_drag)
+    assert 'drag failed: no event tap' in problem
+
+
+def test_the_knob_is_dragged_from_its_percentage_to_the_track_start():
+    slider = {'role': 'AXSlider', 'title': '', 'description': 'Reading Progress Bar', 'value': 'Location 185 , 13%',
+              'position': '533,954', 'size': '980,46'}
+    drags = []
+    assert capture_app.drag_knob_to_start(slider, lambda t: (0, '', ''), lambda s: None,
+                                          drag=lambda *a: drags.append(a)) == 'dragged the knob'
+    assert drags[0][:4] == (533 + 980 * 13 // 100, 977, 534, 977)
 
 
 def test_a_probe_records_what_the_new_app_shows_before_and_after_opening_a_book(tmp_path):
