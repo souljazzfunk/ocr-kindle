@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 import capture_book
-from check_book import check_folder
+from check_book import Check, check_folder
 from img2txt import SOURCES
 
 BODY = ('The group became known as the Homebrew Computer Club, and it encapsulated the Whole Earth fusion between '
@@ -234,11 +234,14 @@ def test_a_book_that_failed_its_checks_is_not_copied_to_drive(tmp_path, monkeypa
     (folder / 'Book.md').write_text('# One\n\n' + BODY, encoding='utf-8')
     monkeypatch.setattr(capture_book, 'load_config', lambda: {'GOOGLE_DRIVE_FOLDER': str(drive)})
     monkeypatch.setattr(capture_book, 'run', lambda *a, **k: None)
-    monkeypatch.setattr(capture_book, 'correct', lambda f, t: ([capture_book.Check('headings', False, '0 headings')], 1))
+    monkeypatch.setattr(capture_book, 'correct', lambda f, t: ([Check('headings', False, '0 headings')], 1))
     monkeypatch.setattr(capture_book, 'start_wiki_ingest', lambda data: None)
-    data = capture_book._convert_folder('B0', 'Book', 'vision', folder, folder, False, False, 0)
+    data = capture_book.convert('B0', 'Book', source=folder)
     assert data['blocking_failures'] == ['headings']
     assert not list(drive.iterdir())
+    monkeypatch.setattr(capture_book, 'correct', lambda f, t: ([Check('headings', True, '1 heading')], 1))
+    assert capture_book.convert('B0', 'Book', source=folder)['blocking_failures'] == []
+    assert [p.name for p in drive.iterdir()] == ['Book.md']
 
 
 def test_index_letter_is_not_a_chapter_opening(tmp_path):
@@ -278,8 +281,8 @@ def test_a_code_book_without_code_blocks_is_caught_and_its_pages_read_again(tmp_
     assert 'code_blocks' not in by_name(check_folder(book(tmp_path, [BODY], md='# One\n\n' + BODY)))
 
 
-def offer(monkeypatch, result, seen=None):
-    """capture_book.convert with the channel answering result for the capture."""
+def offer(monkeypatch, result, seen=None, version=None):
+    """capture_book.convert with the channel answering result for the capture (made by extension version, if given)."""
     from channel import CaptureResult
     monkeypatch.setattr(capture_book, 'folder_problem', lambda: None)
 
@@ -287,6 +290,10 @@ def offer(monkeypatch, result, seen=None):
         if seen is not None:
             seen.append((asin, domain, folder, recapture))
         folder.mkdir(parents=True, exist_ok=True)
+        if result[0] == 'done':
+            (folder / 'page_0001.png').write_bytes(b'png')
+        if version:
+            (folder / 'capture.json').write_text(json.dumps({'extension_version': version, 'stopped': ''}))
         return CaptureResult(*result)
 
     monkeypatch.setattr(capture_book, 'channel', lambda: type('C', (), {'capture': staticmethod(capture)})())
@@ -300,24 +307,20 @@ def test_a_refused_capture_fails_with_the_extensions_reason(tmp_path, monkeypatc
 
 def test_a_book_cloud_reader_cannot_open_is_the_book_s_failure_not_the_browser_s(tmp_path, monkeypatch):
     # 2026-10-11: For 91 Days In Tokyo opened to "Kindle App Is Required" and the list waited an hour.
-    import capture_books
     offer(monkeypatch, ('refused', 'kindle app required: Cloud Reader cannot open this book'))
     data = capture_book.convert('B00S1MW0KM', 'For 91 Days In Tokyo', downloads=tmp_path)
     assert data['blocking_failures'] == ['kindle_app_only']
-    assert 'kindle_app_only' not in capture_books.STOP_CHECKS
-    assert capture_books.decide(data, 1) == 'failed'
+    offer(monkeypatch, ('refused', 'signed out of Cloud Reader'))
+    assert capture_book.convert('B00S1MW0KM', 'For 91 Days In Tokyo', downloads=tmp_path)['blocking_failures'] == ['signed_out']
 
 
 def test_a_stalled_or_unreached_capture_stops_with_its_own_check(tmp_path, monkeypatch):
-    import capture_books
     offer(monkeypatch, ('stalled', 'no page and no event for 5 minutes after 41 screens'))
     data = capture_book.convert('B07J4521M3', 'Python Crash Course', downloads=tmp_path)
     assert data['blocking_failures'] == ['capture_stall'] and '41 screens' in data['error']
-    assert capture_books.decide(data, 1) == 'recapture' and capture_books.decide(data, 2) == 'failed'
     offer(monkeypatch, ('unreachable', 'no worker asked for work in 90 s'))
     data = capture_book.convert('B07J4521M3', 'Python Crash Course', downloads=tmp_path)
     assert data['blocking_failures'] == ['extension_unreachable']
-    assert capture_books.decide(data, 1) == 'failed' and 'extension_unreachable' in capture_books.STOP_CHECKS
 
 
 def test_a_capture_lands_in_a_folder_named_by_the_list_title_and_its_version_is_checked(tmp_path, monkeypatch):
@@ -329,7 +332,11 @@ def test_a_capture_lands_in_a_folder_named_by_the_list_title_and_its_version_is_
     monkeypatch.setattr(capture_book, 'publish', lambda folder, title: None)
     data = capture_book.convert('B0ZERO', 'Zero to Sold: How to Start/Run', downloads=tmp_path)
     assert seen == [('B0ZERO', 'read.amazon.com', tmp_path / 'Zero to Sold_ How to Start_Run', False)]
-    assert data['blocking_failures'] == ['extension_version']  # the fake capture wrote no capture.json
+    assert data['blocking_failures'] == ['extension_version'] and ran == []  # the fake capture wrote no capture.json
+    # A capture by another version is set aside, never converted or mixed with the next capture.
+    assert [p.name.split(' (before')[0] for p in tmp_path.iterdir()] == ['Zero to Sold_ How to Start_Run']
+    assert not (tmp_path / 'Zero to Sold_ How to Start_Run').exists()
     # With no title from the list, the reader's title names the Markdown; the folder keeps the ASIN.
+    offer(monkeypatch, ('done', '', 'Zero to Sold_ How to Start', 3), seen, version=capture_book.repo_version())
     capture_book.convert('B0ZERO', None, downloads=tmp_path)
     assert seen[-1][2] == tmp_path / 'B0ZERO' and ran[-1][-2:] == ['--title', 'Zero to Sold_ How to Start']

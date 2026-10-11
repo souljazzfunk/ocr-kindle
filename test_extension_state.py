@@ -37,17 +37,27 @@ def test_an_ad_hoc_local_edit_is_refused():
 def test_capture_refuses_before_offering_the_job(monkeypatch, tmp_path):
     monkeypatch.setattr(capture_book, 'folder_problem', lambda: 'branch is extension-dom-probe, not main')
     monkeypatch.setattr(capture_book, 'channel', lambda: pytest.fail('offered the job'))
-    with pytest.raises(RuntimeError, match='not main'):
-        capture_book.convert('B1', downloads=tmp_path)
+    data = capture_book.convert('B1', downloads=tmp_path)
+    assert data['blocking_failures'] == ['extension_folder'] and data['error'].endswith('not main')
 
 
-def test_version_check_names_an_extension_that_did_not_reload(tmp_path):
-    assert not capture_book.version_check(tmp_path, expected='1.4').ok  # no capture.json: the 1.3 ZIPs of 2026-10-10
-    (tmp_path / 'capture.json').write_text(json.dumps({'extension_version': '1.3'}))
-    check = capture_book.version_check(tmp_path, expected='1.4')
-    assert not check.ok and 'did not reload itself' in check.detail
-    (tmp_path / 'capture.json').write_text(json.dumps({'extension_version': '1.4'}))
-    assert capture_book.version_check(tmp_path, expected='1.4').ok
+def test_a_capture_by_an_extension_that_did_not_reload_is_refused(tmp_path, monkeypatch):
+    from channel import CaptureResult
+    made_by = []
+
+    def capture(asin, domain, folder, recapture):
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / 'capture.json').write_text(json.dumps({'extension_version': made_by[-1]}))
+        return CaptureResult('done', '', 'Drive', 1)
+
+    monkeypatch.setattr(capture_book, 'folder_problem', lambda: None)
+    monkeypatch.setattr(capture_book, 'channel', lambda: type('C', (), {'capture': staticmethod(capture)})())
+    made_by.append('1.3')
+    title, failure = capture_book.capture('B1', 'Drive', 'read.amazon.com', tmp_path / 'Drive')
+    assert title is None and failure['blocking_failures'] == ['extension_version']
+    assert 'captured by extension 1.3' in failure['error'] and 'did not reload itself' in failure['error']
+    made_by.append(capture_book.repo_version())
+    assert capture_book.capture('B1', 'Drive', 'read.amazon.com', tmp_path / 'Drive') == ('Drive', None)
 
 
 def test_ci_requires_a_version_bump_when_the_extension_changes(tmp_path):

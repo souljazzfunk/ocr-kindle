@@ -4,7 +4,7 @@ Turn a Kindle book you own into one Markdown file for personal use (notes, study
 
 1. A Chrome extension pages through the book in Kindle Cloud Reader and sends every page image to `channel.py`, a small server on `127.0.0.1` that `capture_book.py` runs, which writes them into `~/Downloads/<book title>/`. The sample reader also has a screen-reader text layer, saved as each page's exact text; the full-book reader has none.
 2. `img2txt.py` OCRs only the pages that have no text yet, then joins all pages into `<book title>.md`.
-3. `capture_books.py` runs both for a list of books and checks every result (see **One command per book**).
+3. `kc_run.py` runs both, one step at a time, for every book of a list, and checks every result (see **The list**).
 
 The Kindle for Mac app is not part of this flow. `kindle2img.applescript` (last section) is used only when Laiken asks for it, and the capture hook blocks it otherwise.
 
@@ -43,7 +43,24 @@ venv/bin/python capture_book.py B07HNMJV57 --zip ~/Downloads/kindle-book.zip   #
 
 It captures the book through the channel (above; `capture_stall` when no page or event arrives for 5 minutes, `extension_unreachable` when no worker takes the job in 90 seconds, `capture_refused` or `kindle_app_only` when the extension refuses), runs `img2txt.py` (`--model vision` by default), then `check_book.py`. Each check names a fix: Vision pages without a layout from Gemini, and a page without text, re-run `img2txt.py`; headings that cannot be titles become plain text again, and duplicate pages, seams, foreign pages, dashes, stray symbols, homoglyphs, `Al` for `AI` and `'11` for `'ll` run `proofread.py --apply`. Proofreading runs last in each round, because re-reading pages would undo its fixes. No headings, a heading read as `Z`/`&`, and a chapter opening without a heading have no automatic fix, because reading the pages again gives the same result; they stay as failures. The fixes run and the checks repeat, up to three rounds. `report.json` in the book folder records every check, and the exit code is 1 while a blocking check still fails. `start_position` and `end_position` fail when `positions.json` (or, for older ZIPs, `dom-probe.json`) shows the capture began after page 1 or stopped short of the last page; a ZIP without `positions.json` gets the `positions` warning. A default output name (`kindle-book` or the ASIN) and zero text-layer pages are warnings: they do not block, and the ZIP's `dom-probe.json` says where to look. `check_book.py <folder>` runs the checks alone.
 
-`capture_books.py books.tsv` runs a list (`ASIN<TAB>title` per line) the same way and decides from the checks what to do next: a clean book is done and the next one starts; a book whose capture is unusable (`pages`, `text`, `start_position`, `end_position` or `capture_stall` failed) is captured again once; a book whose earlier run failed one of those checks is captured again too; a book the fixes could not clean is recorded as failed, with the check names, and the list goes on. `books.progress.json` next to the list holds every verdict, so an interrupted run resumes at the next book, and the summary at the end lists what failed and why.
+`capture_book.py` itself does not keep a list; the list runner below calls the same steps one at a time.
+
+## The list
+
+Every book has a folder, `~/Downloads/kindle/<ASIN>/`, and the files in it are its whole state; no other file keeps progress. Two lists make the folders: `~/Downloads/kindle/books.tsv` (`ASIN<TAB>title`, optionally `<TAB>domain`) and each `~/Downloads/library-<domain>.json` that `channel.py library` writes. The first time a folder is made, an entry for the book in a `books.progress.json` beside the list is carried over: a capture an earlier run converted becomes this book's capture, and a book Cloud Reader cannot open stays parked for the Kindle app.
+
+```bash
+venv/bin/python kc_run.py capture    # one step: pull main, capture the next book that needs it
+venv/bin/python kc_run.py convert    # one step: pull main, convert and check the next book, or copy one to Drive
+```
+
+Each run takes one step and exits. launchd runs both jobs and starts each again ten seconds after it exits (`launchd/com.otchy.kindle-capture.plist` and `launchd/com.otchy.kindle-convert.plist`, logging to `~/Library/Logs/ocr-kindle/`), so code merged to main is used from the next step, and one book is captured while the one before it converts. When there is nothing to do, a step waits a minute before it exits. If the pull fails because of local changes, the job pauses with git's message and resumes once a pull works.
+
+A book goes through three stages, defined in one table (`STAGES` in `book.py`): `capture` writes the pages into `<ASIN>/pages/`, `convert` runs `img2txt.py` and the checks and fixes and writes `report.json`, and `publish` copies a book that passed to `GOOGLE_DRIVE_FOLDER` and starts the wiki's watcher. Each stage records its output in `stage.<stage>.json`, or its failure in `failure.<stage>.json`, with the stage's version: the sha256 of that stage's own source files (`channel.py` and `extension/` for capture; `img2txt.py`, `layout.py`, `check_book.py` and `proofread.py` for convert and publish). `book.py`'s `Book.state()` reads these files and says what the book needs next: `Ready(stage)`, `Parked(failure)` or `Done`. When the converter's code changes, every converted book is converted again from its pages, whether it passed or failed. A book whose capture worked is not captured again when the extension changes.
+
+A failure is one of two kinds, set by check name in `RULES` in `book.py`. A book failure parks that book, and the job goes on to the next one. A parked book is tried again once the code of the stage that failed it changes (after a crash, once any module changes), except a book Cloud Reader cannot open (`kindle_app_only`), which waits for the Kindle app. A capture the checks find unusable (`pages`, `text`, `start_position`, `end_position`, `capture_stall`) is captured once more before the book is parked. A systemic failure would fail every book, so it pauses that job for all of them in `pause.<job>.json`: signed out of Cloud Reader (resumes after 30 minutes), the extension unreachable, of another version or loaded from a checkout that is not main (10 minutes), Gemini failing after Sonnet did too (at Gemini's daily reset, midnight Pacific time, when the quota ran out; else 30 minutes). The same check failing on two books in a row also pauses the job, until the code of the stage it blames changes. A pause also ends when that code changes.
+
+`KINDLE_APP_OK=1 venv/bin/python capture_app.py ~/Downloads/kindle/books.tsv` captures the listed books parked as `kindle_app_only` from the Kindle for Mac app, only when Laiken asks for it (the capture hook blocks it otherwise), and records them as captured; the convert job converts them like any other book.
 
 ## Audiobook
 

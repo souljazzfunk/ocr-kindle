@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""One step of the book list per run: pull main, run one stage of the next Ready book, record the result, exit 0.
+
+    venv/bin/python kc_run.py capture     # the capture job: one book through the extension channel
+    venv/bin/python kc_run.py convert     # the convert job: one book converted and checked, or one published
+
+launchd keeps both jobs running (launchd/) and starts each again after it exits, so code pulled from main is used
+from the next step with no restart of anything. The two jobs never write the same files: the capture job writes a
+book's pages, book.json and its capture records; the convert job writes what the converter makes beside the pages and
+the convert and publish records. Which book and which stage come next is derived from the book folders (book.py);
+a book that fails is parked and the job goes on, and a failure that would fail every book pauses the job until it
+can resume by itself (book.RULES).
+"""
+
+import argparse
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import book as books
+import capture_book
+import locks
+from book import JOBS, ROOT, Library, Ready, read_json, record_failure
+
+HERE = Path(__file__).resolve().parent
+IDLE_S = 60  # with nothing to do, or paused, a step waits this long before it exits and launchd starts the next
+
+
+def pull_main(checkout=HERE, git=None):
+    """Pull main. Returns None, or why the checkout cannot follow main (local changes stand in the way)."""
+    git = git or (lambda *args: subprocess.run(['git', '-C', str(checkout), *args], capture_output=True, text=True))
+    with locks.git_checkout(checkout):  # a capture's check of the extension folder fetches too
+        if git('rev-parse', '--abbrev-ref', 'HEAD').stdout.strip() != 'main':
+            return None  # capture_book.capture refuses a checkout that is not main, and says why
+        pulled = git('pull', '--ff-only', '-q', 'origin', 'main')
+        if pulled.returncode == 0:
+            return None
+        if git('status', '--porcelain').stdout.strip():
+            return f'git pull --ff-only failed: {pulled.stderr.strip()}'
+    print(f'could not pull main ({pulled.stderr.strip()}); going on with the code here', flush=True)
+    return None
+
+
+def failed_checks(data):
+    return '; '.join(f'{c["name"]}: {c["detail"]}' for c in data.get('checks', []) if not c['ok'] and c['blocking'])
+
+
+def capture(library, listed, book, ready, current, args):
+    attempt = book.attempt() + 1 if ready.recapture else 1
+    folder = book.folder / 'pages'
+    title, failure = capture_book.capture(book.asin, book.title, book.domain, folder, recapture=ready.recapture)
+    if failure:
+        return record_failure(library, listed, book, 'capture', failure['blocking_failures'], failure.get('error'),
+                              attempt=attempt, current=current, now=args.now)
+    book.succeed('capture', {'pages': str(folder), 'title': title, 'attempt': attempt, 'via': 'extension',
+                             'version': current['capture']})
+    return 'captured'
+
+
+def convert(library, listed, book, ready, current, args):
+    captured = book.record('capture')
+    data = capture_book.convert_folder(book.asin, book.title or book.asin, args.model, book.pages,
+                                       recapture=captured.get('attempt', 1) > 1)
+    if data['blocking_failures']:
+        return record_failure(library, listed, book, 'convert', data['blocking_failures'],
+                              data.get('error') or failed_checks(data), upstream=captured['at'],
+                              attempt=captured.get('attempt', 1), current=current, now=args.now)
+    book.succeed('convert', {'report': str(Path(data['folder']) / 'report.json'), 'version': current['convert']},
+                 upstream=captured['at'])
+    return 'converted'
+
+
+def publish(library, listed, book, ready, current, args):
+    converted = book.record('convert')
+    copied = capture_book.publish(book.pages, book.title or book.asin)
+    capture_book.start_wiki_ingest(read_json(converted['report']))
+    book.succeed('publish', {'drive': str(copied) if copied else None, 'version': current['publish']},
+                 upstream=converted['at'])
+    return 'published'
+
+
+STEPS = {'capture': capture, 'convert': convert, 'publish': publish}
+
+
+def default_lists(root, downloads):
+    return [Path(root) / 'books.tsv', *sorted(Path(downloads).glob('library-*.json'))]
+
+
+def progress_of(lists):
+    """books.progress.json beside each list, read only to carry a book over the first time its folder is made."""
+    progress = {}
+    for path in lists:
+        progress.update(read_json(Path(path).with_suffix('.progress.json')) or {})
+    return progress
+
+
+def step(job, root=ROOT, lists=None, downloads=Path.home() / 'Downloads', model='vision', checkout=HERE,
+         sleep=time.sleep, now=time.time):
+    """Run one step of job. Returns what it did, for the log."""
+    library = Library(root)
+    library.root.mkdir(parents=True, exist_ok=True)
+    problem = pull_main(checkout)
+    if problem:
+        library.set_pause(job, {'stage': None, 'checks': ['git'], 'reason': problem, 'version': None, 'until': None})
+        sleep(IDLE_S)
+        return f'paused: {problem}'
+    if (library.pause(job) or {}).get('checks') == ['git']:
+        library.clear_pause(job)  # the pull works again
+    lists = lists or default_lists(root, downloads)
+    # Only the capture job makes book folders: it owns book.json and the capture records a migration writes.
+    listed = library.add(lists, progress_of(lists), write=job == 'capture')
+    current = books.versions(checkout)
+    moment = now()
+    pause = library.active_pause(job, current, moment)
+    if pause:
+        sleep(IDLE_S)
+        return f'paused: {pause["reason"]}'
+    options = argparse.Namespace(model=model, now=moment)
+    for book in listed:
+        state = book.state(current)
+        if isinstance(state, Ready) and state.stage in JOBS[job]:
+            print(f'=== {state.stage}{" again" if state.recapture else ""}: {book.title or book.asin} ({book.asin})',
+                  flush=True)
+            try:
+                outcome = STEPS[state.stage](library, listed, book, state, current, options)
+            except Exception as e:  # recorded like any other failure, so the book is parked with the reason
+                outcome = record_failure(library, listed, book, state.stage, ['crash'], f'{type(e).__name__}: {e}',
+                                         upstream=_upstream(book, state.stage), current=current, now=moment)
+            return f'{outcome}: {book.asin}'
+    sleep(IDLE_S)
+    return 'nothing to do'
+
+
+def _upstream(book, stage):
+    names = [s.name for s in books.STAGES]
+    before = names[names.index(stage) - 1] if names.index(stage) else None
+    return (book.record(before) or {}).get('at') if before else None
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description='Run one step of the Kindle book list')
+    parser.add_argument('job', choices=sorted(JOBS))
+    parser.add_argument('--root', type=Path, default=ROOT, help=f'where the book folders live (default {ROOT})')
+    parser.add_argument('--list', type=Path, action='append',
+                        help='books.tsv or library-<domain>.json; repeatable (default <root>/books.tsv and '
+                             '<downloads>/library-*.json)')
+    parser.add_argument('--downloads', type=Path, default=Path.home() / 'Downloads')
+    parser.add_argument('--model', default='vision')
+    args = parser.parse_args(argv)
+    print(step(args.job, args.root, args.list, args.downloads, args.model), flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

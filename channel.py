@@ -100,10 +100,15 @@ def finish_folder(folder, pages, done):
     return stopped
 
 
-def make_room(folder):
-    """A folder that already holds an earlier capture is moved aside, never mixed with the new pages or deleted."""
+def set_aside(folder):
+    """Move a folder that holds anything to `<name> (before <time>)`, never mixing it with new pages or deleting it."""
+    folder = Path(folder)
     if folder.is_dir() and any(folder.iterdir()):
         folder.rename(folder.with_name(f'{folder.name} (before {time.strftime("%Y%m%dT%H%M%S")})'))
+
+
+def make_room(folder):
+    set_aside(folder)
     (folder / STAGING).mkdir(parents=True, exist_ok=True)
 
 

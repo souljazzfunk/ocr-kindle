@@ -4,7 +4,7 @@
 1. Pages come from the Cloud Reader extension in Chrome (Brave until 2026-10-11, when Laiken switched). The Kindle
    for Mac app is driven only when Laiken's own message asks for it; the command then carries KINDLE_APP_OK=1.
 2. Chrome and Brave are never quit, killed or restarted: Laiken keeps using them.
-Whether to go on to the next book is decided by check_book.py's result inside capture_books.py, not here.
+Whether a book goes on, is captured again or is parked is decided by book.py's RULES from check_book.py's result, not here.
 
 Exit 2 blocks the command and shows the reason to Claude.
 """
