@@ -13,6 +13,7 @@ NEXT = "open -a \"Brave Browser\" 'https://read.amazon.com/?asin=B0ZEROSOLD#auto
 
 @pytest.mark.parametrize('command', [
     'osascript kindle2img.applescript ltr ~/Downloads/book',
+    'venv/bin/python capture_app.py books.tsv',
     'screencapture -x /tmp/page.png',
     'osascript -e \'tell application "Kindle" to activate\'',
     'open -a Kindle',

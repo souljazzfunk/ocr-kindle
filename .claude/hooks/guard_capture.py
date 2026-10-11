@@ -13,7 +13,7 @@ import json
 import re
 import sys
 
-KINDLE_APP = re.compile(r'kindle2img\.applescript|\bscreencapture\b|tell application "Kindle"|open\s+-a\s+["\']?Kindle\b|kindle://')
+KINDLE_APP = re.compile(r'capture_app\.py|kindle2img\.applescript|\bscreencapture\b|tell application "Kindle"|open\s+-a\s+["\']?Kindle\b|kindle://')
 BRAVE_RESTART = re.compile(r'(quit|kill|pkill|killall)\b[^\n;|&]*Brave|Brave[^\n;|&]*\bquit\b', re.I)
 CHROME_READER = re.compile(r'Google Chrome[^\n;|&]*read\.amazon\.')
 
