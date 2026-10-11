@@ -56,3 +56,49 @@ def test_a_lock_is_let_go_when_its_holder_ends_however_it_ends(tmp_path):
     holder.wait()
     with locks.holding(lock, wait=False):
         pass
+
+
+def test_git_calls_on_the_checkout_wait_for_each_other_as_on_2026_10_11(tmp_path):
+    # The list's pull and a capture's fetch of origin/main ran together, and git refused the fetch.
+    (tmp_path / '.git').mkdir()
+    import threading
+    order = []
+    inside = threading.Event()
+
+    def first():
+        with locks.git_checkout(tmp_path):
+            inside.set()
+            order.append('pull starts')
+            threading.Event().wait(0.2)
+            order.append('pull ends')
+
+    thread = threading.Thread(target=first)
+    thread.start()
+    inside.wait()
+    with locks.git_checkout(tmp_path):
+        order.append('fetch')
+    thread.join()
+    assert order == ['pull starts', 'pull ends', 'fetch']
+
+
+def test_the_list_and_the_capture_hold_the_checkout_while_they_run_git(monkeypatch):
+    import capture_books
+    import extension_state
+    held = []
+    monkeypatch.setattr(locks, 'git_checkout', lambda root: _Recorder(held))
+    extension_state.folder_problem(git=lambda *a: type('R', (), {'returncode': 0, 'stdout': 'main', 'stderr': ''})())
+    assert held == ['in', 'out']
+    held.clear()
+    capture_books.update_checkout(git=lambda *a: type('R', (), {'returncode': 0, 'stdout': 'main' if a[1] == '--abbrev-ref' else 'a', 'stderr': ''})())
+    assert held == ['in', 'out']
+
+
+class _Recorder:
+    def __init__(self, held):
+        self.held = held
+
+    def __enter__(self):
+        self.held.append('in')
+
+    def __exit__(self, *_):
+        self.held.append('out')

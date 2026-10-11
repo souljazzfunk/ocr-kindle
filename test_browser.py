@@ -34,9 +34,16 @@ def test_finds_the_profile_that_loads_this_extension(tmp_path):
 
 def test_unset_prompt_setting_is_refused_as_on_2026_10_10(tmp_path):
     # The real state that opened the save dialog: Brave's default, prompt_for_download not written.
-    assert 'Ask where to save' in browser.prompt_problem(profile(tmp_path))
-    assert browser.prompt_problem(profile(tmp_path / 'b', prompt=True)) is not None
-    assert browser.prompt_problem(profile(tmp_path / 'c', prompt=False)) is None
+    assert 'Ask where to save' in browser.prompt_problem(profile(tmp_path), asks_by_default=True)
+    assert browser.prompt_problem(profile(tmp_path / 'b', prompt=True), asks_by_default=True) is not None
+    assert browser.prompt_problem(profile(tmp_path / 'c', prompt=False), asks_by_default=True) is None
+
+
+def test_chrome_with_the_switch_off_and_the_setting_unset_is_accepted_as_on_2026_10_11(tmp_path):
+    # Laiken's Chrome: "Ask where to save" off, prompt_for_download not written. The list refused it all the same.
+    assert browser.BROWSERS['chrome'][2] is False
+    assert browser.prompt_problem(profile(tmp_path), asks_by_default=False) is None
+    assert browser.prompt_problem(profile(tmp_path / 'b', prompt=True), asks_by_default=False) is not None
 
 
 def test_download_record_tells_the_extension_from_a_page_link(tmp_path):

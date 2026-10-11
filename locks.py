@@ -69,3 +69,18 @@ def keep(lock, wait=True, say=print):
     handle = _acquire(lock, wait, say)
     if handle:
         _kept.append(handle)
+
+
+@contextlib.contextmanager
+def git_checkout(root):
+    """Hold this checkout's git while one caller reads or moves its refs.
+
+    On 2026-10-11 the list pulled main while the next book's capture fetched origin/main to check the extension
+    folder; git refused the fetch (cannot lock ref 'refs/remotes/origin/main') and The Art of Possibility was recorded
+    as a crash before it was captured. Each open() is its own flock, so this keeps threads of one run apart as well as runs.
+    """
+    git_dir = Path(root) / '.git'
+    path = git_dir / 'kindle-git.lock' if git_dir.is_dir() else Path(root) / '.kindle-git.lock'
+    with open(path, 'a') as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
