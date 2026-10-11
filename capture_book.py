@@ -10,48 +10,49 @@ in the order CLAUDE.md sets.
 2. Runs img2txt.py, then check_book.py; runs each automatic fix it names and checks again, up to ROUNDS times.
 3. Writes report.json next to the book and exits 1 when a blocking check still fails.
 
-It handles one book; `capture_books.py` runs a list and decides from the checks whether to go on or redo.
-`--zip` skips the capture and starts from an existing ZIP or folder.
+It handles one book by hand; `kc_run.py` runs the same steps (`capture`, `convert_folder`, `publish`) one at a time for
+every listed book, from the book folders (book.py). `--zip` skips the capture and starts from an existing ZIP or folder.
 """
 
 import argparse
-import contextlib
-import json
 import os
 import shutil
 import subprocess
 import sys
-import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
 
-from check_book import Check, check_folder, markdown_file
+from check_book import check_folder, markdown_file
 import locks
-from channel import Channel, safe_name
+from channel import Channel, safe_name, set_aside
 from extension_state import capture_version, folder_problem, repo_version
+from book import write_json
 from img2txt import GEMINI_ERROR, GEMINI_FAILED_EXIT, load_config
 
 ROUNDS = 3
 STALL = 'capture_stall'
 UNREACHABLE = 'extension_unreachable'
 APP_ONLY = 'kindle_app_only'  # Cloud Reader shows "Kindle App Is Required"; the Kindle app is used only on Laiken's word
+SIGNED_OUT = 'signed_out'
+EXTENSION_VERSION = 'extension_version'
+EXTENSION_FOLDER = 'extension_folder'
+# The extension's reason for a refusal, by its start; any other refusal is capture_refused (extension/policy.js).
+REFUSALS = (('kindle app required', APP_ONLY), ('signed out', SIGNED_OUT))
 GEMINI_CHECK = 'gemini'
 PYTHON = sys.executable
 HERE = Path(__file__).resolve().parent
 # The LLM wiki's watcher (llm-wiki/scripts/watch.sh). It takes only books whose report.json passed.
 WIKI_WATCH = Path(os.environ.get('WIKI_WATCH', Path.home() / 'Documents/GitHub.nosync/llm-wiki/scripts/watch.sh'))
 _channel = None
-_channel_lock = threading.Lock()
 
 
 def channel():
-    """The process's one channel, started on first use; capture_books.py's book threads share it."""
+    """The process's one channel, started on first use."""
     global _channel
-    with _channel_lock:
-        if _channel is None:
-            _channel = Channel().start()
-        return _channel
+    if _channel is None:
+        _channel = Channel().start()
+    return _channel
 
 
 def run(command, **kwargs):
@@ -89,17 +90,8 @@ def correct(folder, title, rounds=ROUNDS, runner=run):
     return checks, round_no
 
 
-def version_check(folder, expected=None):
-    """A fresh capture must come from the extension version on disk; the worker reloads itself when they differ."""
-    expected = expected or repo_version()
-    made_by = capture_version(folder)
-    return Check('extension_version', made_by == expected,
-                 f'captured by extension {made_by or "1.3 or older (no capture.json)"}, the checkout has {expected}'
-                 + ('' if made_by == expected else '; the extension did not reload itself to the checkout\'s version'))
-
-
 def not_captured(asin, check, reason, recapture):
-    """The result for a book whose capture handed over no pages. These failures stop the list (capture_books.py)."""
+    """The result for a book whose capture handed over no usable pages; book.RULES says what it means for the list."""
     print(f'FAIL {check:18} {reason}', flush=True)
     return {'asin': asin, 'recapture': recapture, 'blocking_failures': [check], 'warnings': [], 'error': reason}
 
@@ -108,7 +100,7 @@ def report(folder, checks, extra):
     data = {**extra, 'checks': [asdict(c) for c in checks],
             'blocking_failures': [c.name for c in checks if not c.ok and c.blocking],
             'warnings': [c.name for c in checks if not c.ok and not c.blocking]}
-    (folder / 'report.json').write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding='utf-8')
+    write_json(folder / 'report.json', data)
     for c in checks:
         mark = 'ok  ' if c.ok else ('FAIL' if c.blocking else 'warn')
         print(f'{mark} {c.name:18} {c.detail}')
@@ -138,66 +130,66 @@ def start_wiki_ingest(data, watch=WIKI_WATCH, spawn=subprocess.Popen):
 
 
 def convert(asin, title=None, model='vision', domain='read.amazon.com', downloads=Path.home() / 'Downloads',
-            source=None, recapture=False, capturing=None, converting=None):
-    """Capture (unless source is given), convert, check and fix one book. Returns the report data.
-
-    capturing and converting are held around the capture and the conversion: capture_books.py captures the next book in
-    the browser while this one converts, and these keep it to one capture and one conversion at a time.
-    """
+            source=None, recapture=False):
+    """Capture (unless source is given), convert, check and fix one book, and publish it when it passed. Returns the
+    report data."""
     started = time.time()
-    captured = False
     if source is None:
-        with capturing or contextlib.nullcontext():
-            result = _capture(asin, title, domain, downloads, recapture)
-        if isinstance(result, dict):
-            return result
-        source, title = result
-        captured = True
-    folder = source.with_suffix('') if source.suffix == '.zip' else source
-    with converting or contextlib.nullcontext(), locks.holding(locks.book_lock(source)):
-        return _convert_folder(asin, title, model, source, folder, recapture, captured, started)
-
-
-def _capture(asin, title, domain, downloads, recapture):
-    """Capture one book through the channel: (its folder, its title), or the result of a capture with no pages."""
-    problem = folder_problem()
-    if problem:
-        raise RuntimeError(f'Chrome loads the extension from this checkout, and it is not main: {problem}')
-    folder = Path(downloads) / safe_name(title or asin)
-    result = channel().capture(asin, domain, folder, recapture)
-    if result.status == 'stalled':
-        return not_captured(asin, STALL, f'the capture stopped moving: {result.reason}', recapture)
-    if result.status == 'unreachable':
-        return not_captured(asin, UNREACHABLE, f'the extension never took the job: {result.reason}', recapture)
-    if result.status == 'refused':
-        # A book Cloud Reader cannot open is this book's failure, not the browser's: the list goes on.
-        check = APP_ONLY if result.reason.startswith('kindle app required') else 'capture_refused'
-        return not_captured(asin, check, f'the extension did not capture: {result.reason}', recapture)
-    return folder, title or (result.title if result.title not in ('', asin, 'kindle-book') else None)
-
-
-def _convert_folder(asin, title, model, source, folder, recapture, captured, started):
-    """Convert, check, fix and publish one captured book; the caller holds the book's lock."""
-    try:
-        run([PYTHON, str(HERE / 'img2txt.py'), str(source), '--model', model] + (['--title', title] if title else []))
-        checks, rounds = correct(folder, title)
-    except subprocess.CalledProcessError as e:
-        if e.returncode != GEMINI_FAILED_EXIT:
-            raise
-        # Not the book's fault, and the capture is good: capture_books.py stops and later converts this folder again.
-        written = folder / GEMINI_ERROR
-        reason = written.read_text(encoding='utf-8') if written.exists() else 'a Gemini request failed'
-        print(f'FAIL {GEMINI_CHECK:18} {reason}', flush=True)
-        return {'asin': asin, 'source': str(folder), 'recapture': recapture, 'blocking_failures': [GEMINI_CHECK],
-                'warnings': [], 'error': reason}
-    if captured:
-        checks.append(version_check(folder))
-    data = report(folder, checks, {'asin': asin, 'source': str(source), 'recapture': recapture, 'rounds': rounds,
-                                   'seconds': round(time.time() - started)})
+        source = Path(downloads) / safe_name(title or asin)
+        title, failure = capture(asin, title, domain, source, recapture)
+        if failure:
+            return failure
+    data = convert_folder(asin, title, model, source, recapture)
+    data['seconds'] = round(time.time() - started)
     if not data['blocking_failures']:
-        publish(folder, title)
+        publish(Path(data['folder']), title)
     start_wiki_ingest(data)
     return data
+
+
+def capture(asin, title, domain, folder, recapture=False):
+    """Capture one book through the channel into folder: (its title, None), or (None, the failure) when no usable
+    capture came. A capture made by another extension version is set aside, never converted."""
+    problem = folder_problem()
+    if problem:
+        return None, not_captured(asin, EXTENSION_FOLDER, f'Chrome loads the extension from this checkout, and it is '
+                                  f'not main: {problem}', recapture)
+    result = channel().capture(asin, domain, folder, recapture)
+    if result.status == 'stalled':
+        return None, not_captured(asin, STALL, f'the capture stopped moving: {result.reason}', recapture)
+    if result.status == 'unreachable':
+        return None, not_captured(asin, UNREACHABLE, f'the extension never took the job: {result.reason}', recapture)
+    if result.status == 'refused':
+        check = next((name for start, name in REFUSALS if result.reason.startswith(start)), 'capture_refused')
+        return None, not_captured(asin, check, f'the extension did not capture: {result.reason}', recapture)
+    made_by, expected = capture_version(folder), repo_version()
+    if made_by != expected:
+        set_aside(folder)
+        return None, not_captured(asin, EXTENSION_VERSION, f'captured by extension {made_by or "(no capture.json)"}, '
+                                  f'the checkout has {expected}; the extension did not reload itself', recapture)
+    return title or (result.title if result.title not in ('', asin, 'kindle-book') else None), None
+
+
+def convert_folder(asin, title, model, source, recapture=False):
+    """OCR, check and fix one captured book (a folder, or a ZIP of extension 1.x) and write its report.json. Returns
+    the report data; a Gemini failure returns the gemini check with its reason and writes no report."""
+    source = Path(source)
+    folder = source.with_suffix('') if source.suffix == '.zip' else source
+    with locks.holding(locks.book_lock(source)):
+        try:
+            run([PYTHON, str(HERE / 'img2txt.py'), str(source), '--model', model] + (['--title', title] if title else []))
+            checks, rounds = correct(folder, title)
+        except subprocess.CalledProcessError as e:
+            if e.returncode != GEMINI_FAILED_EXIT:
+                raise
+            # Not the book's fault, and the capture is good: the folder is converted again once Gemini answers.
+            written = folder / GEMINI_ERROR
+            reason = written.read_text(encoding='utf-8') if written.exists() else 'a Gemini request failed'
+            print(f'FAIL {GEMINI_CHECK:18} {reason}', flush=True)
+            return {'asin': asin, 'source': str(folder), 'folder': str(folder), 'recapture': recapture,
+                    'blocking_failures': [GEMINI_CHECK], 'warnings': [], 'error': reason}
+        data = report(folder, checks, {'asin': asin, 'source': str(source), 'recapture': recapture, 'rounds': rounds})
+    return {**data, 'folder': str(folder)}
 
 
 def main():
@@ -210,10 +202,7 @@ def main():
     parser.add_argument('--zip', type=Path, help='Skip the capture and start from this ZIP or folder')
     parser.add_argument('--recapture', action='store_true', help='Mark the capture as a second one (recorded in report.json)')
     args = parser.parse_args()
-    try:
-        data = convert(args.asin, args.title, args.model, args.domain, args.downloads, args.zip, args.recapture)
-    except RuntimeError as e:
-        sys.exit(str(e))
+    data = convert(args.asin, args.title, args.model, args.domain, args.downloads, args.zip, args.recapture)
     sys.exit(bool(data['blocking_failures']))
 
 

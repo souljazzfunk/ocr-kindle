@@ -1,0 +1,356 @@
+"""A book is a folder, and its state is derived from the files in it. Nothing else keeps progress.
+
+    <root>/<ASIN>/book.json             the book: asin, title, domain (from books.tsv or a library scan)
+    <root>/<ASIN>/stage.<stage>.json    a stage's output: the stage version that made it, when, and its input
+    <root>/<ASIN>/failure.<stage>.json  a stage that failed on this book: the checks, the version, and whether to retry
+    <root>/<ASIN>/pages/                the capture (page images, capture.json) and what the converter writes beside it
+    <root>/pause.<job>.json             a job paused for every book (a systemic failure), with when it resumes
+
+Book.state() is Ready(stage), Parked(failure) or Done. A stage's version is the sha256 of its own source files, so a
+fix to the converter makes every book Ready for conversion again, and a book parked on a check is retried once the
+code of the stage that failed it changes. Each stage writes its record or its failure, never both: the other is
+removed first, so a crash in between leaves the stage Ready, not wrong.
+"""
+
+import hashlib
+import json
+import os
+import tempfile
+import time
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+HERE = Path(__file__).resolve().parent
+ROOT = Path.home() / 'Downloads' / 'kindle'
+RECAPTURES = 1  # a capture found unusable is captured once more, then the book is parked
+
+
+@dataclass(frozen=True)
+class Stage:
+    name: str
+    job: str  # the kc_run.py job (one launchd job each) that runs it
+    sources: tuple  # files and folders under the checkout whose content is the stage's version
+    # An output made by other code is made again. Not for capture: a good capture stays good when the extension
+    # changes, and paging through every book again would take the browser for days.
+    redo_when_stale: bool
+
+
+CONVERTER = ('img2txt.py', 'layout.py', 'check_book.py', 'proofread.py')
+STAGES = (
+    Stage('capture', 'capture', ('channel.py', 'extension'), redo_when_stale=False),
+    Stage('convert', 'convert', CONVERTER, redo_when_stale=True),
+    Stage('publish', 'convert', CONVERTER, redo_when_stale=True),
+)
+STAGE = {stage.name: stage for stage in STAGES}
+JOBS = {job: tuple(s.name for s in STAGES if s.job == job) for job in dict.fromkeys(s.job for s in STAGES)}
+
+
+@dataclass(frozen=True)
+class Ready:
+    stage: str
+    recapture: bool = False
+
+
+@dataclass(frozen=True)
+class Parked:
+    stage: str
+    failure: dict
+
+
+@dataclass(frozen=True)
+class Done:
+    pass
+
+
+BOOK, SYSTEMIC = 'book', 'systemic'
+
+
+def gemini_reset(reason, now):
+    """Gemini's daily quota resets at midnight Pacific time; any other Gemini failure is tried again in half an hour."""
+    if not any(mark in (reason or '') for mark in ('429', 'RESOURCE_EXHAUSTED', 'PerDay', 'quota')):
+        return now + 1800
+    pacific = datetime.fromtimestamp(now, ZoneInfo('America/Los_Angeles'))
+    return (pacific.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).timestamp()
+
+
+@dataclass(frozen=True)
+class Rule:
+    kind: str  # BOOK parks this book and the job goes on; SYSTEMIC pauses the job for every book
+    recapture: bool = False  # the capture is unusable: capture the book once more before parking it
+    breaker: bool = True  # the same check on two books in a row pauses the job until the stage's code changes
+    final: bool = False  # a property of the book, not of the code: a new stage version does not retry it
+    resume: object = None  # SYSTEMIC: (reason, now) -> when to try again; None waits for new code only
+    blame: str | None = None  # the stage whose code the breaker waits on, when not the stage that found it
+    waits_on: str | None = None  # the version a retry waits on, when not the stage's: 'code' is every .py here
+
+
+def after(seconds):
+    return lambda reason, now: now + seconds
+
+
+# Every failure a stage can report, by check name. A check not listed is the book's own failure.
+RULES = {
+    'pages': Rule(BOOK, recapture=True, blame='capture'),
+    'text': Rule(BOOK, recapture=True, blame='capture'),
+    'start_position': Rule(BOOK, recapture=True, blame='capture'),
+    'end_position': Rule(BOOK, recapture=True, blame='capture'),
+    'capture_stall': Rule(BOOK, recapture=True),
+    'kindle_app_only': Rule(BOOK, breaker=False, final=True),
+    'app_folder': Rule(BOOK, breaker=False, final=True),
+    'app_open': Rule(BOOK, breaker=False, final=True),
+    'app_capture': Rule(BOOK, breaker=False, final=True),
+    'signed_out': Rule(SYSTEMIC, resume=after(1800)),
+    'extension_unreachable': Rule(SYSTEMIC, resume=after(600)),
+    'extension_version': Rule(SYSTEMIC, resume=after(600)),
+    'extension_folder': Rule(SYSTEMIC, resume=after(600)),
+    'gemini': Rule(SYSTEMIC, resume=gemini_reset),
+    'crash': Rule(BOOK, waits_on='code'),  # an exception can come from any module, so any fix retries it
+}
+BOOK_FAULT = Rule(BOOK)
+
+
+def classify(checks):
+    """One rule for a failure that names several checks: systemic if any is, else the book's, retried as a recapture
+    only when every check says the capture was unusable."""
+    rules = [RULES.get(check, BOOK_FAULT) for check in checks] or [BOOK_FAULT]
+    systemic = next((rule for rule in rules if rule.kind == SYSTEMIC), None)
+    return systemic or Rule(BOOK, recapture=all(r.recapture for r in rules), breaker=any(r.breaker for r in rules),
+                            final=all(r.final for r in rules), waits_on=next((r.waits_on for r in rules if r.waits_on), None))
+
+
+def source_digest(root, sources):
+    digest = hashlib.sha256()
+    for source in sources:
+        path = Path(root) / source
+        files = sorted(p for p in path.rglob('*') if p.is_file()) if path.is_dir() else [path]
+        for file in files:
+            if file.name.startswith('test_') or file.name.endswith('.test.js') or not file.exists():
+                continue
+            digest.update(file.relative_to(root).as_posix().encode() + b'\0' + file.read_bytes() + b'\0')
+    return digest.hexdigest()[:12]
+
+
+def versions(root=HERE):
+    """Each stage's version, and 'code': every module of the checkout."""
+    return {**{stage.name: source_digest(root, stage.sources) for stage in STAGES},
+            'code': source_digest(root, sorted(p.name for p in Path(root).glob('*.py')))}
+
+
+def now_id():
+    """When an output was made, to the microsecond: a later stage names the output it was made from by this."""
+    return datetime.now().isoformat(timespec='microseconds')
+
+
+def write_json(path, data):
+    """Write through a temporary file and rename, so a reader never sees half a file."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, tmp = tempfile.mkstemp(dir=path.parent, prefix=f'.{path.name}.', suffix='.tmp')
+    with os.fdopen(handle, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, path)
+
+
+def read_json(path):
+    try:
+        return json.loads(Path(path).read_text(encoding='utf-8'))
+    except FileNotFoundError:
+        return None
+
+
+class Book:
+    def __init__(self, folder):
+        self.folder = Path(folder)
+        self.asin = self.folder.name
+
+    @property
+    def info(self):
+        return read_json(self.folder / 'book.json') or {}
+
+    @property
+    def title(self):
+        return self.info.get('title') or (self.record('capture') or {}).get('title') or None
+
+    @property
+    def domain(self):
+        return self.info.get('domain') or 'read.amazon.com'
+
+    @property
+    def pages(self):
+        """Where the capture is: a migrated book keeps the folder an earlier run captured into."""
+        return Path((self.record('capture') or {}).get('pages') or self.folder / 'pages')
+
+    def record(self, stage):
+        return read_json(self.folder / f'stage.{stage}.json')
+
+    def failure(self, stage):
+        return read_json(self.folder / f'failure.{stage}.json')
+
+    def succeed(self, stage, data, upstream=None):
+        """Record a stage's output (data carries the version that made it); returns the record."""
+        (self.folder / f'failure.{stage}.json').unlink(missing_ok=True)
+        record = {**data, 'upstream': upstream, 'at': now_id()}
+        write_json(self.folder / f'stage.{stage}.json', record)
+        return record
+
+    def fail(self, stage, data, upstream=None):
+        (self.folder / f'stage.{stage}.json').unlink(missing_ok=True)
+        record = {**data, 'upstream': upstream, 'at': now_id()}
+        write_json(self.folder / f'failure.{stage}.json', record)
+        return record
+
+    def attempt(self):
+        """How many captures of this book its records count (0 before the first)."""
+        return max((r or {}).get('attempt', 0) for r in (self.record('capture'), self.failure('capture')))
+
+    def state(self, current=None):
+        current = current or versions()
+        upstream = None
+        for stage in STAGES:
+            failure = self.failure(stage.name)
+            rule = classify((failure or {}).get('checks', []))
+            if failure and failure.get('upstream') == upstream and (
+                    rule.final or failure.get('version') == current[rule.waits_on or stage.name]):
+                return Ready('capture', recapture=True) if failure.get('retry') else Parked(stage.name, failure)
+            record = self.record(stage.name)
+            if (not record or record.get('upstream') != upstream
+                    or (stage.redo_when_stale and record.get('version') != current[stage.name])):
+                return Ready(stage.name)
+            upstream = record['at']
+        return Done()
+
+
+def read_tsv(path):
+    """(asin, title, domain) per `ASIN<TAB>title[<TAB>domain]` line; `#` lines are skipped."""
+    books = []
+    for line in Path(path).read_text(encoding='utf-8').splitlines():
+        if line.strip() and not line.startswith('#'):
+            asin, title, domain = (line.split('\t') + ['', ''])[:3]
+            books.append((asin.strip(), title.strip(), domain.strip() or 'read.amazon.com'))
+    return books
+
+
+def read_library(path):
+    """(asin, title, domain) per book of a `library-<domain>.json` written by `channel.py library`."""
+    domain = Path(path).stem.removeprefix('library-')
+    return [(b['asin'], (b.get('title') or '').strip(), domain) for b in (read_json(path) or {}).get('books') or []
+            if b.get('asin')]
+
+
+def read_lists(lists):
+    """Every listed book once, in list order: the lists in the order given, each in its own order."""
+    seen = {}
+    for path in lists:
+        path = Path(path)
+        if path.exists():
+            for asin, title, domain in (read_library(path) if path.suffix == '.json' else read_tsv(path)):
+                seen.setdefault(asin, (asin, title, domain))
+    return list(seen.values())
+
+
+def migrate(book, entry, now_versions):
+    """Carry a books.progress.json entry over once, as files of the book's folder: a capture an earlier run converted
+    is this book's capture (its conversion is redone, since no record says which code made it), and a book Cloud
+    Reader cannot open stays parked for the Kindle app."""
+    if book.record('capture') or book.failure('capture') or not entry:
+        return
+    source = Path(entry['source']) if entry.get('source') else None
+    folder = source and (source.with_suffix('') if source.suffix == '.zip' else source)
+    if folder and folder.is_dir():
+        book.succeed('capture', {'pages': str(folder), 'title': entry.get('title') or None, 'attempt': 1,
+                                 'via': entry.get('capture') or 'migrated', 'version': None})
+    elif 'kindle_app_only' in entry.get('failures', []):
+        book.fail('capture', {'checks': ['kindle_app_only'], 'error': entry.get('error'), 'attempt': 1,
+                              'retry': False, 'version': now_versions['capture']})
+
+
+class Library:
+    def __init__(self, root=ROOT):
+        self.root = Path(root)
+
+    def book(self, asin):
+        return Book(self.root / asin)
+
+    def add(self, lists, progress=None, write=True):
+        """Make a folder for every listed book not yet here (and carry over its progress entry); with write False,
+        leave a book with no folder out instead. Returns the books in list order, then any other book folder by ASIN."""
+        progress = progress or {}
+        current = versions()
+        listed = []
+        for asin, title, domain in read_lists(lists):
+            book = self.book(asin)
+            if not (book.folder / 'book.json').exists():
+                if not write:
+                    continue
+                migrate(book, progress.get(asin), current)  # first: book.json marks the book as carried over
+                write_json(book.folder / 'book.json', {'asin': asin, 'title': title, 'domain': domain})
+            listed.append(book)
+        names = {b.asin for b in listed}
+        rest = sorted(p.parent.name for p in self.root.glob('*/book.json') if p.parent.name not in names)
+        return listed + [self.book(asin) for asin in rest]
+
+    def pause(self, job):
+        return read_json(self.root / f'pause.{job}.json')
+
+    def set_pause(self, job, data):
+        write_json(self.root / f'pause.{job}.json', {**data, 'at': time.time()})
+
+    def clear_pause(self, job):
+        (self.root / f'pause.{job}.json').unlink(missing_ok=True)
+
+    def active_pause(self, job, current, now=None):
+        """The job's pause while it holds; a pause whose time has come or whose stage has new code is removed."""
+        pause = self.pause(job)
+        if not pause:
+            return None
+        now = time.time() if now is None else now
+        due = pause.get('until') is not None and now >= pause['until']
+        new_code = pause.get('version') is not None and pause['version'] != current.get(pause.get('waits_on'))
+        if due or new_code:
+            self.clear_pause(job)
+            return None
+        return pause
+
+    def last_outcome(self, stage, books, skip):
+        """The newest result of stage on another book: ('failure' | 'record', its data), or None."""
+        outcomes = []
+        for book in books:
+            if book.asin == skip:
+                continue
+            for kind, data in (('failure', book.failure(stage)), ('record', book.record(stage))):
+                if data and data.get('at'):
+                    outcomes.append((data['at'], kind, data, book.asin))
+        return max(outcomes, default=None)
+
+
+def record_failure(library, books, book, stage, checks, error, upstream=None, attempt=1, current=None, now=None):
+    """Record what a stage found wrong, by the RULES table. Returns 'paused' or 'parked' or 'retry'."""
+    current = current or versions()
+    now = time.time() if now is None else now
+    rule = classify(checks)
+    job = STAGE[stage].job
+    if rule.kind == SYSTEMIC:
+        library.set_pause(job, {'stage': stage, 'checks': list(checks), 'reason': error, 'book': book.asin,
+                                'waits_on': stage, 'version': current[stage],
+                                'until': rule.resume(error, now) if rule.resume else None})
+        return 'paused'
+    retry = rule.recapture and attempt <= RECAPTURES
+    previous = library.last_outcome(stage, books, skip=book.asin) if rule.breaker else None
+    version = current[rule.waits_on or stage]
+    book.fail(stage, {'checks': list(checks), 'error': error, 'attempt': attempt, 'retry': retry,
+                      'version': version}, upstream)
+    if previous and previous[1] == 'failure' and previous[2].get('version') == version:
+        repeated = sorted(c for c in set(checks) & set(previous[2].get('checks', [])) if RULES.get(c, BOOK_FAULT).breaker)
+        if repeated:
+            first = RULES.get(repeated[0], BOOK_FAULT)
+            blamed = first.blame or stage
+            waits_on = first.waits_on or blamed
+            library.set_pause(STAGE[blamed].job, {
+                'stage': blamed, 'checks': repeated, 'book': book.asin, 'waits_on': waits_on,
+                'version': current[waits_on], 'until': None,
+                'reason': f'{", ".join(repeated)} failed on {previous[3]} and {book.asin} in a row; waiting for new '
+                          f'{"" if waits_on == "code" else blamed + " "}code'})
+            return 'paused'
+    return 'retry' if retry else 'parked'

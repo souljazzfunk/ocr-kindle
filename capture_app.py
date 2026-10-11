@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
 """
-Capture the books Cloud Reader cannot open ("Kindle App Is Required") from the Kindle for Mac app, then convert and
-check them the same way as every other book.
+Capture the books Cloud Reader cannot open ("Kindle App Is Required") from the Kindle for Mac app, into their book
+folders, so the convert job (kc_run.py convert) converts and checks them the same way as every other book.
 
     KINDLE_APP_OK=1 venv/bin/python capture_app.py books.tsv
 
-Laiken chose this on 2026-10-11 for the books capture_books.py recorded as kindle_app_only, and only for them: every
+Laiken chose this on 2026-10-11 for the books the capture job parked as kindle_app_only, and only for them: every
 other book still comes from the Cloud Reader extension in Chrome. The command needs KINDLE_APP_OK=1 (the guard hook
-asks for it too). Each book is opened in the app, paged back to its start through the app's Go menu, captured with
-kindle2img.applescript into ~/Downloads/<title>/, then converted by capture_book.convert while the next book is
-already open and turning in the app (Laiken, 2026-10-11 20:27: the app sat idle for the 2 minutes of conversion). The
-app holds one book at a time and one book converts at a time; results are recorded in list order. The first book is the
-pilot: the run stops at the first book that does not pass (a book already captured is converted and recorded first),
-and the same command resumes there.
+asks for it too). Each book is opened in the app, paged back to its start, captured with kindle2img.applescript into
+<book folder>/pages/ and recorded as captured; the convert job picks it up while the app turns the next book. The run
+stops at the first book the app does not open or capture, and the same command resumes there.
 
 While a book is captured the Kindle window must stay in front, so the Mac's screen is busy until the run ends.
 """
@@ -23,14 +20,12 @@ import os
 import re
 import subprocess
 import sys
-import threading
 import time
 from pathlib import Path
 
 import ax
 import capture_book
-import locks
-import capture_books
+import book as books
 
 HERE = Path(__file__).resolve().parent
 OK_ENV = 'KINDLE_APP_OK'
@@ -76,20 +71,24 @@ def elements(script=osascript):
     return found
 
 
+def comparable(text):
+    return re.sub(r'[^a-z0-9]', '', (text or '').lower())
+
+
 def cover_of(title, found):
     """The library button of this book: its description starts with the title (then the author, New or RED)."""
-    key = capture_books.comparable(title)
+    key = comparable(title)
     for e in found:
-        if e['role'] == 'AXButton' and key and capture_books.comparable(e['description']).startswith(key[:30]):
+        if e['role'] == 'AXButton' and key and comparable(e['description']).startswith(key[:30]):
             return e
     return None
 
 
 def tab_of(title, found):
     """The tab bar's button for the recently read book (an AXRadioButton named after it), or None."""
-    key = capture_books.comparable(title)
+    key = comparable(title)
     for e in found:
-        if e['role'] == 'AXRadioButton' and key and capture_books.comparable(e['title'] or e['description']) == key:
+        if e['role'] == 'AXRadioButton' and key and comparable(e['title'] or e['description']) == key:
             return e
     return None
 
@@ -707,18 +706,17 @@ def probe(asin, title, folder, script=osascript, run=capture_book.run, sleep=tim
     return folder
 
 
-def app_books(books, progress):
-    """The books of the list Cloud Reader refused as app-only and no app run has finished yet: a book an earlier app
-    run failed (app_open, app_capture, a check) is tried again, so the same command resumes at it. On 2026-10-11 the
-    resume skipped For 91 Days In Tokyo, whose record then said app_open instead of kindle_app_only."""
-    return [(asin, title) for asin, title in books
-            if capture_book.APP_ONLY in progress.get(asin, {}).get('failures', [])
-            or (progress.get(asin, {}).get('capture') == 'kindle_app' and progress[asin].get('verdict') != 'done')]
+def app_books(listed):
+    """The listed books Cloud Reader refused as app-only, or that an earlier app run parked: the same command resumes
+    at a book the app did not open (on 2026-10-11 a resume skipped For 91 Days In Tokyo once its record said app_open)."""
+    def app_only(book):
+        failure = book.failure('capture') or {}
+        return capture_book.APP_ONLY in failure.get('checks', []) or failure.get('via') == 'kindle_app'
+    return [book for book in listed if app_only(book)]
 
 
-def capture_pages(asin, title, downloads, open_=open_book, start=go_to_start, take=capture):
-    """Open one book in the app, page it to its start and capture it: (folder, None), or (None, the failure)."""
-    folder = downloads / title
+def capture_pages(asin, title, folder, open_=open_book, start=go_to_start, take=capture):
+    """Open one book in the app, page it to its start and capture it into folder: (folder, None), or (None, the failure)."""
     if list(folder.glob('page_*.png')):
         # kindle2img.applescript numbers on from the highest page, so pages already here would be captured twice.
         return None, {'asin': asin, 'blocking_failures': ['app_folder'], 'warnings': [],
@@ -734,105 +732,41 @@ def capture_pages(asin, title, downloads, open_=open_book, start=go_to_start, ta
     return folder, None
 
 
-def run_book(asin, title, downloads, convert=capture_book.convert, open_=open_book, start=go_to_start, take=capture):
-    """One book from the app to its report, in this thread (the pilot path; main() converts in the background)."""
-    folder, failure = capture_pages(asin, title, downloads, open_=open_, start=start, take=take)
-    return failure or convert(asin, title, source=folder)
-
-
-class Converting:
-    """One captured book converting in its own thread while the app turns the next; outcome once it has ended."""
-
-    def __init__(self, asin, title, work):
-        self.asin, self.title, self.outcome = asin, title, None
-        self.thread = threading.Thread(target=self._run, args=(work,), daemon=True)
-        self.thread.start()
-
-    def _run(self, work):
-        try:
-            self.outcome = work()
-        except Exception as e:  # recorded like any other failure, so the summary names it
-            self.outcome = {'asin': self.asin, 'blocking_failures': ['crash'], 'warnings': [], 'error': str(e)}
-
-    def result(self):
-        self.thread.join()
-        return self.outcome
-
-
-def main(argv=None, env=os.environ, capture=capture_pages, convert=capture_book.convert):
+def main(argv=None, env=os.environ, capture=capture_pages):
     parser = argparse.ArgumentParser(description='Capture the Kindle-app-only books of a list from the Kindle app')
-    parser.add_argument('list', type=Path, help='ASIN<TAB>title per line, the same list capture_books.py ran')
-    parser.add_argument('--downloads', type=Path, default=Path.home() / 'Downloads')
+    parser.add_argument('list', type=Path, help='ASIN<TAB>title per line, a list the capture job reads')
+    parser.add_argument('--root', type=Path, default=books.ROOT, help='where the book folders live')
+    parser.add_argument('--downloads', type=Path, default=Path.home() / 'Downloads', help='where --probe writes')
     parser.add_argument('--probe', metavar='ASIN', help='only open this book and record what the app shows')
     args = parser.parse_args(argv)
     if env.get(OK_ENV) != '1':
         sys.exit(f'Not starting: the Kindle app is used only when Laiken asks for it; run with {OK_ENV}=1.')
     if args.probe:
-        titles = dict(capture_books.read_list(args.list))
+        titles = {asin: title for asin, title, _ in books.read_tsv(args.list)}
         folder = probe(args.probe, titles.get(args.probe, args.probe), args.downloads / 'kindle-probe' / args.probe)
         print(f'Probe written to {folder}: open.txt, screen-<display>.png, chrome-<display>.png, ui-library.txt, ui-book.txt, '
               'ui-reader.txt, ui-chrome.txt, probe.json')
         return
-    try:
-        # One run per list: two runs would each write back the whole progress file over the other's results.
-        locks.keep(args.list.with_suffix('.lock'), wait=False)
-    except locks.Busy:
-        sys.exit(f'Not starting: another run is working through {args.list.name}. Run this once it has ended.')
-    progress_path = args.list.with_suffix('.progress.json')
-    progress = capture_books.load_progress(progress_path)
-    todo = app_books(capture_books.read_list(args.list), progress)
+    todo = app_books(books.Library(args.root).add([args.list], write=False))
     print(f'{len(todo)} Kindle-app-only books', flush=True)
-    converter = capture_books.converter_version()
-
-    def record(asin, title, data):
-        """Write one finished book to the progress file. Returns why the run must stop, or None."""
-        verdict = 'failed' if data['blocking_failures'] else 'done'
-        progress[asin] = {'title': title, 'verdict': verdict, 'failures': data['blocking_failures'],
-                          'warnings': data['warnings'], 'error': data.get('error'), 'capture': 'kindle_app',
-                          'at': time.strftime('%Y-%m-%dT%H:%M:%S'), 'converter': converter}
-        if data.get('source'):
-            progress[asin]['source'] = data['source']
-        progress_path.write_text(json.dumps(progress, ensure_ascii=False, indent=1), encoding='utf-8')
-        print(f'=== {verdict}: {title}' + (f' ({", ".join(data["blocking_failures"])}: {data.get("error") or ""})'
-                                          if data['blocking_failures'] else ''), flush=True)
-        if data['blocking_failures']:
-            # Laiken, 2026-10-10: one book first, the rest only once a book comes out right.
-            return f'\nStopped: {title} did not pass. Fix the cause, then run the same command to resume.'
-        return None
-
-    def stop(reason):
-        print(reason, flush=True)
-        sys.exit(2)
-
-    converting = None  # the book captured before this one, converting while the app turns this one
-    for asin, title in todo:
-        if converting is not None and not converting.thread.is_alive():
-            # It ended during the last capture: a book that failed stops the run before the app opens another.
-            reason = record(converting.asin, converting.title, converting.result())
-            converting = None
-            if reason:
-                stop(reason)
-        print(f'=== {title} ({asin}) from the Kindle app', flush=True)
+    current = books.versions()
+    for book in todo:
+        title = book.title or book.asin
+        print(f'=== {title} ({book.asin}) from the Kindle app', flush=True)
         try:
-            folder, failure = capture(asin, title, args.downloads)
-        except Exception as e:  # recorded like any other failure, so the summary names it
-            folder, failure = None, {'asin': asin, 'blocking_failures': ['crash'], 'warnings': [], 'error': str(e)}
-        if converting is not None:  # one conversion at a time, recorded in list order
-            reason = record(converting.asin, converting.title, converting.result())
-            converting = None
-            if reason:
-                if folder is not None:  # the book just captured is converted and recorded, not thrown away
-                    record(asin, title, convert(asin, title, source=folder))
-                stop(reason)
+            folder, failure = capture(book.asin, title, book.folder / 'pages')
+        except Exception as e:  # recorded like any other failure, so the next run says why
+            folder, failure = None, {'blocking_failures': ['crash'], 'error': str(e)}
         if failure:
-            stop(record(asin, title, failure))
-        print(f'=== converting {title} in the background', flush=True)
-        converting = Converting(asin, title, lambda a=asin, t=title, f=folder: convert(a, t, source=f))
-    if converting is not None:
-        reason = record(converting.asin, converting.title, converting.result())
-        if reason:
-            stop(reason)
-    print(f'\nAll {len(todo)} Kindle-app-only books done.')
+            book.fail('capture', {'checks': failure['blocking_failures'], 'error': failure.get('error'), 'attempt': 1,
+                                  'retry': False, 'via': 'kindle_app', 'version': current['capture']})
+            print(f'\nStopped: {title}: {", ".join(failure["blocking_failures"])}: {failure.get("error") or ""}. '
+                  'Fix the cause, then run the same command to resume.', flush=True)
+            sys.exit(2)
+        book.succeed('capture', {'pages': str(folder), 'title': title, 'attempt': 1, 'via': 'kindle_app',
+                                 'version': current['capture']})
+        print(f'=== captured {title}; the convert job converts it', flush=True)
+    print(f'\nAll {len(todo)} Kindle-app-only books captured.')
 
 
 if __name__ == '__main__':

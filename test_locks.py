@@ -9,12 +9,20 @@ import locks
 
 TRY = textwrap.dedent('''
     import sys, locks
-    try:
-        locks.keep(sys.argv[1], wait=False)
-        print('got it')
-    except locks.Busy:
+    def busy(*args, **kwargs):  # called only when the lock would be waited for
         print('busy')
+        sys.exit()
+    locks.keep(sys.argv[1], say=busy)
+    print('got it')
 ''')
+
+
+class Busy(Exception):
+    pass
+
+
+def refuse(*args, **kwargs):
+    raise Busy()
 
 
 def other_process(lock, env=None):
@@ -49,12 +57,12 @@ def test_a_lock_is_let_go_when_its_holder_ends_however_it_ends(tmp_path):
     holder = subprocess.Popen([sys.executable, '-c', 'import sys, time, locks; locks.keep(sys.argv[1]); print("held", flush=True); time.sleep(30)',
                                str(lock)], stdout=subprocess.PIPE, text=True, cwd=os.path.dirname(locks.__file__))
     assert holder.stdout.readline().strip() == 'held'
-    with pytest.raises(locks.Busy):
-        with locks.holding(lock, wait=False):
+    with pytest.raises(Busy):
+        with locks.holding(lock, say=refuse):
             pass
     holder.kill()
     holder.wait()
-    with locks.holding(lock, wait=False):
+    with locks.holding(lock, say=refuse):
         pass
 
 
@@ -81,15 +89,15 @@ def test_git_calls_on_the_checkout_wait_for_each_other_as_on_2026_10_11(tmp_path
     assert order == ['pull starts', 'pull ends', 'fetch']
 
 
-def test_the_list_and_the_capture_hold_the_checkout_while_they_run_git(monkeypatch):
-    import capture_books
+def test_the_runner_and_the_capture_hold_the_checkout_while_they_run_git(monkeypatch):
     import extension_state
+    import kc_run
     held = []
     monkeypatch.setattr(locks, 'git_checkout', lambda root: _Recorder(held))
     extension_state.folder_problem(git=lambda *a: type('R', (), {'returncode': 0, 'stdout': 'main', 'stderr': ''})())
     assert held == ['in', 'out']
     held.clear()
-    capture_books.update_checkout(git=lambda *a: type('R', (), {'returncode': 0, 'stdout': 'main' if a[1] == '--abbrev-ref' else 'a', 'stderr': ''})())
+    kc_run.pull_main(git=lambda *a: type('R', (), {'returncode': 0, 'stdout': 'main', 'stderr': ''})())
     assert held == ['in', 'out']
 
 
