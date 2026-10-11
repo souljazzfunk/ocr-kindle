@@ -32,6 +32,7 @@ HERE = Path(__file__).resolve().parent
 OK_ENV = 'KINDLE_APP_OK'
 POLL_S = 0.3  # the element tree is read this often until what is waited for appears (Laiken, 2026-10-11 19:59:
 # opening a book took minutes; fixed sleeps of 2-5 s stood at a dozen places)
+RENDER_TRIES = 12  # clicks on the page, 2 s apart, while a book renders after it opens
 PRESS_WAIT_S = 8  # the library after the first press of a cover, before the cover's centre is clicked instead
 OPEN_WAIT_S = 45
 # A book not yet on this Mac stays in the library on the first open; opening it again starts its download
@@ -426,7 +427,9 @@ def go_to_start(script=osascript, sleep=time.sleep, clock=time.monotonic):
     book where it was (runs of 2026-10-11 19:02 and 19:11)."""
     began = clock()
     dismiss_sheet(script, sleep)
-    found = show_chrome(script, sleep, clock)
+    # A book can take a while to render after it opens: Iceland showed a blank cream page for over 30 s on
+    # 2026-10-11 20:11 and three clicks over 6 s found no toolbar; so the clicks go on for about half a minute.
+    found = show_chrome(script, sleep, clock, tries=RENDER_TRIES)
     if not chrome_shown(found):
         return 'the reader shows no toolbar after clicks on the page; it shows: ' + describe(found)
     where = location_of(found)
