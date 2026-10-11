@@ -8,6 +8,7 @@ can be trusted.
 """
 
 import argparse
+import dataclasses
 import difflib
 import html
 import re
@@ -42,10 +43,14 @@ DASH = re.compile(r'(?<![\w-])([A-Za-z]+)-([A-Za-z]+)(?![\w-])')
 ODD_CASE = re.compile(r'\b[A-Za-z]*[a-z][A-Z][A-Za-z]*\b')
 STRAY_SYMBOL = re.compile(r'(?m)^[>›<‹]$\n?|(?<= )[>›<‹] ')
 # A book with code uses < and > as operators, prompts and tags ("age > 21", ">>> ", "<h3 >"); only the chevrons are stray.
+PROMPTS = 10  # prompts at line starts, whole or broken, that make a book one with Python sessions
 CODE = re.compile(r'>>>|[=!<>]=|</[a-z][a-z0-9]*>')
 # A Python prompt that lost a > (">>age = 19") or gained a space (">> > sum(digits)"). Python Crash Course had 73 such
 # lines: the old stray_symbol fix took the "> " off a ">>> " prompt in each of its rounds.
-BROKEN_PROMPT = re.compile(r'(?m)(?:^|(?<=\s))(?:>>(?: ?>)? ?|> ?>> ?)(?=[^>\s])(?<!>>> )[^\n]{0,24}')
+# Vision also reads the prompt's chevrons as › (Automate the Boring Stuff: "›› › spam", "›> › import openpyxl"), and the
+# old first-hit fix added a > to a whole prompt each round (">>>>>> phoneNumRegex").
+BROKEN_PROMPT = re.compile(r'(?m)(?:^|(?<=\s))(?:[>›»] ?){2,6}(?=[^>›»\s])[^\n]{0,24}')
+PROMPT_RUN = re.compile(r'(?m)^(?:[>›»] ?){2,6}(?=[^>›»\s])')
 WORD = re.compile(r"[A-Za-z]+(?:['’-][A-Za-z]+)*")
 # Vision reads the decorative 7 and 8 of How to Write a Lot as Z and &, in the text too ("In Chapter Z",
 # "Chapters 6, Z, and &"). Only chapter references are rewritten, so Generation Z and R&D stay as they are.
@@ -63,9 +68,16 @@ class Finding:
     page: str
     before: str
     after: str | None  # None: report only
+    at: int | None = None  # where before starts in the page; the fix goes there and nowhere else
 
     def apply(self, text):
-        """Replace the first hit outside code blocks; a finding that holds a block (a whole page) as it is."""
+        """Replace before where it was found; a finding with no place, the first hit outside code blocks (a finding that
+        holds a block, a whole page, as it is). A first-hit fix can land elsewhere: in Automate the Boring Stuff it added
+        a > to a whole prompt each round while the broken one stayed (2026-10-11)."""
+        if self.at is not None:
+            if text[self.at:self.at + len(self.before)] == self.before:
+                return text[:self.at] + self.after + text[self.at + len(self.before):]
+            return text  # the page changed under it; the next round finds it again
         if '```' in self.before:
             return text.replace(self.before, self.after, 1)
         parts = CODE_BLOCK.split(text)  # code blocks at the odd places
@@ -196,24 +208,29 @@ def odd_case(book):
 def stray_symbol(book):
     """A Kindle chevron read into the text. The finding keeps the characters before it, so the fix removes this one and
     not the first "> " on the page: in Python Crash Course that was a ">>> " prompt, every round, while the match stayed."""
-    code = CODE.search(book.corpus)
+    code = CODE.search(book.corpus) or len(PROMPT_RUN.findall(book.corpus)) >= PROMPTS
     for stem, text in book.pages.items():
         for m in STRAY_SYMBOL.finditer(text):
-            if code and m.group().strip() in '<>':
-                continue
-            start = max(0, m.start() - 12)
-            yield Finding('stray_symbol', stem, text[start:m.end()], text[start:m.start()])
+            line = text.rfind('\n', 0, m.start()) + 1
+            if code and (m.group().strip() in '<>' or re.fullmatch(r'[ >›»]*', text[line:m.start()])):
+                continue  # code's own < and >, or a prompt read as chevrons (repl_prompt)
+            start = max(line, m.start() - 12)
+            yield Finding('stray_symbol', stem, text[start:m.end()], text[start:m.start()], at=start)
 
 
 def repl_prompt(book):
-    """Put back the ">>> " of a Python prompt, in a book whose prompts are mostly whole."""
-    if book.corpus.count('>>> ') < 10:
+    """Put back the ">>> " of a Python prompt, in a book with Python sessions, in code blocks too: they keep what Vision
+    read, and ">> > spam = int(spam)" is still a broken prompt there."""
+    if len(PROMPT_RUN.findall(book.corpus)) < PROMPTS:
         return
     for stem, text in book.pages.items():
+        blocks = [m.span() for m in CODE_BLOCK.finditer(text)]
         for m in BROKEN_PROMPT.finditer(text):
             line = m.group()
-            if not line.startswith('>>> '):
-                yield Finding('repl_prompt', stem, line, '>>> ' + line.lstrip('> '))
+            if any(a < m.start() < b for a, b in blocks) and text[m.start() - 1] != '\n':
+                continue  # in code only a line's start is a prompt: "x >> 2" is a shift
+            if not line.startswith('>>> ') or line.startswith('>>> >'):
+                yield Finding('repl_prompt', stem, line, '>>> ' + line.lstrip('>›» '), at=m.start())
 
 
 def l_for_i(book):
@@ -231,7 +248,7 @@ def l_for_i(book):
                 # The neighbouring characters keep the replacement off a longer word ("Also").
                 start, end = max(0, m.start() - 1), min(len(text), m.end() + 1)
                 before = text[start:end]
-                yield Finding('l_for_i', stem, before, before.replace(run, best, 1))
+                yield Finding('l_for_i', stem, before, before.replace(run, best, 1), at=start)
 
 
 def line_at(text, at):
@@ -315,7 +332,7 @@ def section_number(book):
         for m in SECTION_NUMBER.finditer(text):
             if not m.group(1):
                 # The epigraph's start goes with it, so the fix changes this number and not another "1" on the page.
-                yield Finding('section_number', stem, m.group(), f'{marks} {m.group(2)}\n\n{m.group(3)}')
+                yield Finding('section_number', stem, m.group(), f'{marks} {m.group(2)}\n\n{m.group(3)}', at=m.start())
 
 
 def decorative_digit(book):
@@ -351,20 +368,36 @@ def load_pages(folder):
             for img in page_images(folder) if img.with_suffix('.txt').exists()}
 
 
-# Detectors that judge whole pages; the others look at words, so they see the pages without their code blocks.
-PAGE_DETECTORS = (duplicate_page, seam_overlap, foreign_page)
+# Detectors that judge whole pages, and repl_prompt, which mends prompts in code too; the others look at words, so they
+# see the pages without their code blocks.
+PAGE_DETECTORS = (duplicate_page, seam_overlap, foreign_page, repl_prompt)
 
 
 def find_all(book):
+    seams = {stem: [(m.start(), len(m.group())) for m in CODE_BLOCK.finditer(text)] for stem, text in book.pages.items()}
     prose = Book(book.folder, {stem: CODE_BLOCK.sub('', text) for stem, text in book.pages.items()}, book._lines)
-    return [f for detect in DETECTORS for f in detect(book if detect in PAGE_DETECTORS else prose)]
+
+    def placed(f):
+        """A word-level finding's place in the page with its code blocks back."""
+        if f.at is None:
+            return f
+        at, removed = f.at, 0
+        for start, length in seams.get(f.page, []):
+            if start - removed > at:
+                break
+            removed += length
+        return dataclasses.replace(f, at=at + removed)
+
+    return [f if detect in PAGE_DETECTORS else placed(f)
+            for detect in DETECTORS for f in detect(book if detect in PAGE_DETECTORS else prose)]
 
 
 def apply(pages, findings):
+    """Placed findings go in from the end of the page, so each lands where it was found; then the others."""
     changed = {}
-    for f in findings:
-        if f.after is not None:
-            changed[f.page] = f.apply(changed.get(f.page, pages[f.page]))
+    fixes = [f for f in findings if f.after is not None]
+    for f in sorted(fixes, key=lambda f: (f.at is None, -(f.at or 0))):
+        changed[f.page] = f.apply(changed.get(f.page, pages[f.page]))
     return changed
 
 
