@@ -43,6 +43,10 @@ function probePage(doc) {
       textLayer: doc.querySelectorAll('#kr-renderer .kg-view > .kg-a11y-abs').length,
     },
     titleCandidates: sample('[class*="title" i], [data-testid*="title" i], h1'),
+    // The reader's buttons and menu items by label, so a jump to the start can be built from what the reader shows
+    // instead of paging back one turn at a time (Automate the Boring Stuff paged back from 517).
+    controls: [...doc.querySelectorAll('button, [role="button"], [role="menuitem"], a[aria-label]')].slice(0, 80)
+      .map((el) => (el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 60)).filter(Boolean),
     a11y: sample('[class*="a11y" i], [aria-live], [role="document"], [role="main"]'),
     body: describe(doc.body, 0),
   };
@@ -100,4 +104,18 @@ function appOnly(text) {
   return /Kindle App Is Required|can only be opened using Kindle app/i.test(text || '');
 }
 
-if (typeof module !== 'undefined') module.exports = { pickTitle, probePage, parsePosition, atStart, turnGuard, appOnly, APP_ONLY, TURNS_PER_PAGE, EXTRA_TURNS, STUCK_TURNS };
+// A heartbeat in the tab title, which capture_book.py reads through AppleScript, so a capture that stopped moving is
+// told from a long book that is still turning. On 2026-10-11 For 91 Days in Oviedo (265 pages) and Python Crash
+// Course (500+) gave no ZIP in an hour, while Oviedo's recapture took two minutes, and nothing showed which it was.
+// The page's visibility is in it too: Chrome slows the timers of a hidden tab, and the capture turns pages on timers.
+const BEAT = /^\[kc [^\]]*\] /;
+
+function heartbeat(title, stage, pos, visibility) {
+  return `[kc ${stage} ${pos || '?'} ${visibility}] ${withoutHeartbeat(title)}`;
+}
+
+function withoutHeartbeat(title) {
+  return (title || '').replace(BEAT, '');
+}
+
+if (typeof module !== 'undefined') module.exports = { pickTitle, probePage, parsePosition, atStart, turnGuard, appOnly, APP_ONLY, TURNS_PER_PAGE, EXTRA_TURNS, STUCK_TURNS, heartbeat, withoutHeartbeat };

@@ -18,10 +18,18 @@ function position() {
   return pos ? `${pos.n}/${pos.m}` : '';
 }
 
+let stage = '';
+function beat(now = stage) {
+  stage = now;
+  document.title = now ? heartbeat(document.title, now, position(), document.visibilityState) : withoutHeartbeat(document.title);
+}
+// Fired even while the tab is hidden, so the title says so when the timers have slowed.
+document.addEventListener('visibilitychange', () => { if (stage) beat(); });
+
 function bookTitle(asin) {
   // .fixed-book-title and .top-chrome__book-title are the full-book reader's (dom-probe.json, AI for Educators).
   const element = document.querySelector('.book-title, .fixed-book-title, .top-chrome__book-title, [data-testid*="book-title" i], [class*="BookTitle"]');
-  return pickTitle([element?.textContent, document.title], asin);
+  return pickTitle([element?.textContent, withoutHeartbeat(document.title)], asin);
 }
 
 // Cloud Reader overlays the page image with a screen-reader text layer of <p> and <h1>-<h6> elements.
@@ -78,6 +86,7 @@ async function goToStart(isRunning) {
   const guard = turnGuard(parsePosition(document.body.innerText)?.m);
   while (img && isRunning()) {
     const pos = parsePosition(document.body.innerText);
+    beat('back');
     if (pos?.n === 1) return '';
     // turnPage only returns once the screen has changed, so every turn here moved.
     const stop = guard(pos, true);
@@ -99,6 +108,7 @@ async function captureBook(save, isRunning) {
   let stopped = '';
   while (img && isRunning()) {
     const data = await toPng(img);
+    beat('page');
     stopped = guard(parsePosition(document.body.innerText), data !== previous);
     if (stopped) break;
     if (data !== previous) {
@@ -233,10 +243,12 @@ async function startCapture(asin, auto, again = false) {
   };
   const count = await captureBook(save, () => running);
   running = false;
+  beat('saving');
   const textPages = files.filter((f) => f.name.endsWith('.txt')).length;
   console.log(`[kindle-capture] title "${bookTitle(asin)}", text layer on ${textPages} of ${count} pages`);
   const saved = count ? await download(zip(files), `${bookTitle(asin)}.zip`) : 'none';
   console.log(`[kindle-capture] saved ${count} pages`);
+  beat('');
   chrome.runtime.sendMessage({ badge: 'done' });
   // Sent last: for an automatic capture the worker closes this tab on it.
   chrome.runtime.sendMessage({ finish: { asin, pages: count, auto, download: saved } });

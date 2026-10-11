@@ -331,3 +331,41 @@ def test_only_the_runner_copies_a_book_to_drive_and_a_trial_conversion_does_not(
     assert copied == drive / 'AI for Educators.md' and copied.read_text(encoding='utf-8').startswith('# One')
     assert capture_book.publish(folder, 'AI for Educators', {}) is None
     assert capture_book.publish(folder, 'AI for Educators', {'GOOGLE_DRIVE_FOLDER': str(tmp_path / 'gone')}) is None
+
+
+def stalled_wait(tmp_path, titles, seconds=3600):
+    now = [0]
+    def sleep(s):
+        now[0] += s
+    beats = iter(titles)
+    last = ['']
+    def beat(asin):
+        last[0] = next(beats, last[0])
+        return last[0]
+    result = capture_book.wait_for_zip(tmp_path, set(), timeout=seconds, clock=lambda: now[0], sleep=sleep, asin='B07J4521M3',
+                                       tabs=lambda a: 1, beats=beat)
+    return result, now[0]
+
+
+def test_a_capture_whose_heartbeat_stops_is_ended_in_minutes_not_an_hour(tmp_path):
+    # 2026-10-11: Python Crash Course gave no ZIP in an hour and nothing showed whether it had stopped.
+    result, waited = stalled_wait(tmp_path, ['page 40/540 visible', 'page 41/540 visible'])
+    assert isinstance(result, capture_book.Stalled) and result == 'page 41/540 visible'
+    assert waited < capture_book.STALL_S + 10
+
+
+def test_a_hidden_tab_that_still_turns_slowly_is_redone_rather_than_waited_on(tmp_path):
+    titles = [f'page {n // 30}/540 hidden' for n in range(1000)]  # one new page a minute
+    result, waited = stalled_wait(tmp_path, titles)
+    assert isinstance(result, capture_book.Stalled) and 'hidden' in result and waited < capture_book.STALL_S + 10
+
+
+def test_a_long_book_that_keeps_turning_is_waited_on_past_the_hour(tmp_path):
+    titles = [f'page {n}/3000 visible' for n in range(10000)]
+    result, waited = stalled_wait(tmp_path, titles, seconds=600)
+    assert result is None and waited >= capture_book.ZIP_WAIT_LONG_S
+
+
+def test_without_a_heartbeat_the_wait_is_as_before(tmp_path):
+    result, waited = stalled_wait(tmp_path, [], seconds=600)
+    assert result is None and 600 <= waited < 620

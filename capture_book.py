@@ -17,6 +17,7 @@ first ZIP was unusable (the extension otherwise refuses to auto-start a saved bo
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -36,6 +37,14 @@ ZIP_WAIT_S = 3600
 SETTLE_S = 5
 TAB_GONE_S = 120  # no tab on the book this long, and no ZIP: the capture is over without one
 TAB_GONE = 'tab_gone'
+# The extension (1.9) keeps "[kc <stage> <page>/<pages> <visible|hidden>]" in the book tab's title while it captures.
+# Once one is seen, a capture whose heartbeat has not changed for STALL_S has stopped, however long the book; one that
+# keeps changing may run to ZIP_WAIT_LONG_S. On 2026-10-11 Python Crash Course and For 91 Days in Oviedo gave no ZIP
+# in an hour, and nothing showed whether they had stopped or were slow.
+HEARTBEAT = re.compile(r'\[kc ([^\]]*)\]')
+STALL_S = 300
+ZIP_WAIT_LONG_S = 4 * 3600
+STALL = 'capture_stall'
 APP_ONLY = 'kindle_app_only'  # Cloud Reader shows "Kindle App Is Required"; the Kindle app is used only on Laiken's word
 TAB_TRIES = 3
 GEMINI_CHECK = 'gemini'
@@ -103,15 +112,32 @@ def skip_notices(downloads, asin):
     return set(Path(downloads).glob(f'{asin}.skip*.json'))
 
 
-def wait_for_zip(downloads, before, timeout=ZIP_WAIT_S, clock=time.monotonic, sleep=time.sleep, asin=None, tabs=None):
+class Stalled(str):
+    """wait_for_zip's answer for a capture whose heartbeat stopped; the string is the last heartbeat."""
+
+
+def book_heartbeat(asin):
+    """The heartbeat in the title of this book's Brave tab, or '' (read only)."""
+    script = (f'tell application "{BRAVE}"\nset out to ""\nrepeat with w in windows\nrepeat with t in tabs of w\n'
+              f'if URL of t contains "asin={asin}" then set out to out & title of t & linefeed\n'
+              'end repeat\nend repeat\nreturn out\nend tell')
+    result = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
+    found = HEARTBEAT.search(result.stdout or '')
+    return found.group(1) if found else ''
+
+
+def wait_for_zip(downloads, before, timeout=ZIP_WAIT_S, clock=time.monotonic, sleep=time.sleep, asin=None, tabs=None,
+                 beats=None):
     """The first new .zip whose size has stopped changing, a new skip notice for asin, TAB_GONE when the book's tab
     has been gone TAB_GONE_S with neither, or None when nothing came in timeout.
 
     2026-10-11: the tab on For 91 Days In Tokyo vanished a second after it opened, with no ZIP and no skip notice,
     and the list waited the full hour for a ZIP that could no longer come.
     """
-    deadline = clock() + timeout
+    start = clock()
+    deadline = start + timeout
     gone_since = None
+    last_beat, beat_since, hidden_since = '', None, None
     while clock() < deadline:
         skipped = skip_notices(downloads, asin) - before if asin else set()
         if skipped:
@@ -133,6 +159,18 @@ def wait_for_zip(downloads, before, timeout=ZIP_WAIT_S, clock=time.monotonic, sl
                     return TAB_GONE
             elif count:
                 gone_since = None
+        if beats and asin:
+            beat = beats(asin)
+            if beat and beat != last_beat:
+                last_beat, beat_since = beat, clock()
+                deadline = start + ZIP_WAIT_LONG_S  # it is moving: a long book may take more than the hour
+            elif beat_since is not None and clock() - beat_since >= STALL_S:
+                return Stalled(last_beat)
+            # A hidden tab may still turn, but about once a minute: a long book would take hours, so it is redone in
+            # a fresh tab, which opens in front.
+            hidden_since = (hidden_since or clock()) if beat.endswith(' hidden') else None
+            if hidden_since is not None and clock() - hidden_since >= STALL_S:
+                return Stalled(last_beat)
         sleep(2)
     return None
 
@@ -242,8 +280,12 @@ def convert(asin, title=None, model='vision', domain='read.amazon.com', download
                                 recapture)
         before = set(downloads.glob('*.zip')) | skip_notices(downloads, asin)
         open_in_brave(asin, domain, recapture)
-        source = wait_for_zip(downloads, before, asin=asin, tabs=book_tabs)
+        source = wait_for_zip(downloads, before, asin=asin, tabs=book_tabs, beats=book_heartbeat)
         tab_closed = ensure_tab_closed(asin)
+        if isinstance(source, Stalled):
+            return not_captured(asin, STALL, f'the capture stopped moving for {STALL_S // 60} minutes at "{source}" '
+                                '(stage, page, and whether the tab was on screen); the tab was '
+                                f'{"closed" if tab_closed else "left open"}', recapture)
         if source == TAB_GONE:
             return not_captured(asin, TAB_GONE, f'the book tab closed with no ZIP and no skip notice in {downloads}; '
                                 'Brave or the reader may have dropped it', recapture)

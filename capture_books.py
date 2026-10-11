@@ -33,7 +33,7 @@ from check_book import CAPTURE
 CAPTURE_CHECKS = {'pages', 'text', 'start_position', 'end_position'}
 # A capture that ended with no ZIP and no reason (the tab vanished, 2026-10-11 For 91 Days In Tokyo) is also tried
 # once more in a fresh tab before the list stops on it.
-NO_ZIP_CHECKS = {'tab_gone', 'no_zip'}
+NO_ZIP_CHECKS = {'tab_gone', 'no_zip', 'capture_stall'}
 RECAPTURES = 1
 # Failures that come from the browser or the extension, not from one book: every later book would fail the same
 # way, so the list stops at the first book that still has one (after its recapture). On 2026-10-10 a run went on
@@ -41,7 +41,7 @@ RECAPTURES = 1
 # A capture that never made a ZIP (refused, cut off by a turn cap, a tab left from an earlier run, an hour with no ZIP)
 # stops it too: on 2026-10-10 a resumed run opened a second tab on a book the first was still paging through.
 STOP_CHECKS = {'download', 'extension_version', 'tab_closed', 'start_position', 'end_position',
-               'capture_refused', 'capture_stop', 'tab_before', 'no_zip', 'tab_gone'}
+               'capture_refused', 'capture_stop', 'tab_before', 'no_zip', 'tab_gone', 'capture_stall'}
 
 
 HERE = Path(__file__).resolve().parent
