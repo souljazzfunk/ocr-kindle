@@ -30,6 +30,7 @@ import capture_books
 HERE = Path(__file__).resolve().parent
 OK_ENV = 'KINDLE_APP_OK'
 OPEN_WAIT_S = 60
+SETTLE_S = 5  # the library after Close Book, before the first press
 # A book not yet on this Mac stays in the library on the first open; opening it again starts its download
 # (Laiken, 2026-10-11 17:21 JST), which takes longer than a plain open.
 DOWNLOAD_WAIT_S = 300
@@ -84,6 +85,12 @@ tell application "System Events" to tell process "Kindle"
         end try
     end repeat
     return "none"
+end tell
+'''
+CLICK_AT = '''
+tell application "System Events" to tell process "Kindle"
+    click at {{{x}, {y}}}
+    return "clicked"
 end tell
 '''
 CLICK_PAGE = '''
@@ -169,11 +176,19 @@ def open_book(asin, title, script=osascript, run=capture_book.run, clock=time.mo
             return f'no cover for this title in the Kindle library (search: {searched}); it shows: ' + describe(found)
     # Two presses at most: the second is for a download that has not started (Laiken, 17:21), or for a first press
     # that only focused the window (run of 18:12: Kindle was not frontmost, the library stayed).
+    # The second press on a downloaded book is a real click on the cover's centre: in the runs of 2026-10-11 18:12
+    # and 18:24, right after Close Book, AXPress on the cover left the library on screen with Kindle in front.
     presses = []
+    sleep(SETTLE_S)
     while len(presses) < 2:
         presses.append(bring_front(script, sleep))
-        _, pressed, _ = script(PRESS_COVER.format(title=_quote(title)))
         cover = cover_of(title, found)
+        if presses[1:] and cover and 'Not Downloaded' not in cover['value']:
+            x, y = (int(v) for v in cover['position'].split(','))
+            w, h = (int(v) for v in cover['size'].split(','))
+            script(CLICK_AT.format(x=x + w // 2, y=y + h // 2))
+        else:
+            script(PRESS_COVER.format(title=_quote(title)))
         wait = DOWNLOAD_WAIT_S if len(presses) == 2 and cover and 'Not Downloaded' in cover['value'] else OPEN_WAIT_S
         deadline = clock() + wait
         while clock() < deadline:
@@ -186,7 +201,7 @@ def open_book(asin, title, script=osascript, run=capture_book.run, clock=time.mo
             break
     return (f'the Kindle app still shows its library {OPEN_WAIT_S} s after pressing the cover of this book'
             + (' (and after pressing it again for its download)' if cover and 'Not Downloaded' in cover['value'] else '')
-            + (' (and after pressing it again)' if cover and 'Not Downloaded' not in cover['value'] and len(presses) == 2 else '')
+            + (' (and after clicking its centre)' if cover and 'Not Downloaded' not in cover['value'] and len(presses) == 2 else '')
             + '; the cover says: ' + (cover['value'] if cover else 'gone')
             + '; frontmost before the presses: ' + ', '.join(presses))
 

@@ -154,9 +154,12 @@ def test_a_cover_not_downloaded_is_pressed_again_and_waited_for_as_laiken_said()
     app = App([LIBRARY])
     problem = capture_app.open_book('B2', 'For 91 Days In Tokyo', script=app, run=lambda c: None,
                                     clock=lambda: next(clock), sleep=lambda s: None)
-    assert sum('AXPress' in c for c in app.calls) == 2 and 'Book Downloaded' in problem and 'pressing it again)' in problem
+    # The second try is a real click on the cover's centre (runs of 18:12 and 18:24: AXPress right after Close Book
+    # left the library on screen); the cover at 1332,1279 of 147x220 is clicked at 1405,1389.
+    assert sum('AXPress' in c for c in app.calls) == 1 and 'Book Downloaded' in problem and 'clicking its centre)' in problem
+    assert any('click at {1405, 1389}' in c for c in app.calls)
     activations = [i for i, c in enumerate(app.calls) if 'frontmost is true' in c]
-    presses = [i for i, c in enumerate(app.calls) if 'AXPress' in c]
+    presses = [i for i, c in enumerate(app.calls) if 'AXPress' in c or 'click at {1405' in c]
     assert len(activations) == 2 and all(a < p for a, p in zip(activations, presses)) and 'frontmost before' in problem
 
 
