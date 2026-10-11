@@ -100,6 +100,7 @@ tell application "System Events" to tell process "Kindle"
     return "none"
 end tell
 '''
+PRESS_TEXT = PRESS_TITLED.replace('role of e is "AXButton"', 'role of e is "AXStaticText"')
 CLICK_AT = '''
 tell application "System Events" to tell process "Kindle"
     click at {{{x}, {y}}}
@@ -363,27 +364,67 @@ def _quartz_drag(x0, y0, x1, y1, sleep=time.sleep):
         sleep(0.3)
 
 
-def toc_cover(slider, script=osascript, sleep=time.sleep, drag=None):
-    """Open the Table of Contents and click its "Cover" row. Probe of 2026-10-11 19:20 (Bolivia): the panel slides
-    in at the left and lists "Cover" then "Beginning" as AXStaticText, not buttons, so the row is clicked at its
-    centre; the dimmed area and the X are "Close menu" buttons."""
+def toc_first(slider, script=osascript, sleep=time.sleep, drag=None):
+    """Open the Table of Contents and click its topmost entry. Probe of 2026-10-11 19:20 (Bolivia): the panel slides
+    in at the left with the title (AXHeading), the author, a "Close menu" X, then the entries ("Cover", "Beginning")
+    as AXStaticText, not buttons. Laiken, 19:26: any topmost entry leads to the start, not only "Cover". Checked on
+    the Mac at 19:26: AXPress on the "Cover" text moved Bolivia from Location 185 to Location 1, while synthetic
+    mouse events are unreliable in this app; so the first static text after the X is pressed, and only clicked at
+    its centre when the press is refused."""
     _, pressed, _ = script(PRESS_TITLED.format(title='"Table of Contents"'))
     if pressed != 'pressed':
         return 'no Table of Contents button'
     sleep(2)
     found = elements(script)
-    row = next((e for e in found if e['role'] == 'AXStaticText' and 'Cover' in (e['title'], e['description'])), None)
-    if row is None:
+    closes = [i for i, e in enumerate(found) if 'Close menu' in (e['title'], e['description'])]
+    rows = [e for e in found[closes[-1] + 1:] if e['role'] == 'AXStaticText' and not LOCATION.search(e['description'])
+            and not LOCATION.search(e['value'])] if closes else []
+    if not rows:
         script(PRESS_TITLED.format(title='"Close menu"'))
-        return 'no Cover row in the table of contents'
-    x, y, w, h = _frame(row)
+        return 'no entry in the table of contents'
+    name = rows[0]['description'] or rows[0]['title']
+    _, pressed, _ = script(PRESS_TEXT.format(title=_quote(name)))
+    if pressed == 'pressed':
+        return f'pressed "{name}" at the top of the table of contents'
+    x, y, w, h = _frame(rows[0])
     script(CLICK_AT.format(x=x + w // 2, y=y + h // 2))
-    return 'clicked Cover in the table of contents'
+    return f'clicked "{name}" at the top of the table of contents'
+
+
+PAGE_BACK = 'tell application "System Events" to tell process "Kindle" to key code 123'  # ← previous page; kindle2img
+# turns forward with 124
+
+
+def page_back(slider, script=osascript, sleep=time.sleep, drag=None, batch=20, cap=3000):
+    """Press ← until the footer reads Location 1 or stops falling. Laiken, 2026-10-11 19:27: when no reader tool
+    works, page back one screen at a time rather than stop. The toolbar is hidden before each batch so the keys
+    reach the page, then shown again to read the footer."""
+    found = show_chrome(script, sleep)
+    where = location_of(found)
+    if where is None:
+        return 'no location in the footer to page back from'
+    presses = 0
+    while where[0] > 1 and presses < cap:
+        bring_front(script, sleep)
+        if chrome_shown(found):
+            reveal_chrome(script, sleep)  # the same click hides the toolbar
+        for _ in range(batch):
+            script(PAGE_BACK)
+            sleep(0.3)
+            presses += 1
+        sleep(1)
+        found = show_chrome(script, sleep)
+        now = location_of(found)
+        if now is None or now[0] >= where[0]:
+            return f'paged back {presses} times and the footer stayed at Location {where[0]}'
+        where = now
+    return f'paged back {presses} times'
 
 
 def go_to_start(script=osascript, sleep=time.sleep, drag=None):
     """Back to the start of the open book: close the details sheet, show the toolbar, click and then drag the
-    Reading Progress Bar to its start, else open the Table of Contents and click "Cover"; read the footer's
+    Reading Progress Bar to its start, else open the Table of Contents and press its topmost entry, else page back
+    with ← until the start; read the footer's
     "Location N of M", then hide the toolbar again.
     Returns '' or why it could not. Written from the probes of 2026-10-11 17:56 and 19:20, not guessed."""
     dismiss_sheet(script, sleep)
@@ -394,8 +435,9 @@ def go_to_start(script=osascript, sleep=time.sleep, drag=None):
     tried = ['not needed']
     # Setting the slider's value is not honoured (run of 2026-10-11 19:02: "slider: set" and the knob stayed at
     # 13%, Location 185), so the slider's track is clicked at its left end, then the knob dragged there; neither
-    # moved it either (run of 19:11), so the Table of Contents' "Cover" row is the last resort.
-    for move in (click_track_start, drag_knob_to_start, toc_cover):
+    # moved it either (run of 19:11), so the Table of Contents' topmost entry comes next, and paging back with ←
+    # is the last resort (Laiken, 19:27).
+    for move in (click_track_start, drag_knob_to_start, toc_first, page_back):
         if where is not None and where[0] <= 1:
             break
         bring_front(script, sleep)
