@@ -33,8 +33,9 @@ OPEN_WAIT_S = 60
 # A book not yet on this Mac stays in the library on the first open; opening it again starts its download
 # (Laiken, 2026-10-11 17:21 JST), which takes longer than a plain open.
 DOWNLOAD_WAIT_S = 300
-# The app reopens a book where it was last read; its Go menu has an item that jumps to the start.
-START_ITEMS = ('Beginning', 'Cover', 'Start')
+# The reader's footer, shown with its toolbar after a click on the page (probe of 2026-10-11 17:56).
+LOCATION = re.compile(r'Location (\d+) of (\d+)')
+PROGRESS_BAR = 'Reading Progress Bar'
 
 
 def osascript(script, runner=subprocess.run):
@@ -157,9 +158,9 @@ def open_book(asin, title, script=osascript, run=capture_book.run, clock=time.mo
     """
     script('tell application "Amazon Kindle" to activate')
     sleep(2)
-    found = elements(script)
-    if not in_library(found):
-        return 'the Kindle app is not showing its library (a book may be open already); it shows: ' + describe(found)
+    found, problem = ensure_library(script, sleep)
+    if problem:
+        return problem
     if cover_of(title, found) is None:
         _, searched, _ = script(SEARCH.format(title=_quote(title)))
         sleep(3)
@@ -188,19 +189,75 @@ def describe(found):
     return ', '.join(names[:12]) + (' …' if len(names) > 12 else '')
 
 
-def go_to_start(script=osascript):
-    """Jump to the start through the Go menu. When no known item is there, say which items there are, so the next fix
-    comes from what the app shows rather than from a guess."""
-    for item in START_ITEMS:
-        code, _, _ = script('tell application "Amazon Kindle" to activate\n'
-                            'tell application "System Events" to tell process "Kindle" to '
-                            f'click (first menu item of menu 1 of menu bar item "Go" of menu bar 1 whose name starts with "{item}")')
-        if code == 0:
-            time.sleep(2)
-            return ''
-    code, out, err = script('tell application "System Events" to tell process "Kindle" to '
-                            'get name of every menu item of menu 1 of every menu bar item of menu bar 1')
-    return f'no start item in the Kindle Go menu; the menus hold: {out or err}'
+SET_SLIDER = '''
+tell application "System Events" to tell process "Kindle"
+    set elems to entire contents of window 1
+    repeat with e in elems
+        set e to contents of e
+        try
+            if role of e is "AXSlider" and title of e is "{bar}" then
+                set value of e to 0
+                return "set"
+            end if
+        end try
+    end repeat
+    return "none"
+end tell
+'''.format(bar=PROGRESS_BAR)
+
+
+def chrome_shown(found):
+    return any(e['role'] == 'AXSlider' and e['title'] == PROGRESS_BAR for e in found)
+
+
+def location_of(found):
+    """(location, of) from the footer's "Location N of M , P%", or None."""
+    for e in found:
+        m = LOCATION.search(e['value']) or LOCATION.search(e['title'])
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    return None
+
+
+def ensure_library(script=osascript, sleep=time.sleep):
+    """Bring the app to its library: a book left open (the app reopens into the last book, 2026-10-11 17:56) is closed
+    with the reader's Close Book button. File > Close quits the app, so it is never used.
+    Returns (what the app shows, '' or why the library did not come)."""
+    found = elements(script)
+    if in_library(found):
+        return found, ''
+    if not chrome_shown(found):
+        reveal_chrome(script, sleep)
+    _, pressed, _ = script(PRESS_TITLED.format(title='"Close Book"'))
+    sleep(3)
+    found = elements(script)
+    if in_library(found):
+        return found, ''
+    return found, f'the Kindle app is not showing its library (Close Book: {pressed}); it shows: ' + describe(found)
+
+
+def go_to_start(script=osascript, sleep=time.sleep):
+    """Back to the start of the open book: close the details sheet, show the toolbar, drag the Reading Progress Bar
+    to 0, read the footer's "Location N of M", then hide the toolbar again so the pages are captured bare.
+    Returns '' or why it could not. Written from the probe of 2026-10-11 17:56, not guessed."""
+    dismiss_sheet(script, sleep)
+    found = elements(script)
+    if not chrome_shown(found):
+        reveal_chrome(script, sleep)
+        found = elements(script)
+    if not chrome_shown(found):
+        return 'the reader shows no toolbar after a click on the page; it shows: ' + describe(found)
+    _, set_, _ = script(SET_SLIDER)
+    sleep(3)
+    found = elements(script)
+    where = location_of(found)
+    if set_ != 'set' or where is None or where[0] > 1:
+        return (f'could not go to the start (slider: {set_}, footer: '
+                f'{"Location %d of %d" % where if where else "no location"})')
+    reveal_chrome(script, sleep)  # the same click hides the toolbar again
+    if chrome_shown(elements(script)):
+        return 'the toolbar stayed over the page after a click to hide it'
+    return ''
 
 
 def capture(folder, script_path=HERE / 'kindle2img.applescript', run=capture_book.run):

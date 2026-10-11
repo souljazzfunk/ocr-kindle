@@ -88,15 +88,9 @@ def test_a_book_the_app_does_not_open_or_cannot_page_back_is_named_with_what_the
         pytest.fail('captured')
     opened = capture_app.run_book('B2', 'Tokyo', tmp_path, open_=lambda a, t: 'front window: "Library"', take=nope)
     assert opened['blocking_failures'] == ['app_open'] and 'Library' in opened['error']
-    calls = []
-
-    def script(text):
-        calls.append(text)
-        return (1, '', 'not found') if 'click' in text else (0, 'File, Edit, Go: Next Page, Previous Page', '')
-
-    reason = capture_app.go_to_start(script)
-    assert 'Next Page, Previous Page' in reason and sum('click' in c for c in calls) == len(capture_app.START_ITEMS)
-
+    app = App([READER + 'element|AXButton||||Next Page||500,2000|20,20\n'])
+    reason = capture_app.go_to_start(app, sleep=lambda s: None)
+    assert reason.startswith('the reader shows no toolbar') and 'page' in reason
 
 LIBRARY = ('frontmost=true\nwindow|Kindle|489,1187|1024,843\n'
            'element|AXTextField|AXSearchField||Search Kindle||506,1229|975,27\n'
@@ -114,6 +108,8 @@ class App:
 
     def __call__(self, text):
         self.calls.append(text)
+        if 'set value of e to 0' in text:
+            return 0, 'set', ''
         if 'entire contents' in text and 'AXPress' not in text and 'keystroke' not in text:
             return 0, self.screens.pop(0) if len(self.screens) > 1 else self.screens[0], ''
         if 'click at' in text:
@@ -160,10 +156,34 @@ def test_a_cover_not_downloaded_is_pressed_again_and_waited_for_as_laiken_said()
     assert sum('AXPress' in c for c in app.calls) == 1 and 'Book Downloaded' in problem
 
 
-def test_a_reader_already_open_is_reported_not_pressed():
-    app = App([READER])
+CHROME = (READER + 'element|AXButton||Close Book||||500,1200|20,20\n'
+          'element|AXSlider||Reading Progress Bar||Location 0 , |500,2000|1000,20\n'
+          'element|AXStaticText||||Location {at} of 2594 , 1%|500,2030|200,20\n')
+
+
+def test_a_reader_left_open_is_closed_with_its_close_book_button_never_file_close():
+    # Probe of 2026-10-11 17:56: the app reopens into the last book; File > Close (Cmd+W) quits the app.
+    app = App([READER, LIBRARY, LIBRARY, READER])
+    clock = iter(range(0, 1000, 2))
+    assert capture_app.open_book('B2', 'For 91 Days In Tokyo', script=app, run=lambda c: None,
+                                 clock=lambda: next(clock), sleep=lambda s: None) == ''
+    presses = [c for c in app.calls if 'AXPress' in c]
+    assert '"Close Book"' in presses[0] and '"For 91 Days In Tokyo"' in presses[1] and len(presses) == 2
+    assert not any('menu bar item "File"' in c or 'keystroke "w"' in c for c in app.calls)
+    app = App([READER, READER])
     problem = capture_app.open_book('B2', 'For 91 Days In Tokyo', script=app, run=lambda c: None, sleep=lambda s: None)
-    assert problem.startswith('the Kindle app is not showing its library') and not any('AXPress' in c for c in app.calls)
+    assert problem.startswith('the Kindle app is not showing its library (Close Book: pressed)')
+
+
+def test_the_start_is_reached_by_the_progress_bar_and_read_from_the_footer():
+    # Probe of 2026-10-11 17:56: the toolbar holds the Reading Progress Bar; the footer says "Location N of M , P%".
+    app = App([READER, CHROME.format(at=12), CHROME.format(at=1), READER])
+    assert capture_app.go_to_start(app, sleep=lambda s: None) == ''
+    assert sum('set value of e to 0' in c for c in app.calls) == 1 and sum('click at' in c for c in app.calls) == 2
+    app = App([READER, CHROME.format(at=12), CHROME.format(at=12)])
+    assert 'Location 12 of 2594' in capture_app.go_to_start(app, sleep=lambda s: None)
+    app = App([READER, CHROME.format(at=12), CHROME.format(at=1), CHROME.format(at=1)])
+    assert 'toolbar stayed' in capture_app.go_to_start(app, sleep=lambda s: None)
 
 
 def test_a_probe_records_what_the_new_app_shows_before_and_after_opening_a_book(tmp_path):
