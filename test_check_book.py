@@ -383,3 +383,26 @@ def test_a_numbered_section_with_an_epigraph_is_not_a_missed_chapter(tmp_path):
     page = ('# ONE\n\n' + BODY + '\n\n2\n\n> "It was science fiction more than computer science."\n\n' + BODY)
     folder = book(tmp_path, [page], md=page)
     assert by_name(check_folder(folder))['chapter_titles'].ok
+
+
+def test_a_code_book_without_code_blocks_is_caught_and_its_pages_read_again(tmp_path):
+    # Python Crash Course (2026-10-11): no fence in the book; comments became titles, listings bullets or prose.
+    session = ['>>> age = 18', '>>> age == 18', 'True', 'import this', 'def greet_user():']
+    folder = book(tmp_path, [BODY] * 5, name='Python Crash Course',
+                  md='# Say hello to everyone.\n\nprint ("Hello Python people!")\n\n'
+                     '>>age = 18 >> age == 18 True\n\n- >>> print("Hello Python interpreter!")\n\n' + BODY)
+    for n in range(1, 6):
+        (folder / f'page_{n:04d}.lines.json').write_text(json.dumps([[0.1, 0.1 * i, 0.02, s] for i, s in enumerate(session)]))
+    checks = by_name(check_folder(folder))
+    assert not checks['code_blocks'].ok and checks['code_blocks'].fix is None
+    assert checks['code_blocks'].detail.startswith('3 of 3 code lines outside code blocks')
+    assert not checks['layout'].ok and '(5 to read again for code)' in checks['layout'].detail
+    assert checks['layout'].fix == ['img2txt.py', str(folder), '--model', 'vision']
+    # Read again with code: the listings are fenced and the pages are not asked a second time.
+    (folder / 'layout.json').write_text(json.dumps({f'page_{n:04d}': {'code': [[0, 1, 2]]} for n in range(1, 6)}))
+    (folder / 'Python Crash Course.md').write_text('```\n# Say hello to everyone.\nprint("Hello Python people!")\n```\n\n'
+                                                   '```\n>>> age = 18\n>>> age == 18\nTrue\n```\n\n## Comments\n\n' + BODY)
+    checks = by_name(check_folder(folder))
+    assert checks['code_blocks'].ok and checks['layout'].ok and checks['headings'].detail.startswith('1 headings')
+    # A book without code gets no such check.
+    assert 'code_blocks' not in by_name(check_folder(book(tmp_path, [BODY], md='# One\n\n' + BODY)))

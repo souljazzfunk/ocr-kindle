@@ -117,3 +117,12 @@ def test_a_section_number_over_an_epigraph_becomes_a_heading():
     assert 'It cost $21\n\n## 1\n\n> "It was science' in fixed
     assert not [f for f in find_all(Book(Path('/nonexistent'), {**pages, 'page_0002': fixed}))
                 if f.kind in ('section_number', 'heading_noise')]
+
+
+def test_code_blocks_are_not_proofread():
+    # Python Crash Course: `age < 21` and a dash in code are the program's; a stray < in the prose still goes.
+    code = '```\n>>> age < 21\nFalse\n>>> name = first-the\n```'
+    pages = {'page_0001': code + '\n\n' + BODY + 'Compare ages. < Then go on.'}
+    assert fixes(pages) == [('stray_symbol', 'page_0001', 'mpare ages. < ', 'mpare ages. ')]
+    fixed = apply(pages, find_all(Book(Path('/nonexistent'), pages)))
+    assert fixed == {'page_0001': code + '\n\n' + BODY + 'Compare ages. Then go on.'}

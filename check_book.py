@@ -15,8 +15,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from img2txt import SOURCES, TEXT_LAYER, VISION, page_images, read_sources
-from layout import read_layout
-from proofread import DECORATIVE_REF, Book, find_all, load_pages
+from layout import CODE_LINE, code_pages, code_rereads, read_layout
+from proofread import CODE_BLOCK, DECORATIVE_REF, Book, find_all, load_pages
 
 PROBE = 'dom-probe.json'
 CAPTURE = 'capture.json'
@@ -33,6 +33,7 @@ MISSED_CHAPTER = re.compile(r'(?m)^(?:[1-9]|1\d|20|[Z&])\n\n(?![#\d])(?![^\n]*,\
 AUTO_KINDS = ('duplicate_page', 'foreign_page', 'seam_overlap', 'dash_as_hyphen', 'stray_symbol', 'homoglyph',
               'decorative_digit', 'repl_prompt', 'section_number', 'l_for_i', 'digits_for_ll', 'binary_art', 'stray_colon')
 REVIEW_KINDS = ('hyphen_break', 'odd_case')
+LOOSE_CODE = 0.25  # share of a programming book's code lines that may stand outside code blocks
 
 
 @dataclass
@@ -124,14 +125,27 @@ def check_folder(folder, title=None):
                         blocking=False, fix=None))
 
     text = md.read_text(encoding='utf-8') if md.exists() else ''
+    fenced = CODE_BLOCK.findall(text)
+    text = CODE_BLOCK.sub('', text)  # a comment in code is no title, and its digits no chapter reference
     # Vision's pages take their titles, quotes and figures from Gemini (layout.py); a page it has not read yet keeps
-    # titles guessed from the layout alone, which miss most of them. Running img2txt.py again asks for those pages.
+    # titles guessed from the layout alone, which miss most of them. Running img2txt.py again asks for those pages,
+    # and the pages of a programming book read before Gemini was asked for code.
     laid = read_layout(folder)
-    unread = [img.stem for img in images if sources.get(img.stem) == VISION and img.stem not in laid]
+    again = code_rereads(folder, laid)
+    unread = [img.stem for img in images if sources.get(img.stem) == VISION and (img.stem not in laid or img.stem in again)]
     checks.append(Check('layout', not unread, f'{len(unread)} Vision pages without a layout from Gemini'
+                        + (f' ({len(again)} to read again for code)' if again else '')
                         + (f', e.g. {unread[0]}' if unread else ''),
                         fix=['img2txt.py', str(folder), '--model', VISION] + (['--title', title] if title else [])
                         if unread else None))
+    # Python Crash Course (2026-10-11): no code block at all; comments were titles, listings bullets or prose
+    # (">>age = 18 >> age == 18 True"). Reading the pages again gives the same blocks, so this is reported.
+    if code_pages(folder):
+        loose = [line for line in text.splitlines() if not line.startswith('#') and CODE_LINE.match(line.removeprefix('- '))]
+        inside = sum(bool(CODE_LINE.match(line.strip())) for block in fenced for line in block.splitlines())
+        checks.append(Check('code_blocks', len(loose) <= LOOSE_CODE * (len(loose) + inside),
+                            f'{len(loose)} of {len(loose) + inside} code lines outside code blocks'
+                            + (f', e.g. "{loose[0][:60]}"' if loose else ''), fix=None))
     # Reading the pages again gives the same titles, so these are reported, not retried.
     headings = len(re.findall(r'(?m)^#+ ', text))
     checks.append(Check('headings', md.exists() and headings > 0, f'{headings} headings in {md.name}', fix=None))

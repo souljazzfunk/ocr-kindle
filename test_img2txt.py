@@ -212,3 +212,12 @@ def test_a_photo_heavy_travel_book_keeps_its_photos_as_pictures(tmp_path, monkey
     monkeypatch.setattr(sys, 'argv', ['img2txt.py', str(book), '--model', 'vision'])
     img2txt.main()
     assert (book / 'page_0010.txt').read_text() == '![Picture]()'
+
+
+def test_join_pages_glues_nothing_to_code():
+    # Python Crash Course: a listing at the foot of a page and the text overleaf stay apart.
+    body = 'Python ignores the first line and executes the second line, which you can see in the output below'
+    assert join_pages([body + '\n\n```\nprint("Hello")\n```', 'and so on.', body, '```\nHello\n```']) == (
+        body + '\n\n```\nprint("Hello")\n```\n\nand so on.\n\n' + body + '\n\n```\nHello\n```\n')
+    assert vision_markdown([(0.08, 0.1, 'For example:'), (0.1, 0.13, '```\n>>> age = 18\nTrue\n```'),
+                            (0.08, 0.2, 'that runs on')]) == 'For example:\n\n```\n>>> age = 18\nTrue\n```\n\nthat runs on'

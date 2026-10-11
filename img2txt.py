@@ -263,7 +263,7 @@ def vision_markdown(lines, pitch=None):
     for left, top, text in lines:
         piece = previous is not None and top - previous[1] <= ROW  # the rest of a printed line
         # Titles, block quotes and image notes stand alone; a list item starts a paragraph of its own.
-        heading = re.match(r'#+ |> |!\[', text) is not None
+        heading = re.match(r'#+ |> |!\[|```', text) is not None
         indented = (not piece and previous is not None and left - previous[0] > VISION_INDENT
                     and previous[2].rstrip().endswith(SENTENCE_END))
         hanging = (not piece and len(starts) >= 2 and starts[1] - starts[0] > VISION_INDENT
@@ -364,9 +364,9 @@ def join_pages(texts, open_ends=None):
         if not text.strip():
             continue
         # Title pages and colophons are short and end without punctuation, but never continue; nor does a title
-        # at the foot of a page (AI for Educators: "## CHESS" ran into the next page's first line).
-        ends_in_title = book.rstrip().rsplit('\n\n', 1)[-1].startswith('#')
-        continues = (previous_len >= MIN_BODY_CHARS and not ends_in_title and previous_open is not False and not text.startswith(('　', '#', '[', '![', '> ', '- '))
+        # at the foot of a page (AI for Educators: "## CHESS" ran into the next page's first line), nor code.
+        ends_in_title = book.rstrip().rsplit('\n\n', 1)[-1].startswith('#') or book.rstrip().endswith('```')
+        continues = (previous_len >= MIN_BODY_CHARS and not ends_in_title and previous_open is not False and not text.startswith(('　', '#', '[', '![', '> ', '- ', '```'))
                      and (not book.rstrip().endswith(SENTENCE_END) or text[:1].islower()))
         if continues:
             book = join_lines(book.rstrip(), text.lstrip())
@@ -437,10 +437,13 @@ def main():
             sys.exit(f'{len(failed)} pages failed. Re-run the same command to retry only those pages.')
 
     # Pages read just now, and pages never laid out, take Gemini's layout; the rest keep their text and its proofreading.
-    from layout import GeminiFailed, claude_cli, mark_layout, read_layout
+    # So do the pages of a code book laid out before code was asked for (layout.code_rereads).
+    from layout import GeminiFailed, claude_cli, code_rereads, mark_layout, read_layout
     sources = read_sources(args.folder)
     done = read_layout(args.folder)
-    vision = [img for img in images if sources.get(img.stem) == VISION and (img.stem in read_now or img.stem not in done)]
+    again = code_rereads(args.folder, done)
+    vision = [img for img in images if sources.get(img.stem) == VISION
+              and (img.stem in read_now or img.stem not in done or img.stem in again)]
     cli = claude_cli()
     if args.layout == 'sonnet' and not cli:
         sys.exit('--layout sonnet needs the Claude Code CLI (claude) on PATH or in ~/.local/bin')

@@ -435,3 +435,36 @@ def test_a_conversion_in_progress_ends_before_main_is_pulled_under_it():
     assert settled == []  # nothing new on main: the conversion goes on beside the next capture
     assert update_checkout(fake_git(['a', 'b'], 'img2txt.py', fetched='b'), settle=lambda: settled.append(1)) == 'python'
     assert settled == [1]
+
+
+def test_a_book_done_under_older_code_is_converted_again_when_a_new_check_fails_it(tmp_path, monkeypatch, capsys):
+    # 2026-10-11: Python Crash Course passed before code_blocks existed; a done book was never looked at again.
+    from check_book import Check
+    books = tmp_path / 'books.tsv'
+    books.write_text('B1\tPython Crash Course\nB2\tDilla Time\nB3\tOld Capture\n')
+    entries = {}
+    for asin, title in (('B1', 'Python Crash Course'), ('B2', 'Dilla Time'), ('B3', 'Old Capture')):
+        zip_path = tmp_path / f'{title}.zip'
+        zip_path.write_bytes(b'')
+        (tmp_path / title).mkdir()
+        entries[asin] = {'title': title, 'verdict': 'done', 'failures': [], 'warnings': [], 'source': str(zip_path)}
+    (tmp_path / 'books.progress.json').write_text(json.dumps(entries))
+    failing = {'Python Crash Course': 'code_blocks', 'Old Capture': 'start_position'}
+    monkeypatch.setattr(capture_books.check_book, 'check_folder', lambda folder, title=None: [
+        Check('headings', True, ''), Check(failing.get(title, 'proofread'), title not in failing, '')])
+    started = []
+
+    def convert(asin, title=None, recapture=False, **options):
+        started.append((asin, options.get('source')))
+        return result([])
+
+    monkeypatch.setattr(capture_books.capture_book, 'convert', convert)
+    monkeypatch.setattr(sys, 'argv', ['capture_books.py', str(books), '--downloads', str(tmp_path), '--keep-going'])
+    with pytest.raises(SystemExit):
+        capture_books.main()
+    # Only the converter's own check sends a book back; an old capture's start is not reason to open Brave again.
+    assert started == [('B1', tmp_path / 'Python Crash Course.zip')]
+    assert 'it now fails code_blocks under this code' in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        capture_books.main()
+    assert len(started) == 1  # each book is looked at once per converter

@@ -53,6 +53,8 @@ _REF = r'(?:\d{1,2}|[Z&])'
 DECORATIVE_REF = re.compile(rf'\bChapters?\s+{_REF}(?:(?:,\s*|\s+)(?:and\s+|or\s+)?{_REF})*(?![\w&])'
                             rf'|\b\d{{1,2}}(?:,\s*(?:and\s+|or\s+)?{_REF})+(?![\w&])')
 DECORATIVE_DIGITS = str.maketrans('Z&', '78')
+# A fenced code block (layout.py). Its text is code, not words: a dash, a > or a colon in it is the program's.
+CODE_BLOCK = re.compile(r'(?ms)(^```\n.*?^```$)')
 
 
 @dataclass(frozen=True)
@@ -63,7 +65,15 @@ class Finding:
     after: str | None  # None: report only
 
     def apply(self, text):
-        return text.replace(self.before, self.after, 1)
+        """Replace the first hit outside code blocks; a finding that holds a block (a whole page) as it is."""
+        if '```' in self.before:
+            return text.replace(self.before, self.after, 1)
+        parts = CODE_BLOCK.split(text)  # code blocks at the odd places
+        for k in range(0, len(parts), 2):
+            if self.before in parts[k]:
+                parts[k] = parts[k].replace(self.before, self.after, 1)
+                break
+        return ''.join(parts)
 
 
 @dataclass
@@ -341,8 +351,13 @@ def load_pages(folder):
             for img in page_images(folder) if img.with_suffix('.txt').exists()}
 
 
+# Detectors that judge whole pages; the others look at words, so they see the pages without their code blocks.
+PAGE_DETECTORS = (duplicate_page, seam_overlap, foreign_page)
+
+
 def find_all(book):
-    return [f for detect in DETECTORS for f in detect(book)]
+    prose = Book(book.folder, {stem: CODE_BLOCK.sub('', text) for stem, text in book.pages.items()}, book._lines)
+    return [f for detect in DETECTORS for f in detect(book if detect in PAGE_DETECTORS else prose)]
 
 
 def apply(pages, findings):
