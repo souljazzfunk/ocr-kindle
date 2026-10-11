@@ -180,6 +180,7 @@ def test_heading_noise_missed_chapters_and_digits_in_the_text_are_caught(tmp_pat
     checks = by_name(check_folder(folder, title='How to Write a Lot'))
     assert not checks['heading_noise'].ok and checks['heading_noise'].detail.startswith('4 headings')
     assert not checks['chapter_titles'].ok and checks['chapter_titles'].detail.startswith('1 chapter')
+    assert ' / ' in checks['chapter_titles'].detail  # the opening itself, for a fix from evidence
     assert not checks['decorative_digits'].ok and '1 chapter references' in checks['decorative_digits'].detail
     assert checks['proofread'].fix[3] == 'decorative_digit'
     # Noise is made plain text again; a missed chapter is reported, since reading again repeats it.
