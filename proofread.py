@@ -41,6 +41,11 @@ HYPHEN_BREAK = re.compile(r'(?<![\w-])([A-Za-z]+)-( ?)([a-z]+)(?![\w-])')
 DASH = re.compile(r'(?<![\w-])([A-Za-z]+)-([A-Za-z]+)(?![\w-])')
 ODD_CASE = re.compile(r'\b[A-Za-z]*[a-z][A-Z][A-Za-z]*\b')
 STRAY_SYMBOL = re.compile(r'(?m)^[>›<‹]$\n?|(?<= )[>›<‹] ')
+# A book with code uses < and > as operators, prompts and tags ("age > 21", ">>> ", "<h3 >"); only the chevrons are stray.
+CODE = re.compile(r'>>>|[=!<>]=|</[a-z][a-z0-9]*>')
+# A Python prompt that lost a > (">>age = 19") or gained a space (">> > sum(digits)"). Python Crash Course had 73 such
+# lines: the old stray_symbol fix took the "> " off a ">>> " prompt in each of its rounds.
+BROKEN_PROMPT = re.compile(r'(?m)(?:^|(?<=\s))(?:>>(?: ?>)? ?|> ?>> ?)(?=[^>\s])(?<!>>> )[^\n]{0,24}')
 WORD = re.compile(r"[A-Za-z]+(?:['’-][A-Za-z]+)*")
 # Vision reads the decorative 7 and 8 of How to Write a Lot as Z and &, in the text too ("In Chapter Z",
 # "Chapters 6, Z, and &"). Only chapter references are rewritten, so Generation Z and R&D stay as they are.
@@ -179,9 +184,26 @@ def odd_case(book):
 
 
 def stray_symbol(book):
+    """A Kindle chevron read into the text. The finding keeps the characters before it, so the fix removes this one and
+    not the first "> " on the page: in Python Crash Course that was a ">>> " prompt, every round, while the match stayed."""
+    code = CODE.search(book.corpus)
     for stem, text in book.pages.items():
         for m in STRAY_SYMBOL.finditer(text):
-            yield Finding('stray_symbol', stem, m.group(), '')
+            if code and m.group().strip() in '<>':
+                continue
+            start = max(0, m.start() - 12)
+            yield Finding('stray_symbol', stem, text[start:m.end()], text[start:m.start()])
+
+
+def repl_prompt(book):
+    """Put back the ">>> " of a Python prompt, in a book whose prompts are mostly whole."""
+    if book.corpus.count('>>> ') < 10:
+        return
+    for stem, text in book.pages.items():
+        for m in BROKEN_PROMPT.finditer(text):
+            line = m.group()
+            if not line.startswith('>>> '):
+                yield Finding('repl_prompt', stem, line, '>>> ' + line.lstrip('> '))
 
 
 def l_for_i(book):
@@ -275,7 +297,7 @@ def decorative_digit(book):
 
 
 DETECTORS = [duplicate_page, seam_overlap, foreign_page, hyphen_break, dash_as_hyphen, homoglyph, odd_case, stray_symbol,
-             decorative_digit, l_for_i, digits_for_ll, binary_art, stray_colon, heading_noise]
+             repl_prompt, decorative_digit, l_for_i, digits_for_ll, binary_art, stray_colon, heading_noise]
 
 
 def cross_read(folder, pages, sources):

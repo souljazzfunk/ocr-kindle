@@ -369,3 +369,11 @@ def test_a_long_book_that_keeps_turning_is_waited_on_past_the_hour(tmp_path):
 def test_without_a_heartbeat_the_wait_is_as_before(tmp_path):
     result, waited = stalled_wait(tmp_path, [], seconds=600)
     assert result is None and 600 <= waited < 620
+
+
+def test_index_letter_is_not_a_chapter_opening(tmp_path):
+    # Python Crash Course: the index letter Z, read as 7, then an entry and the colophon.
+    page = ('# INDEX\n\n7\n\nZen of Python, 30-31 ZeroDivisionError, 194\n\nPython Crash Course, 2nd Edition is set in '
+            'New Baskerville, Futura, Dogma, and The Sans Mono Condensed. ' + BODY)
+    folder = book(tmp_path, [page], md=page)
+    assert by_name(check_folder(folder))['chapter_titles'].ok

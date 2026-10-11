@@ -47,7 +47,7 @@ def test_word_level_errors():
         ('homoglyph', 'page_0002', '"Неwas"', '"Hewas"'),
         ('hyphen_break', 'page_0002', 'Scul-ley', 'Sculley'),
         ('odd_case', 'page_0003', 'iMAC', 'iMac'),
-        ('stray_symbol', 'page_0003', '> ', ''),
+        ('stray_symbol', 'page_0003', ' iMac. Then > ', ' iMac. Then '),
     ]
 
 
@@ -83,3 +83,25 @@ def test_decorative_digits_in_chapter_references_are_put_back():
                           'Generation Z and R&D stay, as do 3 & 4 apples.'}
     found = list(decorative_digit(Book(Path('.'), pages)))
     assert [(f.before, f.after) for f in found] == [('Chapters 6, Z, and &', 'Chapters 6, 7, and 8'), ('Chapter Z', 'Chapter 7')]
+
+
+def test_stray_symbol_spares_code_and_fixes_the_one_it_found():
+    # Python Crash Course: the fix removed the first "> " on the page (a >>> prompt) and the match stayed, three rounds.
+    code = {'page_0001': BODY + '>>> age = 19\n\n>>> age > 21\nFalse\n\n<h3 > No topics</h3>'}
+    assert fixes(code) == []
+    prose = {'page_0001': BODY + 'He typed > here, then > there.'}
+    found = list(find_all(Book(Path('/nonexistent'), prose)))
+    assert [f.before for f in found] == ['y. He typed > ', ' here, then > ']
+    fixed = apply(prose, found)['page_0001']
+    assert fixed.endswith('He typed here, then there.') and '>' not in fixed
+
+
+def test_python_prompts_that_lost_a_chevron_are_put_back():
+    # Python Crash Course: 73 prompts read ">>age = 19" after the old stray_symbol fix, beside 54 whole ones.
+    whole = ''.join(f'>>> x{i} = {i}\n' for i in range(10))
+    pages = {'page_0001': BODY + whole + '>>age = 19\n>> > sum(digits)\n>>> fine()\n> >> odd()\n- >>car = 1 True\n'}
+    assert [(f.before, f.after) for f in find_all(Book(Path('/nonexistent'), pages)) if f.kind == 'repl_prompt'] == [
+        ('>>age = 19', '>>> age = 19'), ('>> > sum(digits)', '>>> sum(digits)'), ('> >> odd()', '>>> odd()'),
+        ('>>car = 1 True', '>>> car = 1 True')]
+    prose = {'page_0001': BODY + '>>age = 19\n'}  # no prompts to go by: left alone
+    assert not [f for f in find_all(Book(Path('/nonexistent'), prose)) if f.kind == 'repl_prompt']
