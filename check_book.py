@@ -31,7 +31,7 @@ MISSED_CHAPTER = re.compile(r'(?m)^(?:[1-9]|1\d|20|[Z&])\n\n(?![#\d])(?![^\n]*,\
                             r'[^#\n]{%d,}' % 100)
 # Proofread kinds whose fix is safe without a look at samples; the others are reported for a human.
 AUTO_KINDS = ('duplicate_page', 'foreign_page', 'seam_overlap', 'dash_as_hyphen', 'stray_symbol', 'homoglyph',
-              'decorative_digit', 'repl_prompt', 'l_for_i', 'digits_for_ll', 'binary_art', 'stray_colon')
+              'decorative_digit', 'repl_prompt', 'section_number', 'l_for_i', 'digits_for_ll', 'binary_art', 'stray_colon')
 REVIEW_KINDS = ('hyphen_break', 'odd_case')
 
 
@@ -148,7 +148,8 @@ def check_folder(folder, title=None):
                         + (f', e.g. "{noise[0][:40]}"' if noise else ''),
                         fix=['proofread.py', str(folder), '--apply', 'heading_noise'] + (['--title', title] if title else [])
                         if noise else None))
-    missed = MISSED_CHAPTER.findall(text)
+    # A number over an epigraph is a section the proofread check's section_number makes a heading, not a chapter.
+    missed = [m for m in MISSED_CHAPTER.findall(text) if not re.match(r'\S+\n\n> ', m)]
     # Reading the pages again gives the same headings, so a missed chapter is reported, not retried.
     # The openings themselves go in the report, so the converter is fixed from them rather than from a guess.
     shown = '; '.join('"' + re.sub(r'\n+', ' / ', m)[:70] + '"' for m in missed[:5])

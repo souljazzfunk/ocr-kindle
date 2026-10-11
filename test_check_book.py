@@ -377,3 +377,9 @@ def test_index_letter_is_not_a_chapter_opening(tmp_path):
             'New Baskerville, Futura, Dogma, and The Sans Mono Condensed. ' + BODY)
     folder = book(tmp_path, [page], md=page)
     assert by_name(check_folder(folder))['chapter_titles'].ok
+
+
+def test_a_numbered_section_with_an_epigraph_is_not_a_missed_chapter(tmp_path):
+    page = ('# ONE\n\n' + BODY + '\n\n2\n\n> "It was science fiction more than computer science."\n\n' + BODY)
+    folder = book(tmp_path, [page], md=page)
+    assert by_name(check_folder(folder))['chapter_titles'].ok
