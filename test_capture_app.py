@@ -200,12 +200,21 @@ def test_the_table_of_contents_is_scrolled_to_its_top_and_its_button_row_pressed
     # The pointer rests inside the panel (below its first row) and scrolls until the topmost row has not changed
     # over two scrolls (Japan Travel Planner, 20:58: one unchanged read while the panel still moved left it at 1.5).
     assert scrolls[0] == (325 + 473 // 2, 1276 + 4 * 43, capture_app.TOC_SCROLL_LINES) and len(scrolls) == 3
-    # The cover is the start although its toolbar shows no footer.
-    app = App([COVER, SCROLLED_TOC, SCROLLED_TOC, TOP_TOC, TOP_TOC, TOP_TOC, COVER, COVER, READER])
+    # A pressed entry with no readable footer afterwards is not the start: that rule let Japan Travel Planner pass
+    # at section 1.5 on 2026-10-11 20:58 (its footer says "Page N", which was not read then). The cover does show
+    # the footer (Sri Lanka, 20:51), so the run fails honestly instead.
+    app = App([COVER, SCROLLED_TOC, SCROLLED_TOC, TOP_TOC, TOP_TOC, TOP_TOC, COVER, COVER, COVER])
     problem = capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock, scroll=lambda x, y, n: None,
                                       press=lambda role, name: True)
-    assert problem == '' and 'start: Location 1 after' in capsys.readouterr().out
+    assert problem.startswith('could not go to the start') and 'no location' in problem
     assert sum('"Table of Contents"' in c and 'AXPress' in c for c in app.calls) == 1
+    # A page-numbered book (Japan Travel Planner, probe of 21:06): "Page 114 , 100%" on the slider is the position.
+    pages = (Path(__file__).parent / 'fixtures' / 'kindle' / 'ax-reader-pages-japan.txt').read_text()
+    assert capture_app.location_of(capture_app.elements(App([pages]))) == (114, 0)
+    at_page_1 = pages.replace('Page 114', 'Page 1').replace('|114|', '|1|')
+    app = App([at_page_1, READER])
+    assert capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock) == ''
+    assert 'start: Location 1 after' in capsys.readouterr().out
     # Without the API's press (a fake script), the button row is pressed by AppleScript as a button, not a text.
     app = App([SCROLLED_TOC, COVER])
     how = capture_app.toc_first(app, sleep=lambda s: None, clock=app.clock)
