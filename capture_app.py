@@ -8,8 +8,11 @@ check them the same way as every other book.
 Laiken chose this on 2026-10-11 for the books capture_books.py recorded as kindle_app_only, and only for them: every
 other book still comes from the Cloud Reader extension in Chrome. The command needs KINDLE_APP_OK=1 (the guard hook
 asks for it too). Each book is opened in the app, paged back to its start through the app's Go menu, captured with
-kindle2img.applescript into ~/Downloads/<title>/, then converted by capture_book.convert. The first book is the pilot:
-the run stops at the first book that does not pass, and the same command resumes there.
+kindle2img.applescript into ~/Downloads/<title>/, then converted by capture_book.convert while the next book is
+already open and turning in the app (Laiken, 2026-10-11 20:27: the app sat idle for the 2 minutes of conversion). The
+app holds one book at a time and one book converts at a time; results are recorded in list order. The first book is the
+pilot: the run stops at the first book that does not pass (a book already captured is converted and recorded first),
+and the same command resumes there.
 
 While a book is captured the Kindle window must stay in front, so the Mac's screen is busy until the run ends.
 """
@@ -20,6 +23,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -573,24 +577,50 @@ def app_books(books, progress):
             or (progress.get(asin, {}).get('capture') == 'kindle_app' and progress[asin].get('verdict') != 'done')]
 
 
-def run_book(asin, title, downloads, convert=capture_book.convert, open_=open_book, start=go_to_start, take=capture):
+def capture_pages(asin, title, downloads, open_=open_book, start=go_to_start, take=capture):
+    """Open one book in the app, page it to its start and capture it: (folder, None), or (None, the failure)."""
     folder = downloads / title
     if list(folder.glob('page_*.png')):
         # kindle2img.applescript numbers on from the highest page, so pages already here would be captured twice.
-        return {'asin': asin, 'blocking_failures': ['app_folder'], 'warnings': [],
-                'error': f'{folder} already holds page images; move them away to capture this book again'}
+        return None, {'asin': asin, 'blocking_failures': ['app_folder'], 'warnings': [],
+                      'error': f'{folder} already holds page images; move them away to capture this book again'}
     for step in (lambda: open_(asin, title), start):
         problem = step()
         if problem:
-            return {'asin': asin, 'blocking_failures': ['app_open'], 'warnings': [], 'error': problem}
+            return None, {'asin': asin, 'blocking_failures': ['app_open'], 'warnings': [], 'error': problem}
     folder.mkdir(parents=True, exist_ok=True)
     pages = take(folder)
     if not pages:
-        return {'asin': asin, 'blocking_failures': ['app_capture'], 'warnings': [], 'error': 'no page was captured'}
-    return convert(asin, title, source=folder)
+        return None, {'asin': asin, 'blocking_failures': ['app_capture'], 'warnings': [], 'error': 'no page was captured'}
+    return folder, None
 
 
-def main(argv=None, env=os.environ, book=run_book):
+def run_book(asin, title, downloads, convert=capture_book.convert, open_=open_book, start=go_to_start, take=capture):
+    """One book from the app to its report, in this thread (the pilot path; main() converts in the background)."""
+    folder, failure = capture_pages(asin, title, downloads, open_=open_, start=start, take=take)
+    return failure or convert(asin, title, source=folder)
+
+
+class Converting:
+    """One captured book converting in its own thread while the app turns the next; outcome once it has ended."""
+
+    def __init__(self, asin, title, work):
+        self.asin, self.title, self.outcome = asin, title, None
+        self.thread = threading.Thread(target=self._run, args=(work,), daemon=True)
+        self.thread.start()
+
+    def _run(self, work):
+        try:
+            self.outcome = work()
+        except Exception as e:  # recorded like any other failure, so the summary names it
+            self.outcome = {'asin': self.asin, 'blocking_failures': ['crash'], 'warnings': [], 'error': str(e)}
+
+    def result(self):
+        self.thread.join()
+        return self.outcome
+
+
+def main(argv=None, env=os.environ, capture=capture_pages, convert=capture_book.convert):
     parser = argparse.ArgumentParser(description='Capture the Kindle-app-only books of a list from the Kindle app')
     parser.add_argument('list', type=Path, help='ASIN<TAB>title per line, the same list capture_books.py ran')
     parser.add_argument('--downloads', type=Path, default=Path.home() / 'Downloads')
@@ -614,12 +644,9 @@ def main(argv=None, env=os.environ, book=run_book):
     todo = app_books(capture_books.read_list(args.list), progress)
     print(f'{len(todo)} Kindle-app-only books', flush=True)
     converter = capture_books.converter_version()
-    for asin, title in todo:
-        print(f'=== {title} ({asin}) from the Kindle app', flush=True)
-        try:
-            data = book(asin, title, args.downloads)
-        except Exception as e:  # recorded like any other failure, so the summary names it
-            data = {'asin': asin, 'blocking_failures': ['crash'], 'warnings': [], 'error': str(e)}
+
+    def record(asin, title, data):
+        """Write one finished book to the progress file. Returns why the run must stop, or None."""
         verdict = 'failed' if data['blocking_failures'] else 'done'
         progress[asin] = {'title': title, 'verdict': verdict, 'failures': data['blocking_failures'],
                           'warnings': data['warnings'], 'error': data.get('error'), 'capture': 'kindle_app',
@@ -631,8 +658,41 @@ def main(argv=None, env=os.environ, book=run_book):
                                           if data['blocking_failures'] else ''), flush=True)
         if data['blocking_failures']:
             # Laiken, 2026-10-10: one book first, the rest only once a book comes out right.
-            print(f'\nStopped: {title} did not pass. Fix the cause, then run the same command to resume.')
-            sys.exit(2)
+            return f'\nStopped: {title} did not pass. Fix the cause, then run the same command to resume.'
+        return None
+
+    def stop(reason):
+        print(reason, flush=True)
+        sys.exit(2)
+
+    converting = None  # the book captured before this one, converting while the app turns this one
+    for asin, title in todo:
+        if converting is not None and not converting.thread.is_alive():
+            # It ended during the last capture: a book that failed stops the run before the app opens another.
+            reason = record(converting.asin, converting.title, converting.result())
+            converting = None
+            if reason:
+                stop(reason)
+        print(f'=== {title} ({asin}) from the Kindle app', flush=True)
+        try:
+            folder, failure = capture(asin, title, args.downloads)
+        except Exception as e:  # recorded like any other failure, so the summary names it
+            folder, failure = None, {'asin': asin, 'blocking_failures': ['crash'], 'warnings': [], 'error': str(e)}
+        if converting is not None:  # one conversion at a time, recorded in list order
+            reason = record(converting.asin, converting.title, converting.result())
+            converting = None
+            if reason:
+                if folder is not None:  # the book just captured is converted and recorded, not thrown away
+                    record(asin, title, convert(asin, title, source=folder))
+                stop(reason)
+        if failure:
+            stop(record(asin, title, failure))
+        print(f'=== converting {title} in the background', flush=True)
+        converting = Converting(asin, title, lambda a=asin, t=title, f=folder: convert(a, t, source=f))
+    if converting is not None:
+        reason = record(converting.asin, converting.title, converting.result())
+        if reason:
+            stop(reason)
     print(f'\nAll {len(todo)} Kindle-app-only books done.')
 
 

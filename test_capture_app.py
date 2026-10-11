@@ -1,4 +1,5 @@
 import re
+import threading
 from pathlib import Path
 import json
 
@@ -20,47 +21,117 @@ APP_ONLY = {'verdict': 'failed', 'failures': ['kindle_app_only'], 'warnings': []
 def test_it_will_not_start_without_laikens_word(tmp_path):
     books = write_list(tmp_path, {'B2': APP_ONLY})
     with pytest.raises(SystemExit) as stop:
-        capture_app.main([str(books)], env={}, book=lambda *a: pytest.fail('drove the Kindle app'))
+        capture_app.main([str(books)], env={}, capture=lambda *a: pytest.fail('drove the Kindle app'))
     assert 'KINDLE_APP_OK=1' in str(stop.value.code)
 
 
-def test_only_the_app_only_books_are_captured_and_recorded(tmp_path, capsys):
+def pipeline(seen, converted, failures=(), release=None):
+    """A fake app and converter: capture notes the title; convert waits on release when given, then answers."""
+    def capture(asin, title, downloads):
+        seen.append(title)
+        return downloads / title, None
+
+    def convert(asin, title, source):
+        if release is not None:
+            release.wait()
+        converted.append(title)
+        return {'asin': asin, 'blocking_failures': list(failures), 'warnings': [], 'source': str(source)}
+    return capture, convert
+
+
+def test_only_the_app_only_books_are_captured_and_recorded(tmp_path):
     progress = {'B1': {'verdict': 'done', 'failures': [], 'warnings': []}, 'B2': APP_ONLY, 'B3': APP_ONLY}
     books = write_list(tmp_path, progress)
-    seen = []
-
-    def book(asin, title, downloads):
-        seen.append(title)
-        return {'asin': asin, 'blocking_failures': [], 'warnings': [], 'source': str(downloads / title)}
-
-    capture_app.main([str(books), '--downloads', str(tmp_path)], env={'KINDLE_APP_OK': '1'}, book=book)
-    assert seen == ['For 91 Days In Tokyo', 'Japan Travel Planner']
+    seen, converted = [], []
+    capture, convert = pipeline(seen, converted)
+    capture_app.main([str(books), '--downloads', str(tmp_path)], env={'KINDLE_APP_OK': '1'}, capture=capture, convert=convert)
+    assert seen == converted == ['For 91 Days In Tokyo', 'Japan Travel Planner']
     saved = json.loads((tmp_path / 'books.progress.json').read_text())
     assert saved['B2']['verdict'] == 'done' and saved['B2']['capture'] == 'kindle_app'
+    assert saved['B2']['source'] == str(tmp_path / 'For 91 Days In Tokyo')
     assert saved['B1'] == progress['B1']
     # A second run finds nothing left to do.
-    capture_app.main([str(books), '--downloads', str(tmp_path)], env={'KINDLE_APP_OK': '1'}, book=book)
+    capture_app.main([str(books), '--downloads', str(tmp_path)], env={'KINDLE_APP_OK': '1'}, capture=capture, convert=convert)
     assert seen == ['For 91 Days In Tokyo', 'Japan Travel Planner']
+
+
+def test_the_next_book_is_captured_while_the_last_one_converts(tmp_path):
+    # Laiken, 2026-10-11 20:27: the app sat idle for the 2 minutes a book took to convert and check.
+    books = write_list(tmp_path, {'B2': APP_ONLY, 'B3': APP_ONLY})
+    seen, converted, release = [], [], threading.Event()
+    capture, convert = pipeline(seen, converted, release=release)
+
+    def capture_then_release(asin, title, downloads):
+        if title == 'Japan Travel Planner':
+            assert converted == [], 'the app waited for the conversion of the book before'
+            release.set()  # Tokyo's conversion may end only once the next book is already being captured
+        return capture(asin, title, downloads)
+
+    capture_app.main([str(books), '--downloads', str(tmp_path)], env={'KINDLE_APP_OK': '1'},
+                     capture=capture_then_release, convert=convert)
+    assert seen == converted == ['For 91 Days In Tokyo', 'Japan Travel Planner']
+    saved = json.loads((tmp_path / 'books.progress.json').read_text())
+    assert saved['B2']['verdict'] == saved['B3']['verdict'] == 'done'
 
 
 def test_the_first_book_that_fails_stops_the_run(tmp_path):
     books = write_list(tmp_path, {'B2': APP_ONLY, 'B3': APP_ONLY})
-    seen = []
-
-    def book(asin, title, downloads):
-        seen.append(title)
-        return {'asin': asin, 'blocking_failures': ['headings'], 'warnings': []}
-
+    seen, converted = [], []
+    capture, convert = pipeline(seen, converted, failures=['headings'])
     with pytest.raises(SystemExit) as stop:
-        capture_app.main([str(books), '--downloads', str(tmp_path)], env={'KINDLE_APP_OK': '1'}, book=book)
+        capture_app.main([str(books), '--downloads', str(tmp_path)], env={'KINDLE_APP_OK': '1'}, capture=capture, convert=convert)
     assert stop.value.code == 2 and seen == ['For 91 Days In Tokyo']
     saved = json.loads((tmp_path / 'books.progress.json').read_text())
     assert saved['B2']['failures'] == ['headings'] and saved['B3'] == APP_ONLY
     # The same command resumes at the failed book (2026-10-11: a resume skipped Tokyo once its record said app_open).
     seen.clear()
     with pytest.raises(SystemExit):
-        capture_app.main([str(books), '--downloads', str(tmp_path)], env={'KINDLE_APP_OK': '1'}, book=book)
+        capture_app.main([str(books), '--downloads', str(tmp_path)], env={'KINDLE_APP_OK': '1'}, capture=capture, convert=convert)
     assert seen == ['For 91 Days In Tokyo']
+
+
+def test_a_book_already_captured_is_converted_before_the_run_stops(tmp_path):
+    # The conversion of the book before fails only once the next book has been captured: that book is not thrown away.
+    books = write_list(tmp_path, {'B1': APP_ONLY, 'B2': APP_ONLY, 'B3': APP_ONLY})
+    seen, converted, release = [], [], threading.Event()
+    capture, convert = pipeline(seen, converted, release=release)
+
+    def failing_convert(asin, title, source):
+        data = convert(asin, title, source)
+        if title == 'Drive':
+            data['blocking_failures'] = ['headings']
+        return data
+
+    def capture_then_release(asin, title, downloads):
+        if title != 'Drive':
+            release.set()  # Drive's conversion ends only once Tokyo is being captured
+        return capture(asin, title, downloads)
+
+    with pytest.raises(SystemExit) as stop:
+        capture_app.main([str(books), '--downloads', str(tmp_path)], env={'KINDLE_APP_OK': '1'},
+                         capture=capture_then_release, convert=failing_convert)
+    assert stop.value.code == 2 and seen == ['Drive', 'For 91 Days In Tokyo'] and converted == seen
+    saved = json.loads((tmp_path / 'books.progress.json').read_text())
+    assert saved['B1']['verdict'] == 'failed' and saved['B2']['verdict'] == 'done' and saved['B3'] == APP_ONLY
+
+
+def test_a_book_the_app_does_not_open_stops_the_run_after_the_converting_book_is_recorded(tmp_path):
+    books = write_list(tmp_path, {'B2': APP_ONLY, 'B3': APP_ONLY})
+    seen, converted, release = [], [], threading.Event()
+    capture, convert = pipeline(seen, converted, release=release)
+
+    def capture_or_refuse(asin, title, downloads):
+        release.set()
+        if title == 'Japan Travel Planner':
+            return None, {'asin': asin, 'blocking_failures': ['app_open'], 'warnings': [], 'error': 'front window: "Library"'}
+        return capture(asin, title, downloads)
+
+    with pytest.raises(SystemExit) as stop:
+        capture_app.main([str(books), '--downloads', str(tmp_path)], env={'KINDLE_APP_OK': '1'},
+                         capture=capture_or_refuse, convert=convert)
+    assert stop.value.code == 2 and converted == ['For 91 Days In Tokyo']
+    saved = json.loads((tmp_path / 'books.progress.json').read_text())
+    assert saved['B2']['verdict'] == 'done' and saved['B3']['failures'] == ['app_open'] and 'Library' in saved['B3']['error']
 
 
 def test_a_book_is_opened_paged_to_the_start_captured_then_converted(tmp_path):
