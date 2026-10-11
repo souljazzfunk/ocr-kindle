@@ -1,0 +1,19 @@
+# ax.dump() of the Kindle for Mac 7.40 library, 2026-10-11 20:11 JST, Iceland the recently read book.
+# The lines the Mac quoted verbatim from a 65-line dump; the other covers and groups are left out.
+frontmost=false
+windows=1
+window|Kindle|325,1187|1352,843
+element|AXGroup|iOSContentGroup||||325,1187|1352,843
+element|AXGroup|||||325,1187|1352,843
+element|AXGroup|||||325,1187|1352,843
+element|AXTextField|AXSearchField||Search Kindle||343,1229|1304,28
+element|AXGroup|||||325,1272|1352,711
+element|AXButton|||Filter||334,1276|31,31
+element|AXGenericElement|||ALL||932,1272|25,37
+element|AXGenericElement|||DOWNLOADED||969,1272|102,37
+element|AXButton|||View and sort options||1631,1276|31,31
+element|AXGroup|||Library Grid View||325,1310|1352,674
+element|AXButton|||For 91 Days in Iceland, Powell, Michael, |Book Downloaded.  Reading is 1 percent completed|358,1338|136,203
+element|AXButton|||For 91 Days In Tokyo, Powell, Michael, RED, |Book Downloaded.|931,1338|136,203
+element|AXRadioButton|AXTabButton||For 91 Days in Iceland|0|617,1958|47,70
+element|AXRadioButton|AXTabButton||LIBRARY|1|810,1985|363,46

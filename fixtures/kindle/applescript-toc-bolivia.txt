@@ -1,0 +1,25 @@
+# The AppleScript UI dump (capture_app.UI_DUMP) of the reader (For 91 Days in Bolivia, Location 185) with the
+# Table of Contents panel open, 2026-10-11 19:20 JST: the non-AXGroup lines the Mac quoted verbatim from
+# ~/Downloads/kindle-probe/B006P58NOO/ui-toc.txt. The toolbar lines were quoted with position only; their size is
+# the toolbar's 40x40 as in ax-reader-toolbar-iceland.txt.
+frontmost=true
+windows=1
+window|Kindle|551,1187|901,843
+element|AXButton|||Close menu||866,1187|585,843
+element|AXHeading|||For 91 Days in Bolivia||638,1223|140,17
+element|AXStaticText|||Powell, Michael||665,1250|86,15
+element|AXButton|||Close menu||832,1214|33,33
+element|AXStaticText|||Cover||575,1287|31,15
+element|AXStaticText|||Beginning||575,1330|59,15
+element|AXButton|||Close Book||563,1214|40,40
+element|AXButton|||Table of Contents||603,1214|40,40
+element|AXButton|||In-book Search||1280,1214|40,40
+element|AXButton|||Annotations||1320,1214|40,40
+element|AXButton|||Reading Settings||1360,1214|40,40
+element|AXButton|||More options||1400,1214|40,40
+element|AXButton|||Add Bookmark||1400,1254|40,40
+element|AXHeading|||Recent places||902,1880|100,17
+element|AXButton|||Location 185||902,1910|100,17
+element|AXSlider|||Reading Progress Bar|Location 185 , 13%|572,1974|858,46
+element|AXImage|||||683,1980|36,36
+element|AXStaticText|||Location 185 of 0 , 13%||941,2019|122,11

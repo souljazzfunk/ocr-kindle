@@ -365,6 +365,16 @@ def menu_open(found):
     return any(MENU_CLOSE in (e['title'], e['description']) for e in found)
 
 
+def toc_entries(found):
+    """The Table of Contents panel's entries: the static texts after its "Close menu" X (the title and author
+    stand above the X), footer lines aside. Recorded in fixtures/kindle/applescript-toc-bolivia.txt."""
+    closes = [i for i, e in enumerate(found) if MENU_CLOSE in (e['title'], e['description'])]
+    if not closes:
+        return []
+    return [e for e in found[closes[-1] + 1:] if e['role'] == 'AXStaticText'
+            and not LOCATION.search(e['description']) and not LOCATION.search(e['value'])]
+
+
 def toc_first(script=osascript, sleep=time.sleep, clock=time.monotonic):
     """Open the Table of Contents and press its topmost entry. Probe of 2026-10-11 19:20 (Bolivia): the panel slides
     in at the left with the title (AXHeading), the author, a "Close menu" X, then the entries ("Cover", "Beginning")
@@ -376,9 +386,7 @@ def toc_first(script=osascript, sleep=time.sleep, clock=time.monotonic):
     if pressed != 'pressed':
         return 'no Table of Contents button'
     found = wait_for(menu_open, script, sleep, clock)
-    closes = [i for i, e in enumerate(found) if MENU_CLOSE in (e['title'], e['description'])]
-    rows = [e for e in found[closes[-1] + 1:] if e['role'] == 'AXStaticText' and not LOCATION.search(e['description'])
-            and not LOCATION.search(e['value'])] if closes else []
+    rows = toc_entries(found)
     if not rows:
         script(PRESS_TITLED.format(title=_quote(MENU_CLOSE)))
         return 'no entry in the table of contents'
