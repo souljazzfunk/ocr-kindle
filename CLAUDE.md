@@ -9,7 +9,7 @@
 | ルール | 何が守らせるか |
 |---|---|
 | 1 冊の取り込みは 1 回だけ。再読み込み・タブの復元・2 つ目のタブで同じ本をめくり直さない | `extension/autostart.js`（`#autocapture` を読んだらすぐ URL から消す、取り込み中のタブは 1 つ、保存済みの ASIN は自動では再取り込みしない）、テスト `extension/autostart.test.js` |
-| 取り込みは Brave の Cloud Reader 拡張から始める。Kindle for Mac アプリは、ユーザー本人がそう書いたときだけ使う | `.claude/hooks/guard_capture.py`（`kindle2img.applescript` / `screencapture` / Kindle アプリを開くコマンドを止める。本人の指示があるときは `KINDLE_APP_OK=1` を付ける）、テスト `test_guard_capture.py` |
+| 取り込みは Brave の Cloud Reader 拡張から始める。Kindle for Mac アプリは、ユーザー本人がそう書いたときだけ使う | `.claude/hooks/guard_capture.py`（`capture_app.py` / `kindle2img.applescript` / `screencapture` / Kindle アプリを開くコマンドを止める。本人の指示があるときは `KINDLE_APP_OK=1` を付ける）、テスト `test_guard_capture.py`。2026-10-11 に Laiken が `kindle_app_only` の本だけアプリで取り込むと決めた：`capture_app.py` は一覧のうちその本だけを開いて先頭に戻し、取り込み、同じ検査に通す（`KINDLE_APP_OK=1` がないと始めない、最初に落ちた本で止まる）。テスト `test_capture_app.py` |
 | 同じ本を取り直すのは、検査で ZIP が使えないと分かったときだけ | 拡張は `#autocapture` では保存済みの本を始めない。`capture_books.py` だけが `#recapture` で取り直す（それでも 1 回・1 タブ） |
 | Brave を終了・再起動しない。取り込みが終わったら本のタブだけ閉じる。Chrome で read.amazon を開かない | 同じフック（Brave の quit / kill、Chrome での read.amazon を止める） |
 | 次の本へ進むかは検査結果で決める。通れば次へ、ZIP が使い物にならなければ取り直し。Markdown の検査が直しきれなければ一覧を止め、変換を直してその本が通るまで次の本へ進まない（Laiken：試しに 1 冊、正しくできるようになったら全部）。人の OK は待たない | `capture_books.py`（`decide()`、失敗で終了コード 2。`--keep-going` で記録して次へ）、テスト `test_capture_books.py` |
