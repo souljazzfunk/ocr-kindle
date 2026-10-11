@@ -449,24 +449,35 @@ def toc_entries(found):
 
 
 TOC_SCROLL_LINES = 40
-TOC_SCROLLS = 8
+TOC_SCROLLS = 20
+TOC_SETTLE_S = 0.5  # after a scroll, before the rows are read: the panel animates (Japan Travel Planner, 20:58)
 
 
 def toc_top(script, sleep, clock, found, scroll):
     """Scroll the panel to its top: it opens at the current chapter (Sri Lanka at 30%, 2026-10-11 20:45, showed
     "After One Month in Sri Lanka" first; 40 lines of scroll-wheel up over the panel brought "Cover" to the top).
-    Stops once the topmost row no longer changes. Returns the panel as last read."""
+    The panel is read only once its rows stand still (it slides in), and the scrolling stops only once the topmost
+    row has not changed over two scrolls: one read right after a scroll saw no change while the panel was still
+    moving, and Sri Lanka started at "Beginning" (one row short) and Japan Travel Planner at section 1.5 (20:58).
+    Returns the panel as last read."""
+    def top_of(f):
+        rows = toc_entries(f)
+        return (rows[0]['description'] or rows[0]['title'], rows[0]['position']) if rows else None
+
+    last = top_of(found)
+    found = wait_for(lambda f: top_of(f) == last and f is not found, script, sleep, clock, timeout=2)
+    unchanged = 0
     for _ in range(TOC_SCROLLS):
         rows = toc_entries(found)
         if not rows:
             return found
         x, y, w, h = _frame(rows[0])
-        top = rows[0]['description'] or rows[0]['title']
+        before = top_of(found)
         scroll(x + w // 2, y + 4 * h, TOC_SCROLL_LINES)
-        found = wait_for(lambda f: (toc_entries(f) or [{'description': top, 'title': ''}])[0]['description'] != top
-                         and True, script, sleep, clock, timeout=1)
-        rows = toc_entries(found)
-        if rows and (rows[0]['description'] or rows[0]['title']) == top:
+        sleep(TOC_SETTLE_S)
+        found = elements(script)
+        unchanged = unchanged + 1 if top_of(found) == before else 0
+        if unchanged >= 2:
             return found
     return found
 
@@ -575,9 +586,28 @@ def go_to_start(script=osascript, sleep=time.sleep, clock=time.monotonic, scroll
     return ''
 
 
-def capture(folder, script_path=HERE / 'kindle2img.applescript', run=capture_book.run):
+END_SHEET = ('Overall rating', 'Recommend this book', 'Review this book')
+
+
+def end_sheet_shown(found):
+    """Kindle's end-of-book sheet (rating stars, "Recommend this book") over the last page. Recorded on Japan Travel
+    Planner, 2026-10-11 20:59: the capture's → keys had moved the focus onto the first star."""
+    return any(any(mark in (e['title'], e['description'], e['value']) or (e['title'] or e['description']).startswith(mark)
+                   for mark in END_SHEET) for e in found)
+
+
+def capture(folder, script_path=HERE / 'kindle2img.applescript', run=capture_book.run, script=osascript,
+            sleep=time.sleep):
+    """Page through the book with kindle2img.applescript. When the end-of-book sheet is up afterwards, the last image
+    is that sheet, not a page, so it is dropped, and the sheet is closed with Escape (never Enter or space: the
+    focus sits on the rating's stars)."""
     run(['osascript', str(script_path), 'ltr', str(folder)])
-    return sorted(folder.glob('page_*.png'))
+    pages = sorted(folder.glob('page_*.png'))
+    if pages and end_sheet_shown(elements(script)):
+        pages.pop().unlink()
+        dismiss_overlays(script, sleep)
+        print(f'end: the end-of-book sheet was closed and its image dropped; {len(pages)} pages', flush=True)
+    return pages
 
 
 # What the app's window holds, read through System Events: role, title, description and value of every element, plus

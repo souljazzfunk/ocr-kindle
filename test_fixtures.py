@@ -14,7 +14,7 @@ import capture_app
 
 FIXTURES = Path(__file__).parent / 'fixtures' / 'kindle'
 EXPECT = json.loads((FIXTURES / 'expect.json').read_text(encoding='utf-8'))
-FLAGS = ('in_library', 'chrome_shown', 'menu_open')
+FLAGS = ('in_library', 'chrome_shown', 'menu_open', 'end_sheet_shown')
 
 
 def tree(name):
