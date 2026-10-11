@@ -246,6 +246,29 @@ def test_the_start_is_reached_by_clicking_the_progress_bar_track_and_read_from_t
     assert 'drag failed: no event tap' in problem
 
 
+TOC = (CHROME + 'element|AXButton|||Close menu||866,1187|585,843\n'
+       'element|AXHeading|||For 91 Days in Bolivia||638,1223|140,17\n'
+       'element|AXButton|||Close menu||832,1214|33,33\n'
+       'element|AXStaticText|||Cover||575,1287|31,15\n'
+       'element|AXStaticText|||Beginning||575,1330|59,15\n')
+
+
+def test_when_the_slider_does_not_move_the_table_of_contents_cover_row_is_clicked():
+    # Probe of 2026-10-11 19:20 (Bolivia at Location 185): the TOC panel lists "Cover" and "Beginning" as static
+    # texts, so after the track click and the drag left the book where it was, "Cover" is clicked at its centre.
+    at = CHROME.format(at=185)
+    app = App([at, at, at, TOC.format(at=185), CHROME.format(at=1), READER])
+    assert capture_app.go_to_start(app, sleep=lambda s: None, drag=lambda *a: None) == ''
+    assert any('"Table of Contents"' in c and 'AXPress' in c for c in app.calls)
+    assert sum('click at {590, 1294}' in c for c in app.calls) == 1
+    assert not any('"Close menu"' in c for c in app.calls)
+    # A table of contents without a "Cover" row is closed again and named.
+    app = App([at, at, at, TOC.format(at=185).replace('|Cover|', '|Chapter 1|'), at, at])
+    problem = capture_app.go_to_start(app, sleep=lambda s: None, drag=lambda *a: None)
+    assert 'no Cover row in the table of contents' in problem and 'Location 185' in problem
+    assert any('"Close menu"' in c for c in app.calls) and not any('click at {590, 1294}' in c for c in app.calls)
+
+
 def test_the_knob_is_dragged_from_its_percentage_to_the_track_start():
     slider = {'role': 'AXSlider', 'title': '', 'description': 'Reading Progress Bar', 'value': 'Location 185 , 13%',
               'position': '533,954', 'size': '980,46'}
