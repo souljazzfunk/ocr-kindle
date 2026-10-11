@@ -203,7 +203,7 @@ tell application "System Events" to tell process "Kindle"
     repeat with e in elems
         set e to contents of e
         try
-            if role of e is "AXSlider" and title of e is "{bar}" then
+            if role of e is "AXSlider" and (title of e is "{bar}" or description of e is "{bar}") then
                 set value of e to 0
                 return "set"
             end if
@@ -283,13 +283,18 @@ def go_to_start(script=osascript, sleep=time.sleep):
     found = show_chrome(script, sleep)
     if not chrome_shown(found):
         return 'the reader shows no toolbar after clicks on the page; it shows: ' + describe(found)
-    _, set_, _ = script(SET_SLIDER)
-    sleep(3)
-    found = elements(script)
     where = location_of(found)
-    if set_ != 'set' or where is None or where[0] > 1:
+    set_ = 'not needed'
+    if where is None or where[0] > 1:  # a book already at Location 1 (run of 2026-10-11 18:19) is not moved
+        bring_front(script, sleep)
+        _, set_, _ = script(SET_SLIDER)
+        sleep(3)
+        found = elements(script)
+        where = location_of(found)
+    if set_ not in ('set', 'not needed') or where is None or where[0] > 1:
         return (f'could not go to the start (slider: {set_}, footer: '
                 f'{"Location %d of %d" % where if where else "no location"})')
+    bring_front(script, sleep)
     reveal_chrome(script, sleep)  # the same click hides the toolbar again
     if chrome_shown(elements(script)):
         return 'the toolbar stayed over the page after a click to hide it'

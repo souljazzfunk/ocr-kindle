@@ -191,6 +191,12 @@ def test_the_start_is_reached_by_the_progress_bar_and_read_from_the_footer():
     app = App([READER, CHROME.format(at=12), CHROME.format(at=1), READER])
     assert capture_app.go_to_start(app, sleep=lambda s: None) == ''
     assert sum('set value of e to 0' in c for c in app.calls) == 1 and sum('click at' in c for c in app.calls) == 2
+    slider = next(c for c in app.calls if 'set value of e to 0' in c)
+    assert 'description of e is "Reading Progress Bar"' in slider  # the name is in the description (run of 18:19)
+    # A book already at Location 1 is not moved (run of 2026-10-11 18:19 opened on the cover).
+    app = App([CHROME.format(at=1), READER])
+    assert capture_app.go_to_start(app, sleep=lambda s: None) == ''
+    assert not any('set value of e to 0' in c for c in app.calls)
     # The footer's total came back as 0 in the probe of 18:04; the start is judged by N alone.
     app = App([CHROME.format(at=12), CHROME.format(at=1).replace('of 2594', 'of 0'), READER])
     assert capture_app.go_to_start(app, sleep=lambda s: None) == ''
