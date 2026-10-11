@@ -148,7 +148,10 @@ def check_folder(folder, title=None):
                         if noise else None))
     missed = MISSED_CHAPTER.findall(text)
     # Reading the pages again gives the same headings, so a missed chapter is reported, not retried.
-    checks.append(Check('chapter_titles', not missed, f'{len(missed)} chapter openings without a heading', fix=None))
+    # The openings themselves go in the report, so the converter is fixed from them rather than from a guess.
+    shown = '; '.join('"' + re.sub(r'\n+', ' / ', m)[:70] + '"' for m in missed[:5])
+    checks.append(Check('chapter_titles', not missed, f'{len(missed)} chapter openings without a heading'
+                        + (f': {shown}' if missed else ''), fix=None))
 
     counts = {}
     for f in findings:
