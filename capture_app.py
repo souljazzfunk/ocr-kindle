@@ -85,6 +85,58 @@ def capture(folder, script_path=HERE / 'kindle2img.applescript', run=capture_boo
     return sorted(folder.glob('page_*.png'))
 
 
+# What the app's window holds, read through System Events: role, title, description and value of every element, plus
+# the menu bar. The new Kindle app (7.40, "Amazon Kindle") shows no book title in its window name and has no Go
+# menu, so the capture steps are written from this dump rather than guessed (Laiken chose the new app, 2026-10-11).
+UI_DUMP = '''
+tell application "System Events" to tell process "Kindle"
+    set out to "frontmost=" & (frontmost as text) & linefeed
+    set out to out & "windows=" & (count of windows) & linefeed
+    repeat with w in windows
+        set out to out & "window|" & (name of w) & "|" & (position of w as text) & "|" & (size of w as text) & linefeed
+        repeat with e in entire contents of w
+            try
+                set out to out & "element|" & (role of e) & "|" & (subrole of e) & "|" & (title of e) & "|" & (description of e) & "|" & (value of e as text) & "|" & (position of e as text) & "|" & (size of e as text) & linefeed
+            on error m
+                set out to out & "element|?|" & m & linefeed
+            end try
+        end repeat
+    end repeat
+    repeat with b in menu bar items of menu bar 1
+        set out to out & "menu|" & (name of b) & linefeed
+        try
+            repeat with i in menu items of menu 1 of b
+                set out to out & "item|" & (name of b) & "|" & (name of i) & "|" & (enabled of i as text) & linefeed
+            end repeat
+        end try
+    end repeat
+    return out
+end tell
+'''
+EBOOKS = Path.home() / 'Library/Containers/com.amazon.Lassen/Data/Library/eBooks'
+
+
+def probe(asin, folder, script=osascript, run=capture_book.run, sleep=time.sleep, ebooks=EBOOKS):
+    """Open the book in the app and record what the app shows: a screenshot, the UI dump before and after the open,
+    and whether the book is downloaded. Returns the folder; the files are what a fix is written from."""
+    folder.mkdir(parents=True, exist_ok=True)
+    script('tell application "Amazon Kindle" to activate')
+    sleep(3)
+    _, before, err = script(UI_DUMP)
+    (folder / 'ui-library.txt').write_text(before or err, encoding='utf-8')
+    run(['open', f'kindle://book?action=open&asin={asin}'])
+    sleep(10)
+    script('tell application "Amazon Kindle" to activate')
+    sleep(2)
+    run(['screencapture', '-x', str(folder / 'screen.png')])
+    _, after, err = script(UI_DUMP)
+    (folder / 'ui-book.txt').write_text(after or err, encoding='utf-8')
+    downloaded = sorted(p.name for p in ebooks.glob(f'*{asin}*')) if ebooks.exists() else []
+    (folder / 'probe.json').write_text(json.dumps({'asin': asin, 'downloaded': downloaded, 'ebooks': str(ebooks),
+                                                   'at': time.strftime('%Y-%m-%dT%H:%M:%S')}, indent=1), encoding='utf-8')
+    return folder
+
+
 def app_books(books, progress):
     """The books of the list Cloud Reader refused as app-only and no app run has finished yet: a book an earlier app
     run failed (app_open, app_capture, a check) is tried again, so the same command resumes at it. On 2026-10-11 the
@@ -115,9 +167,14 @@ def main(argv=None, env=os.environ, book=run_book):
     parser = argparse.ArgumentParser(description='Capture the Kindle-app-only books of a list from the Kindle app')
     parser.add_argument('list', type=Path, help='ASIN<TAB>title per line, the same list capture_books.py ran')
     parser.add_argument('--downloads', type=Path, default=Path.home() / 'Downloads')
+    parser.add_argument('--probe', metavar='ASIN', help='only open this book and record what the app shows')
     args = parser.parse_args(argv)
     if env.get(OK_ENV) != '1':
         sys.exit(f'Not starting: the Kindle app is used only when Laiken asks for it; run with {OK_ENV}=1.')
+    if args.probe:
+        folder = probe(args.probe, args.downloads / 'kindle-probe' / args.probe)
+        print(f'Probe written to {folder}: screen.png, ui-library.txt, ui-book.txt, probe.json')
+        return
     try:
         # One run per list: two runs would each write back the whole progress file over the other's results.
         locks.keep(args.list.with_suffix('.lock'), wait=False)

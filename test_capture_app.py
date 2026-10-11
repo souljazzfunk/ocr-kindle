@@ -118,3 +118,36 @@ def test_a_book_left_in_the_library_is_opened_again_to_download_it_as_on_2026_10
     problem = capture_app.open_book('B2', 'For 91 Days In Tokyo', script=lambda s: (0, 'Kindle', ''),
                                     run=opens.append, clock=lambda: next(clock), sleep=lambda s: None)
     assert 'opening it again to download it' in problem and len(opens) == 4
+
+
+def test_a_probe_records_what_the_new_app_shows_before_and_after_opening_a_book(tmp_path):
+    # Laiken chose to fit the new Kindle app (2026-10-11); its steps are written from this dump, not guessed.
+    calls, ebooks = [], tmp_path / 'eBooks'
+    ebooks.mkdir()
+    (ebooks / 'B2_EBOK').mkdir()
+    dumps = iter(['frontmost=true\nmenu|Kindle\n', 'frontmost=true\nelement|AXGroup|||page 1|\n'])
+
+    def script(text):
+        calls.append(text[:40])
+        return (0, next(dumps) if 'entire contents' in text else '', '')
+
+    folder = capture_app.probe('B2', tmp_path / 'probe', script=script, run=calls.append, sleep=lambda s: None, ebooks=ebooks)
+    assert (folder / 'ui-library.txt').read_text() == 'frontmost=true\nmenu|Kindle\n'
+    assert 'page 1' in (folder / 'ui-book.txt').read_text()
+    assert json.loads((folder / 'probe.json').read_text())['downloaded'] == ['B2_EBOK']
+    assert ['open', 'kindle://book?action=open&asin=B2'] in calls and any('screencapture' in c for c in calls)
+    assert calls.index(['open', 'kindle://book?action=open&asin=B2']) < calls.index(['screencapture', '-x', str(folder / 'screen.png')])
+
+
+def test_a_probe_needs_laikens_word_too(tmp_path):
+    with pytest.raises(SystemExit):
+        capture_app.main([str(tmp_path / 'books.tsv'), '--probe', 'B2'], env={})
+    seen = []
+    import capture_app as module
+    module_probe = module.probe
+    try:
+        module.probe = lambda asin, folder, **k: seen.append((asin, folder)) or folder
+        capture_app.main([str(tmp_path / 'books.tsv'), '--probe', 'B2', '--downloads', str(tmp_path)], env={'KINDLE_APP_OK': '1'})
+    finally:
+        module.probe = module_probe
+    assert seen == [('B2', tmp_path / 'kindle-probe' / 'B2')]
