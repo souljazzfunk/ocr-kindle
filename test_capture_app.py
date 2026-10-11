@@ -99,3 +99,17 @@ def test_the_book_window_is_found_by_its_title(tmp_path):
     problem = capture_app.open_book('B2', 'For 91 Days In Tokyo', script=lambda s: (0, next(shown), ''),
                                     run=lambda c: None, clock=lambda: next(clock), sleep=lambda s: None)
     assert problem == ''
+
+
+def test_a_book_left_in_the_library_is_opened_again_to_download_it_as_on_2026_10_11():
+    # For 91 Days In Tokyo was not on the Mac: the first open left the library in front, the second started the
+    # download (Laiken: もう 1 回クリックすればダウンロードが始まる), and the book appeared later.
+    opens, clock = [], iter(range(0, 1000, 2))
+    shown = ['Kindle'] * 40 + ['For 91 Days in Tokyo – Kindle']
+    problem = capture_app.open_book('B2', 'For 91 Days In Tokyo', script=lambda s: (0, shown.pop(0) if len(shown) > 1 else shown[0], ''),
+                                    run=opens.append, clock=lambda: next(clock), sleep=lambda s: None)
+    assert problem == '' and len(opens) == 2 and opens[0] == opens[1]
+    shown = ['Kindle']
+    problem = capture_app.open_book('B2', 'For 91 Days In Tokyo', script=lambda s: (0, 'Kindle', ''),
+                                    run=opens.append, clock=lambda: next(clock), sleep=lambda s: None)
+    assert 'opening it again to download it' in problem and len(opens) == 4

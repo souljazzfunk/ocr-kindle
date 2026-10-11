@@ -30,6 +30,9 @@ import capture_books
 HERE = Path(__file__).resolve().parent
 OK_ENV = 'KINDLE_APP_OK'
 OPEN_WAIT_S = 60
+# A book not yet on this Mac stays in the library on the first open; opening it again starts its download
+# (Laiken, 2026-10-11 17:21 JST), which takes longer than a plain open.
+DOWNLOAD_WAIT_S = 300
 # The app reopens a book where it was last read; its Go menu has an item that jumps to the start.
 START_ITEMS = ('Beginning', 'Cover', 'Start')
 
@@ -45,18 +48,21 @@ def window_title(script=osascript):
 
 
 def open_book(asin, title, script=osascript, run=capture_book.run, clock=time.monotonic, sleep=time.sleep):
-    """Open the book in the app and wait for its window. Returns '' or why it could not."""
-    run(['open', f'kindle://book?action=open&asin={asin}'])
+    """Open the book in the app and wait for its window; when it stays in the library, open it once more so the app
+    downloads the book, and wait for that. Returns '' or why it could not."""
     key = capture_books.comparable(title)
-    deadline = clock() + OPEN_WAIT_S
     shown = ''
-    while clock() < deadline:
-        shown = window_title(script)
-        name = capture_books.comparable(shown)
-        if name and key and (name.startswith(key[:20]) or key.startswith(name)):
-            return ''
-        sleep(2)
-    return f'the Kindle app did not show this book within {OPEN_WAIT_S} s (front window: "{shown}")'
+    for wait in (OPEN_WAIT_S, DOWNLOAD_WAIT_S):
+        run(['open', f'kindle://book?action=open&asin={asin}'])
+        deadline = clock() + wait
+        while clock() < deadline:
+            shown = window_title(script)
+            name = capture_books.comparable(shown)
+            if name and key and (name.startswith(key[:20]) or key.startswith(name)):
+                return ''
+            sleep(2)
+    return (f'the Kindle app did not show this book within {OPEN_WAIT_S} s, nor within {DOWNLOAD_WAIT_S} s of opening '
+            f'it again to download it (front window: "{shown}")')
 
 
 def go_to_start(script=osascript):
