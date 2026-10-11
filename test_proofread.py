@@ -105,3 +105,15 @@ def test_python_prompts_that_lost_a_chevron_are_put_back():
         ('>>car = 1 True', '>>> car = 1 True')]
     prose = {'page_0001': BODY + '>>age = 19\n'}  # no prompts to go by: left alone
     assert not [f for f in find_all(Book(Path('/nonexistent'), prose)) if f.kind == 'repl_prompt']
+
+
+def test_a_section_number_over_an_epigraph_becomes_a_heading():
+    # In the Plex: each chapter's sections are numbered 1, 2, 3 and open with a quote; nobody marked the numbers.
+    pages = {'page_0001': '# PROLOGUE\n\n' + BODY,
+             'page_0002': BODY + '\n\nIt cost $21\n\n1\n\n> "It was science fiction more than computer science."\n\n' + BODY}
+    found = [f for f in find_all(Book(Path('/nonexistent'), pages)) if f.kind in ('section_number', 'heading_noise')]
+    assert [(f.kind, f.after[:7]) for f in found] == [('section_number', '## 1\n\n>')]
+    fixed = apply(pages, found)['page_0002']
+    assert 'It cost $21\n\n## 1\n\n> "It was science' in fixed
+    assert not [f for f in find_all(Book(Path('/nonexistent'), {**pages, 'page_0002': fixed}))
+                if f.kind in ('section_number', 'heading_noise')]

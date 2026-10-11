@@ -278,7 +278,10 @@ def heading_noise(book):
         titles = HEADING.findall(text)
         has_body = any(len(p) >= 100 and not p.startswith('#') for p in text.split('\n\n'))
         guessed = stem not in laid and titles and (not has_body or len(titles) > MAX_PAGE_HEADINGS)
+        numbered = {m.group(2) for m in SECTION_NUMBER.finditer(text) if m.group(1)}
         for marks, title in titles:
+            if title in numbered:
+                continue  # a section number over its epigraph (section_number)
             if guessed or not_a_title(title):
                 yield Finding('heading_noise', stem, f'{marks} {title}', title)
 
@@ -289,6 +292,22 @@ def not_a_title(text):
             or not re.search(r'[A-Za-z]*[AEIOUYaeiouy][A-Za-z]*', text))
 
 
+# A section number alone on its line with an epigraph under it: In the Plex numbers the sections of each chapter
+# (1, 2, 3 ...) and opens each with a quote, and neither Gemini nor Sonnet marked the number as a title (2026-10-11).
+SECTION_NUMBER = re.compile(r'(?m)^(#+ )?([1-9]|1\d|20)\n\n(> [^\n]{0,30})')
+
+
+def section_number(book):
+    """Make such a number a heading one level under the book's chapters."""
+    levels = [len(m.group(1)) for m in re.finditer(r'(?m)^(#+) ', book.corpus)]
+    marks = '#' * min(min(levels, default=1) + 1, 3)
+    for stem, text in book.pages.items():
+        for m in SECTION_NUMBER.finditer(text):
+            if not m.group(1):
+                # The epigraph's start goes with it, so the fix changes this number and not another "1" on the page.
+                yield Finding('section_number', stem, m.group(), f'{marks} {m.group(2)}\n\n{m.group(3)}')
+
+
 def decorative_digit(book):
     for stem, text in book.pages.items():
         for m in DECORATIVE_REF.finditer(text):
@@ -297,7 +316,7 @@ def decorative_digit(book):
 
 
 DETECTORS = [duplicate_page, seam_overlap, foreign_page, hyphen_break, dash_as_hyphen, homoglyph, odd_case, stray_symbol,
-             repl_prompt, decorative_digit, l_for_i, digits_for_ll, binary_art, stray_colon, heading_noise]
+             repl_prompt, section_number, decorative_digit, l_for_i, digits_for_ll, binary_art, stray_colon, heading_noise]
 
 
 def cross_read(folder, pages, sources):
