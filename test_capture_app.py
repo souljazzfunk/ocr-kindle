@@ -136,7 +136,8 @@ def test_a_probe_records_what_the_new_app_shows_before_and_after_opening_a_book(
     assert 'page 1' in (folder / 'ui-book.txt').read_text()
     assert json.loads((folder / 'probe.json').read_text())['downloaded'] == ['B2_EBOK']
     opened = ['open', '-a', 'Amazon Kindle', 'kindle://book?action=open&asin=B2']
-    assert opened in calls and calls.index(opened) < calls.index(['screencapture', '-x', str(folder / 'screen.png')])
+    shots = ['screencapture', '-x', *(str(folder / f'screen-{n}.png') for n in (1, 2, 3))]  # every display
+    assert opened in calls and calls.index(opened) < calls.index(shots)
 
 
 def test_the_ui_dump_resolves_elements_before_reading_them():

@@ -146,7 +146,9 @@ def probe(asin, folder, script=osascript, run=capture_book.run, sleep=time.sleep
     sleep(10)
     script('tell application "Amazon Kindle" to activate')
     sleep(2)
-    run(['screencapture', '-x', str(folder / 'screen.png')])
+    # One file per display: with one file screencapture records only the main display, and on 2026-10-11 the Kindle
+    # window was on the other one (the Window menu offered "Move to BenQ EL2870U"), so screen.png showed no Kindle.
+    run(['screencapture', '-x', *(str(folder / f'screen-{n}.png') for n in (1, 2, 3))])
     _, after, err = script(UI_DUMP)
     (folder / 'ui-book.txt').write_text(after or err, encoding='utf-8')
     downloaded = sorted(p.name for p in ebooks.glob(f'*{asin}*')) if ebooks.exists() else []
@@ -191,7 +193,7 @@ def main(argv=None, env=os.environ, book=run_book):
         sys.exit(f'Not starting: the Kindle app is used only when Laiken asks for it; run with {OK_ENV}=1.')
     if args.probe:
         folder = probe(args.probe, args.downloads / 'kindle-probe' / args.probe)
-        print(f'Probe written to {folder}: screen.png, ui-library.txt, ui-book.txt, probe.json')
+        print(f'Probe written to {folder}: screen-<display>.png, ui-library.txt, ui-book.txt, probe.json')
         return
     try:
         # One run per list: two runs would each write back the whole progress file over the other's results.
