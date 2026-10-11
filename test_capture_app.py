@@ -180,6 +180,38 @@ def test_the_toolbar_is_brought_by_resting_the_pointer_on_the_top_edge_never_by_
     assert capture_app.hover_window(App(['frontmost=true\n']), move=lambda x, y: pytest.fail('moved')) == 'no window'
 
 
+SCROLLED_TOC = (Path(__file__).parent / 'fixtures' / 'kindle' / 'ax-toc-sri-lanka-scrolled.txt').read_text()
+TOP_TOC = (SCROLLED_TOC.replace('After One Month in Sri Lanka', 'Cover').replace('Nuwara Eliya', 'Beginning')
+           .replace("Horton Plains and World's End", 'Ayubowan, Sri Lanka!'))
+COVER = SCROLLED_TOC.split('element|AXButton|||Close menu||798')[0]  # the reader on its cover: toolbar, no footer
+
+
+def test_the_table_of_contents_is_scrolled_to_its_top_and_its_button_row_pressed_through_the_api(capsys):
+    # Sri Lanka, 2026-10-11 20:44: the panel opened at the current chapter; the script pressed the untitled group
+    # above the rows. Scroll-wheel up over the panel brought "Cover" to the top; AXPress on that button through
+    # the Accessibility API put the book on its cover, whose toolbar shows no "Location N of M" (20:45).
+    scrolls, presses = [], []
+    app = App([COVER, SCROLLED_TOC, TOP_TOC, TOP_TOC, COVER])
+    how = capture_app.toc_first(app, sleep=lambda s: None, clock=app.clock,
+                                scroll=lambda x, y, n: scrolls.append((x, y, n)),
+                                press=lambda role, name: presses.append((role, name)) or True)
+    assert how == 'pressed "Cover" at the top of the table of contents'
+    assert presses == [('AXButton', 'Cover')] and not any('AXPress' in c and '"Cover"' in c for c in app.calls)
+    # The pointer rests inside the panel (below its first row) and scrolls until the topmost row stops changing.
+    assert scrolls[0] == (325 + 473 // 2, 1276 + 4 * 43, capture_app.TOC_SCROLL_LINES) and len(scrolls) == 2
+    # The cover is the start although its toolbar shows no footer.
+    app = App([COVER, SCROLLED_TOC, TOP_TOC, TOP_TOC, COVER, COVER, READER])
+    problem = capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock, scroll=lambda x, y, n: None,
+                                      press=lambda role, name: True)
+    assert problem == '' and 'start: Location 1 after' in capsys.readouterr().out
+    assert sum('"Table of Contents"' in c and 'AXPress' in c for c in app.calls) == 1
+    # Without the API's press (a fake script), the button row is pressed by AppleScript as a button, not a text.
+    app = App([SCROLLED_TOC, COVER])
+    how = capture_app.toc_first(app, sleep=lambda s: None, clock=app.clock)
+    assert how == 'pressed "After One Month in Sri Lanka" at the top of the table of contents'  # no scroll without a pointer
+    assert any('AXButton' in c and '"After One Month in Sri Lanka"' in c and 'AXPress' in c for c in app.calls)
+
+
 def test_a_book_the_app_does_not_open_or_cannot_page_back_is_named_with_what_the_app_showed(tmp_path):
     def nope(*a, **k):
         pytest.fail('captured')

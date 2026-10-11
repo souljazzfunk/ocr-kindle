@@ -1,0 +1,22 @@
+# ax.dump() lines of the Kindle for Mac 7.40 reader (For 91 Days in Sri Lanka, at 30%) with the Table of Contents
+# panel open, 2026-10-11 20:44 JST, as the Mac quoted them (the panel's rows and the X; the toolbar as at 20:19).
+# The panel opens scrolled to the current chapter: its topmost row is not "Cover". Each row is an AXButton named in
+# its description, 473 px wide, inside an untitled AXGroup of the same frame. Scrolling the panel up brought
+# "Cover", "Beginning", "Ayubowan, Sri Lanka!" to the top (20:45).
+frontmost=true
+windows=1
+window|Kindle|325,1187|1352,843
+element|AXGroup|iOSContentGroup||||325,1187|1352,843
+element|AXButton|||Close Book||337,1215|40,40
+element|AXButton|||Table of Contents||377,1215|40,40
+element|AXButton|||Close menu||798,1187|879,843
+element|AXHeading|||For 91 Days in Sri Lanka||450,1223|180,17
+element|AXStaticText|||Powell, Michael||480,1250|86,15
+element|AXButton|||Close menu||765,1215|33,33
+element|AXGroup|||||325,1276|473,43
+element|AXButton|||After One Month in Sri Lanka||325,1276|473,43
+element|AXGroup|||||325,1319|473,43
+element|AXButton|||Nuwara Eliya||325,1319|473,43
+element|AXGroup|||||325,1362|473,43
+element|AXButton|||Horton Plains and World's End||325,1362|473,43
+element|AXStaticText|||Location 2127 of 7090 , 30%||1500,1999|122,11

@@ -35,21 +35,41 @@ def text(v):
     return str(v).replace('\n', ' ').replace('|', ' ')[:VALUE_CHARS]
 
 
+def _app(bundle, AS, AppKit):
+    apps = AppKit.NSRunningApplication.runningApplicationsWithBundleIdentifier_(bundle)
+    if not apps:
+        return None, None
+    return apps[0], AS.AXUIElementCreateApplication(apps[0].processIdentifier())
+
+
+def _attr(AS, e, name):
+    err, value = AS.AXUIElementCopyAttributeValue(e, name, None)
+    return (err, value if err == 0 else None)
+
+
+def _walk(AS, windows, max_depth):
+    """Every element under the windows, depth first, as (element, depth)."""
+    for w in windows or []:
+        stack = [(c, 1) for c in reversed(_attr(AS, w, 'AXChildren')[1] or [])]
+        while stack:
+            e, depth = stack.pop()
+            yield e, depth
+            if depth < max_depth:
+                stack.extend((c, depth + 1) for c in reversed(_attr(AS, e, 'AXChildren')[1] or []))
+
+
 def dump(bundle=BUNDLE, api=api, max_depth=60):
     """The dump text, or None when the API is not there. Raises when the API refuses (no Accessibility permission)."""
     modules = api()
     if modules is None:
         return None
     AS, AppKit = modules
-    apps = AppKit.NSRunningApplication.runningApplicationsWithBundleIdentifier_(bundle)
-    if not apps:
+    app, root = _app(bundle, AS, AppKit)
+    if app is None:
         return 'frontmost=false\nwindows=0\n'
-    app = apps[0]
-    root = AS.AXUIElementCreateApplication(app.processIdentifier())
 
     def attr(e, name):
-        err, value = AS.AXUIElementCopyAttributeValue(e, name, None)
-        return (err, value if err == 0 else None)
+        return _attr(AS, e, name)
 
     def point(e, name, kind):
         _, v = attr(e, name)
@@ -70,11 +90,37 @@ def dump(bundle=BUNDLE, api=api, max_depth=60):
     for w in windows or []:
         lines.append('window|' + '|'.join((text(attr(w, 'AXTitle')[1]), point(w, 'AXPosition', POINT),
                                            point(w, 'AXSize', SIZE))))
-        stack = [(c, 1) for c in reversed(attr(w, 'AXChildren')[1] or [])]
-        while stack:
-            e, depth = stack.pop()
+        for e, _ in _walk(AS, [w], max_depth):
             lines.append('element|' + '|'.join([text(attr(e, a)[1]) for a in ATTRS]
                                                + [point(e, 'AXPosition', POINT), point(e, 'AXSize', SIZE)]))
-            if depth < max_depth:
-                stack.extend((c, depth + 1) for c in reversed(attr(e, 'AXChildren')[1] or []))
     return '\n'.join(lines) + '\n'
+
+
+def press(role, name, bundle=BUNDLE, api=api, max_depth=60):
+    """AXPress on the first element of this role whose title or description is name. True when pressed, False when
+    no such element or the press is refused, None without the API. AppleScript's `entire contents` did not find the
+    Table of Contents' "Cover" button on 2026-10-11 20:45 while this did."""
+    modules = api()
+    if modules is None:
+        return None
+    AS, AppKit = modules
+    app, root = _app(bundle, AS, AppKit)
+    if app is None:
+        return False
+    for e, _ in _walk(AS, _attr(AS, root, 'AXWindows')[1], max_depth):
+        if _attr(AS, e, 'AXRole')[1] == role and name in (text(_attr(AS, e, 'AXTitle')[1]),
+                                                           text(_attr(AS, e, 'AXDescription')[1])):
+            return AS.AXUIElementPerformAction(e, 'AXPress') == 0
+    return False
+
+
+def scroll(x, y, lines, api=None):
+    """Scroll-wheel `lines` upward (negative: downward) with the pointer at the screen point, through Quartz."""
+    try:
+        import Quartz as module
+    except ImportError:
+        return 'no Quartz'
+    api = api or module
+    api.CGEventPost(api.kCGHIDEventTap, api.CGEventCreateMouseEvent(None, api.kCGEventMouseMoved, (x, y), 0))
+    api.CGEventPost(api.kCGHIDEventTap, api.CGEventCreateScrollWheelEvent(None, api.kCGScrollEventUnitLine, 1, lines))
+    return f'scrolled {lines} lines at {x},{y}'
