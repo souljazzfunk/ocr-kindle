@@ -24,6 +24,7 @@
 | 出来上がった Markdown の不具合（見出しなし、7→Z・8→& の読み違い、ダッシュ、重複ページ、書名、Al→AI、'11→'ll）は機械が見つけて直す。人が気づくのを待たない | `check_book.py`（不具合ごとに直すコマンドを返す）、`capture_book.py`（直して再検査を最大 3 周、校正は各周の最後、`report.json` に残す）、テスト `test_check_book.py`・`test_layout.py` |
 | Vision のページの構造（見出し・引用・図・飾り・頭文字）を位置と大きさだけで当て推量しない。同じ読み直しを修正として繰り返さない | `layout.py`（Gemini がページ画像と行番号から構造だけを答え、`layout.json` に残す。章の階層は本の目次で揃える）、`check_book.py` の `layout`（未読のページがあれば落として読み直す）、テスト `test_layout.py` |
 | Gemini の呼び出しが 1 回でも失敗したら（1 日の上限 500 回を含む）、残りのページは Gemini に送らず Mac の Sonnet（`claude -p`）に回す。Sonnet も失敗したら、本を失敗にせず、その場で一覧を止めて理由を残す。再開したら取り直さず、保存済みのフォルダから変換する | `layout.py` の `ask_layout_claude` と `GeminiFailed`（PerDay の 429 は待たない。1 回 20 ページ。ログに `GEMINI ERROR`。Sonnet が読んだページは `layout.json` に `"model": "claude"`）、`img2txt.py` が `gemini_error.txt` に理由を書いて終了コード 3、`capture_book.py` の `gemini`、`capture_books.py` が `waiting` と `source` を記録して終了コード 2。テスト `test_layout.py`・`test_check_book.py`・`test_capture_books.py` |
+| 検査を通った本は、その場で LLM wiki への取り込みを始める。次の本の取り込みと並行で進め、wiki の毎時の実行や人を待たない | `capture_book.py` の `start_wiki_ingest`（`report.json` が通ったら llm-wiki の `scripts/watch.sh` を切り離して起動。場所は `WIKI_WATCH` で変えられる）。watch.sh は実行中なら次の 1 回を予約し、検証済みの本は 30 分の安定待ちを飛ばす。テスト `test_check_book.py` |
 | 検査・フック・拡張のテストは CI で回す | `.github/workflows/ci.yml`（`node --test`、`pytest` を Linux と macOS で） |
 
 ## 取り込みの手順
@@ -35,4 +36,4 @@ venv/bin/python capture_books.py books.tsv          # 一覧をまとめて。�
 venv/bin/python capture_book.py <ASIN> --title "<書名>"   # 1 冊だけ
 ```
 
-1 冊ごとに、Brave で `#autocapture` 付きの URL を開き、ZIP が出たらその本のタブだけ閉じ、`img2txt.py`（既定 `--model vision`）、`check_book.py` の検査、直せるものは直して再検査（最大 3 周）、`report.json` を書く。検査が通れば次の本へ。`pages` / `text` で落ちたら ZIP が使えないので 1 回だけ取り直す。それ以外が残れば失敗として `books.progress.json` に記録し、一覧を止める（変換を直してその本が通ってから再開）。終わったら、できた本と失敗した本（理由つき）をまとめて報告する。
+1 冊ごとに、Brave で `#autocapture` 付きの URL を開き、ZIP が出たらその本のタブだけ閉じ、`img2txt.py`（既定 `--model vision`）、`check_book.py` の検査、直せるものは直して再検査（最大 3 周）、`report.json` を書く。検査が通ればその本の wiki 取り込みを裏で始めて、次の本へ。`pages` / `text` で落ちたら ZIP が使えないので 1 回だけ取り直す。それ以外が残れば失敗として `books.progress.json` に記録し、一覧を止める（変換を直してその本が通ってから再開）。終わったら、できた本と失敗した本（理由つき）をまとめて報告する。
