@@ -448,6 +448,9 @@ def go_to_start(script=osascript, sleep=time.sleep, drag=None):
     if where is None or where[0] > 1:
         return (f'could not go to the start (tried: {", ".join(tried)}, footer: '
                 f'{"Location %d of %d" % where if where else "no location"})')
+    # Which move reached the start is logged: the run of 2026-10-11 19:55 (Buenos Aires, from Location 1863) got
+    # there, but the log did not say by which of the four.
+    print(f'start: Location {where[0]} after: {", ".join(tried)}', flush=True)
     bring_front(script, sleep)
     reveal_chrome(script, sleep)  # the same click hides the toolbar again
     if chrome_shown(elements(script)):
