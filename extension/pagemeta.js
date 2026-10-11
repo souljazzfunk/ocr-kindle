@@ -118,4 +118,21 @@ function withoutHeartbeat(title) {
   return (title || '').replace(BEAT, '');
 }
 
-if (typeof module !== 'undefined') module.exports = { pickTitle, probePage, parsePosition, atStart, turnGuard, appOnly, APP_ONLY, TURNS_PER_PAGE, EXTRA_TURNS, STUCK_TURNS, heartbeat, withoutHeartbeat };
+// Laiken, 2026-10-11: reach page 1 through the reader's contents, not by paging back one turn at a time (Automate the
+// Boring Stuff paged back from 517). These pick by label only, so a reader that names them otherwise is found out by
+// the jump not landing near page 1; content.js then pages back the rest of the way as before.
+const CONTENTS = /table of contents|^contents$|^toc$|目次/i;
+const START_ENTRY = /^(cover|beginning|start|title page|表紙|はじめに|最初)/i;
+
+// Index of the control that opens the contents, or -1.
+function contentsControl(labels) {
+  return labels.findIndex((label) => CONTENTS.test((label || '').trim()));
+}
+
+// Index of the contents entry nearest the start: a cover or beginning entry when there is one, else the first.
+function startEntry(labels) {
+  const named = labels.findIndex((label) => START_ENTRY.test((label || '').trim()));
+  return named >= 0 ? named : labels.findIndex((label) => (label || '').trim());
+}
+
+if (typeof module !== 'undefined') module.exports = { pickTitle, probePage, parsePosition, atStart, turnGuard, appOnly, APP_ONLY, TURNS_PER_PAGE, EXTRA_TURNS, STUCK_TURNS, heartbeat, withoutHeartbeat, contentsControl, startEntry };

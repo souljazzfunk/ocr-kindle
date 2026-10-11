@@ -96,3 +96,17 @@ test('the heartbeat in the tab title says the stage, position and visibility, an
   assert.strictEqual(pickTitle([undefined, withoutHeartbeat(once)], 'B0'), 'In the Plex');
   assert.strictEqual(heartbeat('Kindle', 'back', '', 'visible'), '[kc back ? visible] Kindle');
 });
+
+const { contentsControl, startEntry } = require('./pagemeta.js');
+
+test('page 1 is reached through the contents: its control is found by label', () => {
+  assert.strictEqual(contentsControl(['Previous page', 'Next page', 'Table of Contents', 'Settings']), 2);
+  assert.strictEqual(contentsControl(['目次', 'メモ']), 0);
+  assert.strictEqual(contentsControl(['Previous page', 'Contents and notes']), -1);
+});
+
+test('the contents entry nearest the start is a cover or beginning entry, else the first one', () => {
+  assert.strictEqual(startEntry(['', 'Chapter 1', 'Cover', 'Contents']), 2);
+  assert.strictEqual(startEntry(['', 'Introduction', 'Chapter 1']), 1);
+  assert.strictEqual(startEntry([]), -1);
+});
