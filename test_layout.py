@@ -267,3 +267,80 @@ def test_the_book_stops_when_sonnet_fails_too(tmp_path, monkeypatch):
     with pytest.raises(layout.GeminiFailed, match='60 pages left: Gemini: 429.*Sonnet: .*usage limit.*midnight Pacific'):
         mark_layout(tmp_path, client, sorted(tmp_path.glob('page_*.png')), cli='claude')
     assert len(calls) == 1  # three batches, one call to each
+
+
+# Line boxes shaped like Python Crash Course's pages (2026-10-11): body at 0.08, listings at 0.10, an indent 0.05.
+PCC = [(0.08, 0.10, 0.022, 'In Python, the hash mark (#) indicates a comment. Anything following a hash mark in your'),
+       (0.08, 0.135, 0.022, 'code is ignored by the Python interpreter. For example:'),
+       (0.08, 0.20, 0.022, 'comment.py'), (0.10, 0.24, 0.022, '# Say hello to everyone.'),
+       (0.10, 0.275, 0.022, 'print("Hello Python people!")'),
+       (0.08, 0.33, 0.022, 'Python ignores the first line and executes the second line.'),
+       (0.10, 0.38, 0.022, 'Hello Python people!')]
+
+
+def test_code_is_fenced_line_by_line_and_never_a_title():
+    # Gemini named the comment a title too; code wins. The program's output is a block of its own.
+    text = page_markdown(page(*PCC), {'titles': [{'line': 3, 'level': 1}], 'code': [[3, 4], [6]]})
+    assert text.endswith('For example:\n\ncomment.py\n\n```\n# Say hello to everyone.\nprint("Hello Python people!")'
+                         '\n```\n\nPython ignores the first line and executes the second line.\n\n'
+                         '```\nHello Python people!\n```')
+    # An interpreter session keeps one line per line (it came out as ">>age = 18 >> age == 18 True").
+    session = page((0.10, 0.10, 0.022, '>>> age = 18'), (0.10, 0.135, 0.022, '>>> age == 18'), (0.10, 0.17, 0.022, 'True'))
+    assert page_markdown(session, {'code': [[0, 1, 2]]}) == '```\n>>> age = 18\n>>> age == 18\nTrue\n```'
+    assert page_markdown(session, {}) == '>>> age = 18 >>> age == 18 True'  # what a layout without code gave
+
+
+def test_code_keeps_its_indentation_from_the_left_edges():
+    listing = page((0.101, 0.10, 0.022, "magicians = ['alice', 'david', 'carolina']"),
+                   (0.100, 0.135, 0.022, 'for magician in magicians:'),
+                   (0.151, 0.17, 0.022, 'print(f"{magician.title()}, that was a great trick!")'),
+                   (0.150, 0.205, 0.022, 'if magician == "david":'), (0.199, 0.24, 0.022, 'print("Encore!")'),
+                   (0.100, 0.275, 0.022, 'print("Thank you, everyone.")'),
+                   # Vision split a line at the gap before its comment: one line again, the comment in its column.
+                   (0.100, 0.31, 0.022, 'message = "Hi"'), (0.35, 0.31 + 1e-6, 0.022, '# greet'))
+    assert page_markdown(listing, {'code': [list(range(8))]}) == (
+        "```\nmagicians = ['alice', 'david', 'carolina']\nfor magician in magicians:\n"
+        '    print(f"{magician.title()}, that was a great trick!")\n    if magician == "david":\n'
+        '        print("Encore!")\nprint("Thank you, everyone.")\nmessage = "Hi"' + ' ' * 6 + '# greet\n```')
+
+
+def test_only_the_code_pages_of_a_code_book_laid_out_before_code_are_read_again(tmp_path, monkeypatch):
+    # Gemini allows 500 requests a day: of Python Crash Course's pages only those with code are asked again, once.
+    session = [[0.10, 0.10 + i * 0.035, 0.022, line] for i, line in enumerate(
+        ['>>> age = 18', '>>> age == 18', 'True', 'import this', 'def greet_user():'])]
+    old = {}
+    for n in range(1, 11):
+        stem = f'page_{n:04d}'
+        (tmp_path / f'{stem}.png').write_bytes(b'png')
+        (tmp_path / f'{stem}.lines.json').write_text(json.dumps(session if n <= 5 else BODY))
+        old[stem] = {'titles': [], 'quotes': [], 'figures': [], 'art': []}
+    (tmp_path / 'layout.json').write_text(json.dumps(old))
+    asked = []
+
+    def generate_content(model, contents, config):
+        stems = [part.split('"')[1] for part in contents if isinstance(part, str) and part.startswith('Page "')]
+        asked.extend(stems)
+        return SimpleNamespace(text=json.dumps([{'page': s, 'titles': [], 'code': [0, 1, 2]} for s in stems]))
+
+    monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
+    client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    images = sorted(tmp_path.glob('page_*.png'))
+    assert layout.code_rereads(tmp_path, old) == {f'page_{n:04d}' for n in range(1, 6)}
+    assert mark_layout(tmp_path, client, images) == [] and sorted(asked) == [f'page_{n:04d}' for n in range(1, 6)]
+    assert read_layout(tmp_path)['page_0001']['code'] == [[0, 1, 2]]  # a flat answer is one group
+    assert (tmp_path / 'page_0001.txt').read_text().startswith('```\n>>> age = 18\n>>> age == 18\nTrue\n```')
+    assert mark_layout(tmp_path, client, images) == [] and len(asked) == 5
+    # A book without code (fewer than CODE_BOOK_LINES lines like it) keeps every page's layout.
+    for n in range(4, 11):
+        (tmp_path / f'page_{n:04d}.lines.json').write_text(json.dumps(BODY))
+    assert layout.code_rereads(tmp_path, old) == set()
+
+
+def test_prose_does_not_look_like_code():
+    prose = ['If you want to do this:', 'import goods from China', 'for the following reasons:', '> A pull quote',
+             'Python ignores the first line.', '$5 for a coffee', 'print it out and sign it']
+    assert not [line for line in prose if layout.CODE_LINE.match(line)]
+    code = ['>>> age = 18', '›> print("Hello")', '>> > favorite_language', '$ python3 hello_world.py', 'import pygame',
+            'from die import Die', 'def greet_user(username):', 'print ("Hi")', '# Say hello to everyone.',
+            'for magician in magicians:']
+    assert all(layout.CODE_LINE.match(line) for line in code)

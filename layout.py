@@ -1,5 +1,5 @@
 """
-Give Vision's pages the structure Vision cannot see: titles, pull quotes, figures, art and drop caps.
+Give Vision's pages the structure Vision cannot see: titles, pull quotes, figures, art, drop caps and code.
 
 Vision reads the words well, but a title, a pull quote, a sidebar label and a line in a box look alike in its line
 boxes, and their place and size vary from book to book (AI for Educators sets its section titles in dark bands at the
@@ -60,6 +60,13 @@ BINARY = re.compile(r'[01\s]{3,}')  # zeros and ones are a picture of data, not 
 BULLET = re.compile(r'^[•►▪‣◦●■]\s*')
 CONTENTS = re.compile(r'^(?:table of )?contents$', re.I)
 CONTENTS_PAGES = 0.15  # the contents page is in the front matter
+# A line that only code starts so: a prompt (Vision reads >>> as >>, ›> or >> >), a shell's $, a definition, an
+# import, a call to print, a comment, a block statement. A book with this many is a programming book.
+CODE_LINE = re.compile(r'^(?:(?:[>›»] ?){2,3}\S|\$ \w|(?:def|class) \w.*:$|import [\w.]+(?:, [\w.]+)*(?: as \w+)?$'
+                       r'|from [\w.]+ import \S|print ?\(|# \w|for \w+(?:, \w+)* in [\w.()\[\], ]+:$|(?:else|try|finally):$)')
+CODE_BOOK_LINES = 20
+CODE_JITTER = 0.004  # code lines whose left edges are this close start in one column
+INDENT = 4  # spaces in one step of indentation in the books' code (Python Crash Course, Automate the Boring Stuff)
 
 PROMPT = """Each image is one page of a book. Under it is the page's text as OCR read it, one numbered line per
 printed line, top to bottom. Describe the page's structure by line number.
@@ -78,13 +85,16 @@ printed line, top to bottom. Describe the page's structure by line number.
   logo letters, stray marks.
 - drop_cap: when a paragraph on the page starts with a large initial letter, the line that letter begins and the
   paragraph's first word as printed, initial letter included.
+- code: each group of consecutive lines that is program code, a shell or interpreter session (lines after >>> or $
+  and what they print) or a program's output shown as a listing. A comment starting with # in code is code, not a
+  title; code lines are never titles, quotes or list items.
 
 Give every page; leave a list empty when nothing on the page belongs in it."""
 
 _INT = types.Schema(type=types.Type.INTEGER)
 _LINES = types.Schema(type=types.Type.ARRAY, items=_INT)
 SCHEMA = types.Schema(type=types.Type.ARRAY, items=types.Schema(
-    type=types.Type.OBJECT, required=['page', 'titles', 'quotes', 'figures', 'art'], properties={
+    type=types.Type.OBJECT, required=['page', 'titles', 'quotes', 'figures', 'art', 'code'], properties={
         'page': types.Schema(type=types.Type.STRING),
         'titles': types.Schema(type=types.Type.ARRAY, items=types.Schema(
             type=types.Type.OBJECT, required=['line', 'level'], properties={'line': _INT, 'level': _INT})),
@@ -93,6 +103,7 @@ SCHEMA = types.Schema(type=types.Type.ARRAY, items=types.Schema(
             type=types.Type.OBJECT, required=['lines', 'description'], properties={
                 'lines': _LINES, 'description': types.Schema(type=types.Type.STRING)})),
         'art': _LINES,
+        'code': types.Schema(type=types.Type.ARRAY, items=_LINES),
         'drop_cap': types.Schema(type=types.Type.OBJECT, nullable=True, required=['line', 'word'], properties={
             'line': _INT, 'word': types.Schema(type=types.Type.STRING)})}))
 
@@ -100,6 +111,24 @@ SCHEMA = types.Schema(type=types.Type.ARRAY, items=types.Schema(
 def read_layout(folder):
     path = folder / LAYOUT
     return json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
+
+
+def code_pages(folder):
+    """{page: its Vision lines that look like code} in a programming book, one with at least CODE_BOOK_LINES of
+    them; {} in any other book."""
+    counts = {path.name[:-len(LINES)]: sum(bool(CODE_LINE.match(line[3].strip()))
+                                           for line in json.loads(path.read_text(encoding='utf-8')))
+              for path in folder.glob(f'*{LINES}')}
+    return counts if sum(counts.values()) >= CODE_BOOK_LINES else {}
+
+
+def code_rereads(folder, layout):
+    """Pages of a programming book laid out before `code` was asked for (no `code` key) whose lines look like code;
+    they are read once more. Python Crash Course (2026-10-11) came out with its comments as titles and its listings as
+    bullets or run into prose. Other pages, and every page of a book without code, keep their layout."""
+    if all('code' in page for page in layout.values()):
+        return set()
+    return {stem for stem, n in code_pages(folder).items() if n and stem in layout and 'code' not in layout[stem]}
 
 
 def sorted_boxes(image):
@@ -140,7 +169,7 @@ def ask_layout_claude(cli, images):
     the session log the LLM wiki grows from (Laiken, 2026-10-10: seven of them had reached its queue)."""
     parts = [PROMPT, 'Open each page image with the Read tool before answering. Reply with only a JSON array, one '
              'object per page: {"page": "<name>", "titles": [{"line": n, "level": n}], "quotes": [n], '
-             '"figures": [{"lines": [n], "description": "..."}], "art": [n], "drop_cap": {"line": n, "word": "..."} '
+             '"figures": [{"lines": [n], "description": "..."}], "art": [n], "code": [[n]], "drop_cap": {"line": n, "word": "..."} '
              'or null}.']
     for image in images:
         parts += [f'Page "{image.stem}": image {image.resolve()}',
@@ -166,7 +195,9 @@ def mark_layout(folder, client, images, cli=None):
     Returns the pages still without a layout (a failed request; running img2txt.py again asks again).
     """
     layout = read_layout(folder)
-    todo = [image for image in images if image.stem not in layout and image.with_suffix(LINES).exists()]
+    again = code_rereads(folder, layout)
+    todo = [image for image in images if (image.stem not in layout or image.stem in again)
+            and image.with_suffix(LINES).exists()]
     batches = [todo[i:i + BATCH] for i in range(0, len(todo), BATCH)]
 
     failed = threading.Event()  # Gemini failed: send it nothing more
@@ -209,7 +240,7 @@ def mark_layout(folder, client, images, cli=None):
                 first_error = first_error or error
             elif any(page.get('model') == CLAUDE for page in pages.values()):
                 print(f'[layout {done}/{len(batches)}] {len(pages)} pages by Sonnet', flush=True)
-            layout.update(pages)
+            layout.update((stem, dict(page, code=code_groups(page.get('code')))) for stem, page in pages.items())
             (folder / LAYOUT).write_text(json.dumps(layout, ensure_ascii=False, indent=0), encoding='utf-8')
     chapters = contents_entries(page_images(folder))
     styled = styled_titles(folder, layout)
@@ -232,17 +263,23 @@ def page_markdown(boxes, page, chapters=()):
     """A page's Markdown from Vision's line boxes (sorted by top, as numbered for Gemini) and Gemini's layout.
 
     Titles take their level (neighbouring title lines at one level are a title that wraps, and a bare chapter number
-    joins the title under it); pull quotes become block quotes, figures one image note each, and art goes.
+    joins the title under it); pull quotes become block quotes, figures one image note each, code a fenced block, and
+    art goes. A code line is nothing else.
     """
     n = len(boxes)
     valid = lambda i: isinstance(i, int) and 0 <= i < n
-    levels = {t['line']: t['level'] for t in page.get('titles', []) if valid(t['line']) and 1 <= t['level'] <= 3}
-    quotes = {i for i in page.get('quotes', []) if valid(i)} - set(levels)
+    runs = code_runs(page.get('code', []), valid)
+    code = {i for run in runs for i in run}
+    char = code_char(boxes, runs)
+    fences = {run[0]: code_block(boxes, run, char) for run in runs}
+    levels = {t['line']: t['level'] for t in page.get('titles', [])
+              if valid(t['line']) and 1 <= t['level'] <= 3 and t['line'] not in code}
+    quotes = {i for i in page.get('quotes', []) if valid(i)} - set(levels) - code
     art = {i for i in page.get('art', []) if valid(i)} - set(levels)
     texts = [box[3].strip() for box in boxes]
     figure_at, member = {}, {}
     for figure in page.get('figures', []):
-        lines = sorted(i for i in figure['lines'] if valid(i) and i not in levels)
+        lines = sorted(i for i in figure['lines'] if valid(i) and i not in levels and i not in code)
         # One or two lines beside an icon are the book's words (a label, a sentence), and so are long lines (a
         # definition box Gemini took for a picture); only short labels of a chart or diagram give way to a note.
         if len(lines) >= MIN_FIGURE_LINES and median(len(boxes[i][3]) for i in lines) < BODY_LINE_CHARS:
@@ -251,7 +288,7 @@ def page_markdown(boxes, page, chapters=()):
             member.update((i, lines[0]) for i in lines)
     # A title right above a figure's text is the figure's own (AI for Educators: the infographic's "30 WAYS AI CAN
     # SUPPORT TEACHING AND LEARNING" came back as the chapter title again), so it joins the figure's note.
-    short = [i for i in range(n) if i not in art and i not in levels and len(texts[i]) < BODY_LINE_CHARS]
+    short = [i for i in range(n) if i not in art | code and i not in levels and len(texts[i]) < BODY_LINE_CHARS]
     if not member and len(short) >= PICTURE_PIECES and sum(len(texts[i]) for i in short) >= FIGURE_PAGE * sum(
             len(texts[i]) for i in range(n) if i not in art):
         # Gemini can miss a page that is a picture full of words (AI for Educators' infographic came back as six
@@ -280,9 +317,10 @@ def page_markdown(boxes, page, chapters=()):
     for first, title in captions.items():
         if title:
             figure_at[first] = f'{" ".join(title).rstrip(":")}: {figure_at[first]}'
-    drop_cap(texts, boxes, page.get('drop_cap'), art)
+    drop_cap(texts, boxes, page.get('drop_cap'), art, code)
+    art -= code
     contents = next((i for i, text in enumerate(texts) if CONTENTS.match(text)), None)
-    entries = set(range(contents + 1, n)) - art if contents is not None else set()
+    entries = set(range(contents + 1, n)) - art - code if contents is not None else set()
     for i in entries:
         levels.pop(i, None)
 
@@ -292,7 +330,10 @@ def page_markdown(boxes, page, chapters=()):
         left, top, _, _ = boxes[i]
         text, level = texts[i], levels.get(i)
         i += 1
-        if i - 1 in figure_at:
+        if i - 1 in code:
+            if i - 1 in fences:
+                marked.append((left, top, fences[i - 1]))
+        elif i - 1 in figure_at:
             marked.append((left, top, f'![{figure_at[i - 1]}]()'))
         elif i - 1 in art or not level and (len(text.replace(' ', '')) <= NOISE_CHARS or BINARY.fullmatch(text)):
             continue
@@ -301,7 +342,7 @@ def page_markdown(boxes, page, chapters=()):
             if HEADING_NUMBER.match(text) and levels.get(i):
                 level = levels[i]
             while (levels.get(i) == level and same_title(boxes, texts, i)
-                   or i < n and continues_title(boxes, texts, i, levels, quotes | art)):
+                   or i < n and continues_title(boxes, texts, i, levels, quotes | art | code)):
                 parts.append(texts[i])
                 i += 1
             parts = [(m.group(1) or '') + m.group(2).translate(DECORATIVE_DIGITS) if (m := HEADING_NUMBER.match(p))
@@ -328,6 +369,53 @@ def page_markdown(boxes, page, chapters=()):
     return vision_markdown(marked, min(median(gaps), LINE_PITCH * median(body)) if body else None)
 
 
+def code_groups(code):
+    """Groups of line numbers as kept in layout.json; a flat list (a reply that dropped the nesting) is one group."""
+    if not isinstance(code, list):
+        return []
+    if all(isinstance(i, int) for i in code):
+        return [code] if code else []
+    return [group for group in code if isinstance(group, list)]
+
+
+def code_runs(groups, valid):
+    """Gemini's code groups as runs of consecutive lines, so a line between two parts of a group keeps its place."""
+    runs = []
+    for group in groups:
+        lines = sorted({i for i in group if valid(i)}) if isinstance(group, list) else []
+        for k, i in enumerate(lines):
+            if k and i == lines[k - 1] + 1:
+                runs[-1].append(i)
+            else:
+                runs.append([i])
+    return runs
+
+
+def code_char(boxes, runs):
+    """The width of one character of the page's code. Vision's boxes have no width, so the smallest step in from a
+    run's leftmost line is taken as one indent of INDENT spaces; with no indented line, any width will do."""
+    steps = [boxes[i][0] - min(boxes[j][0] for j in run) for run in runs
+             for k, i in enumerate(run) if not k or boxes[i][1] - boxes[run[k - 1]][1] > ROW]
+    steps = [step for step in steps if step > CODE_JITTER]
+    return min(steps) / INDENT if steps else float('inf')
+
+
+def code_block(boxes, run, char):
+    """A run of code lines as a fenced block, one printed line per line, indented by its left edge's distance from
+    the run's leftmost line, since Python's indentation is its syntax. Pieces of one printed line (Vision splits a
+    line at a wide gap) go back together, as far apart as their places on the page."""
+    base = min(boxes[i][0] for i in run)
+    rows = []  # [top, text]
+    for i in run:
+        left, top, _, text = boxes[i]
+        column = round((left - base) / char) if char != float('inf') else 0
+        if rows and top - rows[-1][0] <= ROW:
+            rows[-1][1] += ' ' * max(1, column - len(rows[-1][1])) + text.strip()
+        else:
+            rows.append([top, ' ' * column + text.strip()])
+    return '```\n' + '\n'.join(text for _, text in rows) + '\n```'
+
+
 def capitals(text):
     return text.upper() == text and len(re.findall('[A-Z]', text)) > CAPS_MIN_LETTERS
 
@@ -346,7 +434,8 @@ def styled_titles(folder, layout):
             continue
         boxes = sorted(json.loads(path.read_text(encoding='utf-8')), key=lambda line: line[1])
         levels = {t['line']: t['level'] for t in page.get('titles', [])}
-        skip = set(page.get('art', [])) | {i for figure in page.get('figures', []) for i in figure.get('lines', [])}
+        skip = set(page.get('art', [])) | {i for figure in page.get('figures', []) for i in figure.get('lines', [])} | {
+            i for group in page.get('code', []) for i in group}
         lines += [(box[0], stem, i, levels.get(i)) for i, box in enumerate(boxes)
                   if i not in skip and capitals(box[3].strip())]
     found = {}
@@ -430,7 +519,7 @@ def reread_beside_cap(image, boxes, page):
     from img2txt import vision_lines
     cap = page.get('drop_cap')
     i = cap_line(boxes, cap)
-    if i is None:
+    if i is None or any(i in group for group in page.get('code', [])):
         return boxes, page
     left, top, height, _ = boxes[i]
     big = [box for box in boxes if box[0] < left - CAP_GAP and box[2] > CAP_HEIGHT * height
@@ -456,19 +545,19 @@ def reread_beside_cap(image, boxes, page):
     page = dict(page, titles=[dict(t, line=number[t['line']]) for t in page.get('titles', []) if t['line'] in number],
                 quotes=renumber(page.get('quotes', [])), art=renumber(page.get('art', [])),
                 figures=[dict(f, lines=renumber(f.get('lines', []))) for f in page.get('figures', [])],
-                drop_cap=dict(cap, line=first_new))
+                code=[renumber(group) for group in page.get('code', [])], drop_cap=dict(cap, line=first_new))
     return [box for _, _, _, box in merged], page
 
 
-def drop_cap(texts, boxes, cap, art):
+def drop_cap(texts, boxes, cap, art, code=()):
     """Give a paragraph its first word back; Gemini gives the word as printed, cap_line finds its line. Without a
-    word from Gemini, the line beside a tall letter, to its right, takes the letter."""
+    word from Gemini, the line beside a tall letter, to its right, takes the letter. Code lines are left as read."""
     tall = tall_letters(boxes)
     i = cap_line(boxes, cap)
-    if i is None:
+    if i is None or i in code:
         for j in tall:
             left, top, height, letter = boxes[j]
-            beside = [k for k, box in enumerate(boxes) if k not in tall and box[0] > left
+            beside = [k for k, box in enumerate(boxes) if k not in tall and k not in code and box[0] > left
                       and top - box[2] <= box[1] <= top + height / 2]
             if beside:
                 k = min(beside, key=lambda k: boxes[k][1])
