@@ -156,9 +156,11 @@ def test_a_cover_not_downloaded_is_pressed_again_and_waited_for_as_laiken_said()
     assert sum('AXPress' in c for c in app.calls) == 1 and 'Book Downloaded' in problem
 
 
-CHROME = (READER + 'element|AXButton||Close Book||||500,1200|20,20\n'
-          'element|AXSlider||Reading Progress Bar||Location 0 , |500,2000|1000,20\n'
-          'element|AXStaticText||||Location {at} of 2594 , 1%|500,2030|200,20\n')
+# The reader's toolbar as the dump of 2026-10-11 18:04 recorded it: the names are in the description column.
+CHROME = (READER + 'element|AXButton|||Close Book||524,194|40,40\n'
+          'element|AXButton|||Table of Contents||564,194|40,40\n'
+          'element|AXSlider|||Reading Progress Bar|Location {at} , 1%|533,954|980,46\n'
+          'element|AXStaticText|||Location {at} of 2594 , 1%||974,999|100,10\n')
 
 
 def test_a_reader_left_open_is_closed_with_its_close_book_button_never_file_close():

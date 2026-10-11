@@ -207,14 +207,17 @@ end tell
 
 
 def chrome_shown(found):
-    return any(e['role'] == 'AXSlider' and e['title'] == PROGRESS_BAR for e in found)
+    """The toolbar is in the tree. The reader's controls carry their names in the description, not the title
+    (dump of 2026-10-11 18:04: element|AXSlider|||Reading Progress Bar|Location 1 , 1%|…), and the run of 18:09
+    clicked the shown toolbar away three times because the title alone was read."""
+    return any(e['role'] == 'AXSlider' and PROGRESS_BAR in (e['title'], e['description']) for e in found)
 
 
 def location_of(found):
     """(location, of) from the footer's "Location N of M , P%", or None. M came back as 0 in the probe of 2026-10-11
     18:04 ("Location 1 of 0 , 1%"), so only N says whether the start was reached."""
     for e in found:
-        m = LOCATION.search(e['value']) or LOCATION.search(e['title'])
+        m = LOCATION.search(e['description']) or LOCATION.search(e['value']) or LOCATION.search(e['title'])
         if m:
             return int(m.group(1)), int(m.group(2))
     return None
