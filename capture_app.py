@@ -471,6 +471,18 @@ def probe(asin, title, folder, script=osascript, run=capture_book.run, sleep=tim
     run(['screencapture', '-x', *(str(folder / f'chrome-{n}.png') for n in (1, 2, 3))])
     _, chrome, err = script(UI_DUMP)
     (folder / 'ui-chrome.txt').write_text(chrome or err, encoding='utf-8')
+    # The ways to the start that do not go through the slider (the slider ignored a value, a click and a drag in the
+    # runs of 2026-10-11 19:02 and 19:11): what the Table of Contents and More options buttons open.
+    for name, button in (('toc', 'Table of Contents'), ('more', 'More options')):
+        if not chrome_shown(elements(script)):
+            reveal_chrome(script, sleep)
+        _, pressed, _ = script(PRESS_TITLED.format(title=_quote(button)))
+        sleep(2)
+        run(['screencapture', '-x', *(str(folder / f'{name}-{n}.png') for n in (1, 2, 3))])
+        _, opened, err = script(UI_DUMP)
+        (folder / f'ui-{name}.txt').write_text(opened or err, encoding='utf-8')
+        notes.append(f'{button}: {pressed}')
+        dismiss_overlays(script, sleep)
     (folder / 'open.txt').write_text('\n'.join([problem or 'opened', *notes]), encoding='utf-8')
     downloaded = sorted(p.name for p in ebooks.glob(f'*{asin}*')) if ebooks.exists() else []
     (folder / 'probe.json').write_text(json.dumps({'asin': asin, 'downloaded': downloaded, 'ebooks': str(ebooks),
