@@ -89,7 +89,7 @@ def test_a_book_the_app_does_not_open_or_cannot_page_back_is_named_with_what_the
     opened = capture_app.run_book('B2', 'Tokyo', tmp_path, open_=lambda a, t: 'front window: "Library"', take=nope)
     assert opened['blocking_failures'] == ['app_open'] and 'Library' in opened['error']
     app = App([READER + 'element|AXButton||||Next Page||500,2000|20,20\n'])
-    reason = capture_app.go_to_start(app, sleep=lambda s: None)
+    reason = capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock)
     assert reason.startswith('the reader shows no toolbar') and 'page' in reason
 
 LIBRARY = ('frontmost=true\nwindow|Kindle|489,1187|1024,843\n'
@@ -104,7 +104,11 @@ class App:
     """A fake System Events: the dump it answers, and what pressing a cover does."""
 
     def __init__(self, screens):
-        self.screens, self.calls = list(screens), []
+        self.screens, self.calls, self.t = list(screens), [], 0
+
+    def clock(self):
+        self.t += 1
+        return self.t
 
     def __call__(self, text):
         self.calls.append(text)
@@ -128,7 +132,8 @@ def test_a_book_is_opened_by_pressing_its_cover_in_the_library_as_the_probe_show
 
 
 def test_a_cover_off_screen_is_searched_for_first():
-    app = App([LIBRARY, LIBRARY.replace('For 91 Days in Bolivia, Powell, Michael, ', 'Japan Travel Planner, Someone, '), READER])
+    japan = LIBRARY.replace('For 91 Days in Bolivia, Powell, Michael, ', 'Japan Travel Planner, Someone, ')
+    app = App([LIBRARY, LIBRARY, LIBRARY, japan, READER])
     clock = iter(range(0, 1000, 2))
     assert capture_app.open_book('B3', 'Japan Travel Planner', script=app, run=lambda c: None,
                                  clock=lambda: next(clock), sleep=lambda s: None) == ''
@@ -141,7 +146,7 @@ def test_a_cover_off_screen_is_searched_for_first():
 def test_a_cover_not_downloaded_is_pressed_again_and_waited_for_as_laiken_said():
     # Laiken, 2026-10-11 17:21: もう 1 回クリックすればダウンロードが始まる.
     app = App([LIBRARY] * 40 + [READER])
-    clock = iter(range(0, 2000, 2))
+    clock = iter(range(0, 20000, 2))
     assert capture_app.open_book('B4', 'For 91 Days in Bolivia', script=app, run=lambda c: None,
                                  clock=lambda: next(clock), sleep=lambda s: None) == ''
     assert sum('AXPress' in c for c in app.calls) == 2
@@ -160,7 +165,7 @@ def test_a_cover_not_downloaded_is_pressed_again_and_waited_for_as_laiken_said()
     assert any('click at {1405, 1389}' in c for c in app.calls)
     activations = [i for i, c in enumerate(app.calls) if 'frontmost is true' in c]
     presses = [i for i, c in enumerate(app.calls) if 'AXPress' in c or 'click at {1405' in c]
-    assert len(activations) == 2 and all(a < p for a, p in zip(activations, presses)) and 'frontmost before' in problem
+    assert len(activations) == 3 and all(a < p for a, p in zip(activations[1:], presses)) and 'frontmost before' in problem
 
 
 # The reader's toolbar as the dump of 2026-10-11 18:04 recorded it: the names are in the description column.
@@ -210,111 +215,92 @@ def test_a_reader_left_open_is_closed_with_its_close_book_button_never_file_clos
     assert '"Close Book"' in presses[0] and '"For 91 Days In Tokyo"' in presses[1] and len(presses) == 2
     assert sum('click at' in c for c in app.calls) == 2
     app = App([READER])
-    problem = capture_app.open_book('B2', 'For 91 Days In Tokyo', script=app, run=lambda c: None, sleep=lambda s: None)
+    problem = capture_app.open_book('B2', 'For 91 Days In Tokyo', script=app, run=lambda c: None, sleep=lambda s: None,
+                                    clock=app.clock)
     assert 'neither its library nor the reader toolbar' in problem and sum('click at' in c for c in app.calls) == 6  # 3 clicks, Escape x2, 3 clicks
     assert not any('menu bar item "File"' in c or 'keystroke "w"' in c for c in app.calls)
     app = App([READER, CHROME.format(at=12), READER])
-    problem = capture_app.open_book('B2', 'For 91 Days In Tokyo', script=app, run=lambda c: None, sleep=lambda s: None)
+    problem = capture_app.open_book('B2', 'For 91 Days In Tokyo', script=app, run=lambda c: None, sleep=lambda s: None,
+                                    clock=app.clock)
     assert problem.startswith('the Kindle app is not showing its library (Close Book: pressed)')
-
-
-def test_the_start_is_reached_by_clicking_the_progress_bar_track_and_read_from_the_footer():
-    # Probe of 2026-10-11 17:56: the toolbar holds the Reading Progress Bar; the footer says "Location N of M , P%".
-    # Run of 19:02: setting the slider's value moved nothing, so the track is clicked at its left end (533+2, 954+23).
-    app = App([READER, CHROME.format(at=12), CHROME.format(at=1), READER])
-    assert capture_app.go_to_start(app, sleep=lambda s: None) == ''
-    assert sum('click at {535, 977}' in c for c in app.calls) == 1 and sum('click at' in c for c in app.calls) == 3
-    # A book already at Location 1 is not moved (run of 2026-10-11 18:19 opened on the cover).
-    app = App([CHROME.format(at=1), READER])
-    assert capture_app.go_to_start(app, sleep=lambda s: None) == ''
-    assert sum('click at' in c for c in app.calls) == 1
-    # The footer's total came back as 0 in the probe of 18:04; the start is judged by N alone.
-    app = App([CHROME.format(at=12), CHROME.format(at=1).replace('of 2594', 'of 0'), READER])
-    assert capture_app.go_to_start(app, sleep=lambda s: None) == ''
-    app = App([READER, READER, READER, READER])
-    assert 'no toolbar after clicks' in capture_app.go_to_start(app, sleep=lambda s: None)
-    # When the click leaves the book where it was, the knob is dragged; here the drag cannot run, and both are named.
-    app = App([CHROME.format(at=12), CHROME.format(at=12), CHROME.format(at=12)])
-    drags = []
-    problem = capture_app.go_to_start(app, sleep=lambda s: None, drag=lambda *a: drags.append(a))
-    assert 'clicked the track start' in problem and 'dragged the knob' in problem and 'Location 12 of 2594' in problem
-    assert drags and drags[0][:4] == (533 + 980 * 1 // 100, 977, 534, 977)
-    # A drag that cannot run (no Quartz, no event tap) is named rather than raised.
-    def no_drag(*a):
-        raise RuntimeError('no event tap')
-    problem = capture_app.go_to_start(App([CHROME.format(at=12)] * 3), sleep=lambda s: None, drag=no_drag)
-    assert 'drag failed: no event tap' in problem
 
 
 TOC = (CHROME + 'element|AXButton|||Close menu||866,1187|585,843\n'
        'element|AXHeading|||For 91 Days in Bolivia||638,1223|140,17\n'
+       'element|AXStaticText|||Powell, Michael||665,1250|86,15\n'
        'element|AXButton|||Close menu||832,1214|33,33\n'
        'element|AXStaticText|||Cover||575,1287|31,15\n'
        'element|AXStaticText|||Beginning||575,1330|59,15\n')
 
 
-def test_when_the_slider_does_not_move_the_topmost_table_of_contents_entry_is_clicked():
+def go(app, script=None):
+    return capture_app.go_to_start(script or app, sleep=lambda s: None, clock=app.clock)
+
+
+def test_the_start_is_reached_through_the_table_of_contents_and_read_from_the_footer(capsys):
     # Probe of 2026-10-11 19:20 (Bolivia at Location 185): the TOC panel lists "Cover" and "Beginning" as static
-    # texts after the "Close menu" X, so after the track click and the drag left the book where it was, the
-    # topmost entry is pressed (AXPress on the text moved Bolivia to Location 1 on the Mac at 19:26), whatever its
-    # name (Laiken, 19:26); a refused press falls back to a click at the row's centre.
-    at = CHROME.format(at=185)
-    app = App([at, at, at, TOC.format(at=185), CHROME.format(at=1), READER])
-    assert capture_app.go_to_start(app, sleep=lambda s: None, drag=lambda *a: None) == ''
+    # texts after the "Close menu" X; AXPress on the first moved the book to Location 1 on the Mac at 19:26. The
+    # slider is not touched: its value, a track click and a drag all moved nothing (runs of 19:02 and 19:11).
+    app = App([READER, CHROME.format(at=12), TOC.format(at=12), CHROME.format(at=1), CHROME.format(at=1), READER])
+    assert go(app) == ''
     assert any('"Table of Contents"' in c and 'AXPress' in c for c in app.calls)
     assert sum('"AXStaticText"' in c and '"Cover"' in c and 'AXPress' in c for c in app.calls) == 1
-    assert not any('click at {590, 1294}' in c for c in app.calls) and not any('"Close menu"' in c for c in app.calls)
-    # The topmost entry need not be "Cover": the first static text after the X is the one pressed.
-    app = App([at, at, at, TOC.format(at=185).replace('|Cover|', '|Chapter 1|'), CHROME.format(at=1), READER])
-    assert capture_app.go_to_start(app, sleep=lambda s: None, drag=lambda *a: None) == ''
+    assert not any('key code 123' in c or 'set value' in c or 'click at {5' in c for c in app.calls)
+    assert sum('click at' in c for c in app.calls) == 2  # one to show the toolbar, one to hide it
+    assert 'start: Location 1 after' in capsys.readouterr().out
+    # A book already at Location 1 is not moved (run of 2026-10-11 18:19 opened on the cover).
+    app = App([CHROME.format(at=1), READER])
+    assert go(app) == ''
+    assert sum('click at' in c for c in app.calls) == 1 and not any('"Table of Contents"' in c for c in app.calls)
+    # The footer's total came back as 0 in the probe of 18:04; the start is judged by N alone.
+    at1 = CHROME.format(at=1).replace('of 2594', 'of 0')
+    app = App([CHROME.format(at=12), TOC.format(at=12), at1, at1, READER])
+    assert go(app) == ''
+    app = App([READER])
+    assert 'no toolbar after clicks' in go(app)
+
+
+def test_the_topmost_entry_is_pressed_whatever_its_name_and_clicked_when_the_press_is_refused():
+    # Laiken, 2026-10-11 19:26: any topmost entry leads to the start, not only "Cover".
+    app = App([CHROME.format(at=12), TOC.format(at=12).replace('|Cover|', '|Chapter 1|'), CHROME.format(at=1),
+               CHROME.format(at=1), READER])
+    assert go(app) == ''
     assert sum('"AXStaticText"' in c and '"Chapter 1"' in c for c in app.calls) == 1
-    # When the press is refused, the row is clicked at its centre.
-    refusing = App([at, at, at, TOC.format(at=185), CHROME.format(at=1), READER])
-    inner = refusing.__call__
-    refusing.__call__ = None
-    def script(text, app=refusing):
+    assert not any('"Powell, Michael"' in c for c in app.calls)  # the author line above the X is not an entry
+    # A refused press falls back to a click at the row's centre (575+15, 1287+7).
+    app = App([CHROME.format(at=12), TOC.format(at=12), CHROME.format(at=1), CHROME.format(at=1), READER])
+    inner = app.__call__
+
+    def script(text):
         if '"AXStaticText"' in text:
             app.calls.append(text)
             return 0, 'none', ''
         return inner(text)
-    assert capture_app.go_to_start(script, sleep=lambda s: None, drag=lambda *a: None) == ''
-    assert sum('click at {590, 1294}' in c for c in refusing.calls) == 1
-    # The title and author above the X are not entries; a panel with no entry is closed again and named.
-    toc = TOC.format(at=185)
-    empty = toc[:toc.index('element|AXStaticText|||Cover')]
-    app = App([at, at, at, empty, at, at])
-    problem = capture_app.go_to_start(app, sleep=lambda s: None, drag=lambda *a: None)
-    assert 'no entry in the table of contents' in problem and 'Location 185' in problem
-    assert any('"Close menu"' in c for c in app.calls) and not any('click at' in c and '1294' in c for c in app.calls)
-    assert not any('"Powell, Michael"' in c for c in app.calls)  # the author line is not an entry
+    assert go(app, script) == ''
+    assert sum('click at {590, 1294}' in c for c in app.calls) == 1
 
 
 def test_when_the_table_of_contents_does_not_move_the_book_pages_are_turned_back_one_at_a_time(capsys):
     # Laiken, 2026-10-11 19:27: when nothing else works, page back with ← rather than stop. The footer is read after
     # each batch of 20 presses, with the toolbar hidden while the keys are sent.
     at = CHROME.format(at=185)
-    app = App([at, at, at, TOC.format(at=185), at,            # slider moves and the TOC entry leave Location 185
-               at, READER, CHROME.format(at=100), READER, CHROME.format(at=1),  # two batches of ←
+    app = App([at, TOC.format(at=185), at, at,            # the TOC entry leaves Location 185
+               at, READER, READER, CHROME.format(at=100),  # batch 1: hidden, keys, shown again
+               READER, READER, CHROME.format(at=1),        # batch 2
                CHROME.format(at=1), READER])
-    assert capture_app.go_to_start(app, sleep=lambda s: None, drag=lambda *a: None) == ''
+    assert go(app) == ''
     assert sum('key code 123' in c for c in app.calls) == 40
     out = capsys.readouterr().out
-    assert 'start: Location 1 after: not needed, clicked the track start, dragged the knob, pressed "Cover"' in out
-    assert 'paged back 40 times' in out
-    # ← presses that leave the footer where it is are counted and named, and the loop stops.
-    app = App([at, at, at, TOC.format(at=185), at, at, READER, at, at, at])
-    problem = capture_app.go_to_start(app, sleep=lambda s: None, drag=lambda *a: None)
-    assert 'paged back 20 times and the footer stayed at Location 185' in problem
-    assert sum('key code 123' in c for c in app.calls) == 20
-
-
-def test_the_knob_is_dragged_from_its_percentage_to_the_track_start():
-    slider = {'role': 'AXSlider', 'title': '', 'description': 'Reading Progress Bar', 'value': 'Location 185 , 13%',
-              'position': '533,954', 'size': '980,46'}
-    drags = []
-    assert capture_app.drag_knob_to_start(slider, lambda t: (0, '', ''), lambda s: None,
-                                          drag=lambda *a: drags.append(a)) == 'dragged the knob'
-    assert drags[0][:4] == (533 + 980 * 13 // 100, 977, 534, 977)
+    assert 'start: Location 1 after' in out and 'pressed "Cover"' in out and 'paged back 40 times' in out
+    # ← presses that leave the footer where it is are counted and named, and the loop stops; a table of contents
+    # without an entry is closed again and named too.
+    toc = TOC.format(at=185)
+    empty = toc[:toc.index('element|AXStaticText|||Cover')]
+    app = App([at, empty, at, at, READER, READER, at, at])
+    problem = go(app)
+    assert 'no entry in the table of contents' in problem and 'paged back 20 times and the footer stayed at Location 185' in problem
+    assert 'Location 185 of 2594' in problem and sum('key code 123' in c for c in app.calls) == 20
+    assert any('"Close menu"' in c for c in app.calls)
 
 
 def test_a_probe_records_what_the_new_app_shows_before_and_after_opening_a_book(tmp_path):
@@ -326,7 +312,7 @@ def test_a_probe_records_what_the_new_app_shows_before_and_after_opening_a_book(
     chrome = READER + 'element|AXSlider||||12|500,2000|1000,20\n'
     app = App([LIBRARY, LIBRARY, LIBRARY, sheet, sheet, READER, chrome])
     folder = capture_app.probe('B2', 'For 91 Days In Tokyo', tmp_path / 'probe', script=app, run=calls.append,
-                               sleep=lambda s: None, ebooks=ebooks)
+                               sleep=lambda s: None, ebooks=ebooks, clock=app.clock)
     assert 'Library Grid View' in (folder / 'ui-library.txt').read_text()
     assert 'Close' in (folder / 'ui-book.txt').read_text()
     # The sheet is closed and the page clicked once, and each state is kept (probe of 2026-10-11 17:51).

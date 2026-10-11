@@ -23,14 +23,17 @@ import sys
 import time
 from pathlib import Path
 
+import ax
 import capture_book
 import locks
 import capture_books
 
 HERE = Path(__file__).resolve().parent
 OK_ENV = 'KINDLE_APP_OK'
-OPEN_WAIT_S = 60
-SETTLE_S = 5  # the library after Close Book, before the first press
+POLL_S = 0.3  # the element tree is read this often until what is waited for appears (Laiken, 2026-10-11 19:59:
+# opening a book took minutes; fixed sleeps of 2-5 s stood at a dozen places)
+PRESS_WAIT_S = 8  # the library after the first press of a cover, before the cover's centre is clicked instead
+OPEN_WAIT_S = 45
 # A book not yet on this Mac stays in the library on the first open; opening it again starts its download
 # (Laiken, 2026-10-11 17:21 JST), which takes longer than a plain open.
 DOWNLOAD_WAIT_S = 300
@@ -44,9 +47,19 @@ def osascript(script, runner=subprocess.run):
     return result.returncode, (result.stdout or '').strip(), (result.stderr or '').strip()
 
 
+def read_tree(script=osascript):
+    """The dump text: through the Accessibility API in-process where pyobjc has it (ms), else the AppleScript dump
+    (114 s for 234 lines on 2026-10-11 20:02). A fake script in the tests is always used as given."""
+    if script is osascript and ax.usable():
+        out = ax.dump()
+        if out is not None:
+            return out
+    return script(UI_DUMP)[1]
+
+
 def elements(script=osascript):
     """The window's elements from the UI dump: dicts with role, subrole, title, description, value, position, size."""
-    _, out, _ = script(UI_DUMP)
+    out = read_tree(script)
     found = []
     for line in out.splitlines():
         parts = line.split('|')
@@ -123,7 +136,6 @@ def dismiss_sheet(script=osascript, sleep=time.sleep):
     _, pressed, _ = script(PRESS_TITLED.format(title='"Close"'))
     if pressed != 'pressed':
         script('tell application "System Events" to tell process "Kindle" to key code 53')  # Escape
-    sleep(2)
     return pressed
 
 
@@ -131,8 +143,17 @@ def reveal_chrome(script=osascript, sleep=time.sleep):
     """Click the middle of the page so the reader shows its toolbar and progress (the probe saw neither in the dump
     taken right after the open; the footer showed only "1%")."""
     _, out, err = script(CLICK_PAGE)
-    sleep(2)
     return out or err
+
+
+def wait_for(ready, script=osascript, sleep=time.sleep, clock=time.monotonic, timeout=5.0, found=None):
+    """Read the app's elements every POLL_S until ready(found) or the timeout; returns the last reading."""
+    found = elements(script) if found is None else found
+    deadline = clock() + timeout
+    while not ready(found) and clock() < deadline:
+        sleep(POLL_S)
+        found = elements(script)
+    return found
 
 
 PRESS_COVER = '''
@@ -192,15 +213,15 @@ def open_book(asin, title, script=osascript, run=capture_book.run, clock=time.mo
     Written from the probe of 2026-10-11 17:46: the new app's kindle:// URL leaves the library in front; each cover is
     an AXButton whose description starts with the title and whose value says Book Downloaded or Book Not Downloaded.
     """
-    script('tell application "Amazon Kindle" to activate')
-    sleep(2)
-    found, problem = ensure_library(script, sleep)
+    bring_front(script, sleep)
+    found, problem = ensure_library(script, sleep, clock)
     if problem:
         return problem
+    has_cover = lambda f: cover_of(title, f) is not None
+    found = wait_for(has_cover, script, sleep, clock, found=found)
     if cover_of(title, found) is None:
         _, searched, _ = script(SEARCH.format(title=_quote(title)))
-        sleep(3)
-        found = elements(script)
+        found = wait_for(has_cover, script, sleep, clock)
         if cover_of(title, found) is None:
             return f'no cover for this title in the Kindle library (search: {searched}); it shows: ' + describe(found)
     # Two presses at most: the second is for a download that has not started (Laiken, 17:21), or for a first press
@@ -211,7 +232,6 @@ def open_book(asin, title, script=osascript, run=capture_book.run, clock=time.mo
     # covers had 122x183), so neither AXPress nor a click at its centre opens it; that book is opened through the
     # tab bar's button named after it, which has a real frame.
     presses = []
-    sleep(SETTLE_S)
     while len(presses) < 2:
         presses.append(bring_front(script, sleep))
         cover = cover_of(title, found)
@@ -224,13 +244,13 @@ def open_book(asin, title, script=osascript, run=capture_book.run, clock=time.mo
             script(PRESS_TAB.format(title=_quote(title)))
         else:
             script(PRESS_COVER.format(title=_quote(title)))
-        wait = DOWNLOAD_WAIT_S if len(presses) == 2 and cover and 'Not Downloaded' in cover['value'] else OPEN_WAIT_S
-        deadline = clock() + wait
-        while clock() < deadline:
-            sleep(2)
-            found = elements(script)
-            if not in_library(found):
-                return ''
+        # The first press is given a short wait: right after Close Book it can fail (runs of 2026-10-11 18:12 and
+        # 18:24), and the click that follows opens the book; a download gets the long wait.
+        wait = (DOWNLOAD_WAIT_S if len(presses) == 2 and cover and 'Not Downloaded' in cover['value']
+                else OPEN_WAIT_S if len(presses) == 2 else PRESS_WAIT_S)
+        found = wait_for(lambda f: not in_library(f), script, sleep, clock, timeout=wait)
+        if not in_library(found):
+            return ''
         cover = cover_of(title, found)
         if cover is None:
             break
@@ -265,7 +285,7 @@ def location_of(found):
     return None
 
 
-def show_chrome(script=osascript, sleep=time.sleep, tries=3, found=None):
+def show_chrome(script=osascript, sleep=time.sleep, clock=time.monotonic, tries=3, found=None):
     """Click the page until the toolbar is in the element tree. With the toolbar hidden the reader's tree holds only
     groups and the window buttons (probe of 2026-10-11 18:04), and in the pilot run just before it one click did not
     bring it (Close Book: none), so each click is checked and repeated. Returns what the app shows."""
@@ -274,8 +294,14 @@ def show_chrome(script=osascript, sleep=time.sleep, tries=3, found=None):
         if chrome_shown(found):
             break
         reveal_chrome(script, sleep)
-        found = elements(script)
+        found = wait_for(chrome_shown, script, sleep, clock, timeout=2)
     return found
+
+
+def hide_chrome(script=osascript, sleep=time.sleep, clock=time.monotonic):
+    """The click that shows the toolbar hides it again. Returns what the app shows."""
+    reveal_chrome(script, sleep)
+    return wait_for(lambda f: not chrome_shown(f), script, sleep, clock, timeout=2)
 
 
 FRONTMOST = ('tell application "Amazon Kindle" to activate\n'
@@ -286,7 +312,7 @@ def bring_front(script=osascript, sleep=time.sleep):
     """Activate Kindle and say which process is frontmost afterwards. In the run of 2026-10-11 18:12 the cover was
     pressed while "Claude" was frontmost and the library stayed, so every press is preceded by this."""
     _, front, err = script(FRONTMOST)
-    sleep(1)
+    sleep(0.5)
     return front or err
 
 
@@ -298,7 +324,7 @@ def dismiss_overlays(script=osascript, sleep=time.sleep):
     return dismiss_sheet(script, sleep)
 
 
-def ensure_library(script=osascript, sleep=time.sleep):
+def ensure_library(script=osascript, sleep=time.sleep, clock=time.monotonic):
     """Bring the app to its library: a book left open (the app reopens into the last book, 2026-10-11 17:56) is closed
     with the reader's Close Book button. File > Close quits the app, so it is never used.
     Returns (what the app shows, '' or why the library did not come)."""
@@ -306,24 +332,19 @@ def ensure_library(script=osascript, sleep=time.sleep):
     if in_library(found):
         return found, ''
     bring_front(script, sleep)
-    found = show_chrome(script, sleep, found=found)
+    found = show_chrome(script, sleep, clock, found=found)
     if not chrome_shown(found):
         # The end of a book leaves an end-of-book sheet (rating, recommend, follow the author), and a share menu
         # had opened over it (run of 2026-10-11 18:59, the book read to 99%); both hide the toolbar.
         dismiss_overlays(script, sleep)
-        found = show_chrome(script, sleep)
+        found = show_chrome(script, sleep, clock)
     if not chrome_shown(found):
         return found, 'the Kindle app shows neither its library nor the reader toolbar after clicks on the page; it shows: ' + describe(found)
     _, pressed, _ = script(PRESS_TITLED.format(title='"Close Book"'))
-    sleep(3)
-    found = elements(script)
+    found = wait_for(in_library, script, sleep, clock, timeout=10)
     if in_library(found):
         return found, ''
     return found, f'the Kindle app is not showing its library (Close Book: {pressed}); it shows: ' + describe(found)
-
-
-def slider_of(found):
-    return next((e for e in found if e['role'] == 'AXSlider' and PROGRESS_BAR in (e['title'], e['description'])), None)
 
 
 def _frame(e):
@@ -332,40 +353,15 @@ def _frame(e):
     return x, y, w, h
 
 
-def click_track_start(slider, script=osascript, sleep=time.sleep, drag=None):
-    """Click the progress bar's track at its left end."""
-    if slider is None:
-        return 'no slider'
-    x, y, w, h = _frame(slider)
-    script(CLICK_AT.format(x=x + 2, y=y + h // 2))
-    return 'clicked the track start'
+MENU_CLOSE = 'Close menu'
 
 
-def drag_knob_to_start(slider, script=osascript, sleep=time.sleep, drag=None):
-    """Drag the knob from where the slider's percentage puts it to the left end, with a real mouse drag."""
-    if slider is None:
-        return 'no slider'
-    x, y, w, h = _frame(slider)
-    m = re.search(r'(\d+)%', slider['value'])
-    knob = x + w * int(m.group(1)) // 100 if m else x + w // 2
-    try:
-        (drag or _quartz_drag)(knob, y + h // 2, x + 1, y + h // 2, sleep)
-    except Exception as e:  # pyobjc missing, or no event tap
-        return f'drag failed: {e}'
-    return 'dragged the knob'
+def menu_open(found):
+    return any(MENU_CLOSE in (e['title'], e['description']) for e in found)
 
 
-def _quartz_drag(x0, y0, x1, y1, sleep=time.sleep):
-    from Quartz import (CGEventCreateMouseEvent, CGEventPost, kCGEventLeftMouseDown, kCGEventLeftMouseDragged,
-                        kCGEventLeftMouseUp, kCGHIDEventTap, kCGMouseButtonLeft)
-    for kind, x, y in ((kCGEventLeftMouseDown, x0, y0), (kCGEventLeftMouseDragged, (x0 + x1) // 2, y1),
-                       (kCGEventLeftMouseDragged, x1, y1), (kCGEventLeftMouseUp, x1, y1)):
-        CGEventPost(kCGHIDEventTap, CGEventCreateMouseEvent(None, kind, (x, y), kCGMouseButtonLeft))
-        sleep(0.3)
-
-
-def toc_first(slider, script=osascript, sleep=time.sleep, drag=None):
-    """Open the Table of Contents and click its topmost entry. Probe of 2026-10-11 19:20 (Bolivia): the panel slides
+def toc_first(script=osascript, sleep=time.sleep, clock=time.monotonic):
+    """Open the Table of Contents and press its topmost entry. Probe of 2026-10-11 19:20 (Bolivia): the panel slides
     in at the left with the title (AXHeading), the author, a "Close menu" X, then the entries ("Cover", "Beginning")
     as AXStaticText, not buttons. Laiken, 19:26: any topmost entry leads to the start, not only "Cover". Checked on
     the Mac at 19:26: AXPress on the "Cover" text moved Bolivia from Location 185 to Location 1, while synthetic
@@ -374,32 +370,34 @@ def toc_first(slider, script=osascript, sleep=time.sleep, drag=None):
     _, pressed, _ = script(PRESS_TITLED.format(title='"Table of Contents"'))
     if pressed != 'pressed':
         return 'no Table of Contents button'
-    sleep(2)
-    found = elements(script)
-    closes = [i for i, e in enumerate(found) if 'Close menu' in (e['title'], e['description'])]
+    found = wait_for(menu_open, script, sleep, clock)
+    closes = [i for i, e in enumerate(found) if MENU_CLOSE in (e['title'], e['description'])]
     rows = [e for e in found[closes[-1] + 1:] if e['role'] == 'AXStaticText' and not LOCATION.search(e['description'])
             and not LOCATION.search(e['value'])] if closes else []
     if not rows:
-        script(PRESS_TITLED.format(title='"Close menu"'))
+        script(PRESS_TITLED.format(title=_quote(MENU_CLOSE)))
         return 'no entry in the table of contents'
     name = rows[0]['description'] or rows[0]['title']
     _, pressed, _ = script(PRESS_TEXT.format(title=_quote(name)))
     if pressed == 'pressed':
-        return f'pressed "{name}" at the top of the table of contents'
-    x, y, w, h = _frame(rows[0])
-    script(CLICK_AT.format(x=x + w // 2, y=y + h // 2))
-    return f'clicked "{name}" at the top of the table of contents'
+        how = f'pressed "{name}" at the top of the table of contents'
+    else:
+        x, y, w, h = _frame(rows[0])
+        script(CLICK_AT.format(x=x + w // 2, y=y + h // 2))
+        how = f'clicked "{name}" at the top of the table of contents'
+    wait_for(lambda f: not menu_open(f), script, sleep, clock)
+    return how
 
 
 PAGE_BACK = 'tell application "System Events" to tell process "Kindle" to key code 123'  # ← previous page; kindle2img
 # turns forward with 124
 
 
-def page_back(slider, script=osascript, sleep=time.sleep, drag=None, batch=20, cap=3000):
+def page_back(script=osascript, sleep=time.sleep, clock=time.monotonic, batch=20, cap=3000):
     """Press ← until the footer reads Location 1 or stops falling. Laiken, 2026-10-11 19:27: when no reader tool
     works, page back one screen at a time rather than stop. The toolbar is hidden before each batch so the keys
     reach the page, then shown again to read the footer."""
-    found = show_chrome(script, sleep)
+    found = show_chrome(script, sleep, clock)
     where = location_of(found)
     if where is None:
         return 'no location in the footer to page back from'
@@ -407,13 +405,12 @@ def page_back(slider, script=osascript, sleep=time.sleep, drag=None, batch=20, c
     while where[0] > 1 and presses < cap:
         bring_front(script, sleep)
         if chrome_shown(found):
-            reveal_chrome(script, sleep)  # the same click hides the toolbar
+            hide_chrome(script, sleep, clock)
         for _ in range(batch):
             script(PAGE_BACK)
-            sleep(0.3)
+            sleep(0.15)
             presses += 1
-        sleep(1)
-        found = show_chrome(script, sleep)
+        found = show_chrome(script, sleep, clock)
         now = location_of(found)
         if now is None or now[0] >= where[0]:
             return f'paged back {presses} times and the footer stayed at Location {where[0]}'
@@ -421,39 +418,34 @@ def page_back(slider, script=osascript, sleep=time.sleep, drag=None, batch=20, c
     return f'paged back {presses} times'
 
 
-def go_to_start(script=osascript, sleep=time.sleep, drag=None):
-    """Back to the start of the open book: close the details sheet, show the toolbar, click and then drag the
-    Reading Progress Bar to its start, else open the Table of Contents and press its topmost entry, else page back
-    with ← until the start; read the footer's
-    "Location N of M", then hide the toolbar again.
-    Returns '' or why it could not. Written from the probes of 2026-10-11 17:56 and 19:20, not guessed."""
+def go_to_start(script=osascript, sleep=time.sleep, clock=time.monotonic):
+    """Back to the start of the open book: close the details sheet, show the toolbar, open the Table of Contents and
+    press its topmost entry, else page back with ← until the start; read the footer's "Location N of M", then hide
+    the toolbar again. Returns '' or why it could not. Written from the probes of 2026-10-11 17:56 and 19:20.
+    The Reading Progress Bar is not used: writing its value, clicking its track and dragging its knob all left the
+    book where it was (runs of 2026-10-11 19:02 and 19:11)."""
+    began = clock()
     dismiss_sheet(script, sleep)
-    found = show_chrome(script, sleep)
+    found = show_chrome(script, sleep, clock)
     if not chrome_shown(found):
         return 'the reader shows no toolbar after clicks on the page; it shows: ' + describe(found)
     where = location_of(found)
-    tried = ['not needed']
-    # Setting the slider's value is not honoured (run of 2026-10-11 19:02: "slider: set" and the knob stayed at
-    # 13%, Location 185), so the slider's track is clicked at its left end, then the knob dragged there; neither
-    # moved it either (run of 19:11), so the Table of Contents' topmost entry comes next, and paging back with ←
-    # is the last resort (Laiken, 19:27).
-    for move in (click_track_start, drag_knob_to_start, toc_first, page_back):
+    tried = []
+    for move in (toc_first, page_back):
         if where is not None and where[0] <= 1:
             break
         bring_front(script, sleep)
-        tried.append(move(slider_of(found), script, sleep, drag))
-        sleep(3)
-        found = show_chrome(script, sleep)
+        started = clock()
+        how = move(script, sleep, clock)
+        found = show_chrome(script, sleep, clock)
         where = location_of(found)
+        tried.append(f'{how} ({clock() - started:.0f} s)')
     if where is None or where[0] > 1:
         return (f'could not go to the start (tried: {", ".join(tried)}, footer: '
                 f'{"Location %d of %d" % where if where else "no location"})')
-    # Which move reached the start is logged: the run of 2026-10-11 19:55 (Buenos Aires, from Location 1863) got
-    # there, but the log did not say by which of the four.
-    print(f'start: Location {where[0]} after: {", ".join(tried)}', flush=True)
+    print(f'start: Location {where[0]} after {clock() - began:.0f} s: {", ".join(tried) or "not needed"}', flush=True)
     bring_front(script, sleep)
-    reveal_chrome(script, sleep)  # the same click hides the toolbar again
-    if chrome_shown(elements(script)):
+    if chrome_shown(hide_chrome(script, sleep, clock)):
         return 'the toolbar stayed over the page after a click to hide it'
     return ''
 
@@ -511,7 +503,8 @@ end tell
 EBOOKS = Path.home() / 'Library/Containers/com.amazon.Lassen/Data/Library/eBooks'
 
 
-def probe(asin, title, folder, script=osascript, run=capture_book.run, sleep=time.sleep, ebooks=EBOOKS):
+def probe(asin, title, folder, script=osascript, run=capture_book.run, sleep=time.sleep, ebooks=EBOOKS,
+          clock=time.monotonic):
     """Open the book in the app and record what the app shows: a screenshot, the UI dump before and after the open,
     and whether the book is downloaded. Returns the folder; the files are what a fix is written from."""
     folder.mkdir(parents=True, exist_ok=True)
@@ -520,7 +513,7 @@ def probe(asin, title, folder, script=osascript, run=capture_book.run, sleep=tim
     _, before, err = script(UI_DUMP)
     (folder / 'ui-library.txt').write_text(before or err, encoding='utf-8')
     # The kindle:// URL does not open a book in the new app (probe of 2026-10-11 17:46); the cover is pressed instead.
-    problem = open_book(asin, title, script=script, run=run, sleep=sleep)
+    problem = open_book(asin, title, script=script, run=run, sleep=sleep, clock=clock)
     (folder / 'open.txt').write_text(problem or 'opened', encoding='utf-8')
     sleep(3)
     # One file per display: with one file screencapture records only the main display, and on 2026-10-11 the Kindle
@@ -530,17 +523,18 @@ def probe(asin, title, folder, script=osascript, run=capture_book.run, sleep=tim
     (folder / 'ui-book.txt').write_text(after or err, encoding='utf-8')
     # The reader as it is used: the details sheet closed, then the page clicked once for its toolbar.
     notes = ['sheet: ' + dismiss_sheet(script, sleep)]
+    sleep(2)
     _, reader, err = script(UI_DUMP)
     (folder / 'ui-reader.txt').write_text(reader or err, encoding='utf-8')
     notes.append('page: ' + reveal_chrome(script, sleep))
+    sleep(2)
     run(['screencapture', '-x', *(str(folder / f'chrome-{n}.png') for n in (1, 2, 3))])
     _, chrome, err = script(UI_DUMP)
     (folder / 'ui-chrome.txt').write_text(chrome or err, encoding='utf-8')
     # The ways to the start that do not go through the slider (the slider ignored a value, a click and a drag in the
     # runs of 2026-10-11 19:02 and 19:11): what the Table of Contents and More options buttons open.
     for name, button in (('toc', 'Table of Contents'), ('more', 'More options')):
-        if not chrome_shown(elements(script)):
-            reveal_chrome(script, sleep)
+        show_chrome(script, sleep, clock)
         _, pressed, _ = script(PRESS_TITLED.format(title=_quote(button)))
         sleep(2)
         run(['screencapture', '-x', *(str(folder / f'{name}-{n}.png') for n in (1, 2, 3))])
