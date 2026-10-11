@@ -11,7 +11,6 @@ import argparse
 import json
 import os
 import re
-import shutil
 import sys
 import threading
 import zipfile
@@ -341,17 +340,13 @@ def ends_open(image, text):
     return None if last is None else len(last) >= FULL_LINE * median(body)
 
 
-def write_book(folder, title, config):
+def write_book(folder, title):
     images = page_images(folder)
     texts = [img.with_suffix('.txt').read_text(encoding='utf-8') for img in images]
     book = join_pages(texts, [ends_open(img, text) for img, text in zip(images, texts)])
     output = folder / f'{title}.md'
     output.write_text(book, encoding='utf-8')
     print(f'Wrote {output} ({len(book)} chars)')
-    drive_folder = config.get('GOOGLE_DRIVE_FOLDER')
-    if drive_folder and Path(drive_folder).is_dir():
-        shutil.copy2(output, drive_folder)
-        print(f'Copied to {drive_folder}')
 
 
 def join_pages(texts, open_ends=None):
@@ -459,7 +454,7 @@ def main():
     elif vision:
         print(f'GEMINI_API_KEY is not set in {CONFIG_PATH} and claude is not installed: {len(vision)} Vision pages keep titles guessed from layout')
 
-    write_book(args.folder, args.title or args.folder.resolve().name, config)
+    write_book(args.folder, args.title or args.folder.resolve().name)
 
 
 if __name__ == '__main__':

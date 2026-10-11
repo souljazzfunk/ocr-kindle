@@ -279,3 +279,59 @@ def test_a_capture_with_no_zip_is_tried_once_more_then_stops_the_list():
     assert capture_books.decide(result(['no_zip', 'tab_closed']), 1) == 'recapture'
     assert capture_books.decide(result(['tab_gone']), 2) == 'failed'
     assert 'tab_gone' in capture_books.STOP_CHECKS  # a second vanished tab stops the list: later books would follow
+
+
+def test_a_book_that_failed_under_older_code_is_converted_again_from_its_zip_once(tmp_path, monkeypatch, capsys):
+    # 2026-10-11: Dilla Time and Building a Second Brain passed once the fixes were merged, but their entries still
+    # said failed, so the list never went back to them.
+    books = tmp_path / 'books.tsv'
+    books.write_text('B1\tDilla Time\nB2\tFor 91 Days in Bolivia\nB3\tAutomate\n')
+    zip_path = tmp_path / 'Dilla Time.zip'
+    zip_path.write_bytes(b'')
+    (tmp_path / 'books.progress.json').write_text(json.dumps({
+        'B1': {'title': 'Dilla Time', 'verdict': 'failed', 'failures': ['layout'], 'warnings': [], 'source': str(zip_path)},
+        'B2': {'title': 'For 91 Days in Bolivia', 'verdict': 'failed', 'failures': ['kindle_app_only'], 'warnings': []},
+        'B3': {'title': 'Automate', 'verdict': 'failed', 'failures': ['crash'], 'warnings': []}}))
+    started = []
+
+    def convert(asin, title=None, recapture=False, **options):
+        started.append((asin, options.get('source')))
+        return result([])
+
+    monkeypatch.setattr(capture_books.capture_book, 'convert', convert)
+    monkeypatch.setattr(sys, 'argv', ['capture_books.py', str(books), '--downloads', str(tmp_path), '--keep-going'])
+    with pytest.raises(SystemExit):
+        capture_books.main()
+    # Dilla from its ZIP with no capture; the app-only book is left alone; Automate has no ZIP, so nothing runs.
+    assert started == [('B1', zip_path)]
+    progress = json.loads((tmp_path / 'books.progress.json').read_text())
+    assert progress['B1']['verdict'] == 'done' and progress['B3']['verdict'] == 'failed'
+    assert 'converting Dilla Time.zip again: it failed layout under older code' in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        capture_books.main()
+    assert started == [('B1', zip_path)]  # the same code finds nothing new to convert
+
+
+def test_which_failed_books_are_converted_again_and_an_unusable_old_zip_is_captured_anew():
+    entry = {'verdict': 'failed', 'failures': ['chapter_titles'], 'warnings': []}
+    assert capture_books.stale_failure(entry, 'abc')
+    assert not capture_books.stale_failure({**entry, 'converter': 'abc'}, 'abc')
+    assert not capture_books.stale_failure({**entry, 'failures': ['capture_stop']}, 'abc')  # rerun as stopped anyway
+    calls = []
+
+    def convert(asin, title=None, recapture=False, **options):
+        calls.append(options.get('source'))
+        return result(['pages'] if len(calls) == 1 else [])
+
+    verdict, _ = capture_books.run_book('B1', 'One', {'source': 'old.zip'}, convert=convert, again=True)
+    assert verdict == 'done' and calls == ['old.zip', None]
+
+
+def test_the_converter_version_follows_the_code_and_not_the_tests(tmp_path):
+    (tmp_path / 'img2txt.py').write_text('a = 1\n')
+    (tmp_path / 'test_img2txt.py').write_text('t = 1\n')
+    first = capture_books.converter_version(tmp_path)
+    (tmp_path / 'test_img2txt.py').write_text('t = 2\n')
+    assert capture_books.converter_version(tmp_path) == first
+    (tmp_path / 'img2txt.py').write_text('a = 2\n')
+    assert capture_books.converter_version(tmp_path) != first

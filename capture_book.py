@@ -17,16 +17,17 @@ first ZIP was unusable (the extension otherwise refuses to auto-start a saved bo
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
 from dataclasses import asdict
 from pathlib import Path
 
-from check_book import Check, check_folder
+from check_book import Check, check_folder, markdown_file
 import brave
 from extension_state import folder_problem, repo_version, zip_version
-from img2txt import GEMINI_ERROR, GEMINI_FAILED_EXIT
+from img2txt import GEMINI_ERROR, GEMINI_FAILED_EXIT, load_config
 
 BRAVE = 'Brave Browser'
 ROUNDS = 3
@@ -203,6 +204,17 @@ def report(folder, checks, extra):
     return data
 
 
+def publish(folder, title, config=None):
+    """Copy the checked Markdown to GOOGLE_DRIVE_FOLDER. Only this step writes there: on 2026-10-11 a comparison run of
+    img2txt.py on AI for Educators replaced the book on Drive."""
+    drive = (config if config is not None else load_config()).get('GOOGLE_DRIVE_FOLDER')
+    book = markdown_file(folder, title)
+    if not drive or not Path(drive).is_dir() or not book.exists():
+        return None
+    print(f'Copied {book.name} to {drive}', flush=True)
+    return Path(shutil.copy2(book, drive))
+
+
 def start_wiki_ingest(data, watch=WIKI_WATCH, spawn=subprocess.Popen):
     """Start the wiki's watcher for a book that passed, detached, so the note is written while the next book captures
     instead of at the watcher's next hourly run. The watcher queues a rerun when one is already going."""
@@ -262,6 +274,7 @@ def convert(asin, title=None, model='vision', domain='read.amazon.com', download
         checks.append(download_check(source))
     data = report(folder, checks, {'asin': asin, 'source': str(source), 'recapture': recapture, 'rounds': rounds,
                                    'tab_closed': tab_closed, 'seconds': round(time.time() - started)})
+    publish(folder, title)
     start_wiki_ingest(data)
     return data
 

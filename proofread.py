@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 
-from img2txt import (TEXT_LAYER, VISION, load_config, page_images, read_sources, vision_lines, vision_transcribe,
+from img2txt import (TEXT_LAYER, VISION, page_images, read_sources, vision_lines, vision_transcribe,
                      write_book)
 
 SAMPLES = 6
@@ -401,7 +401,7 @@ def main():
         for stem, text in changed.items():
             (args.folder / f'{stem}.txt').write_text(text, encoding='utf-8')
         print(f'Fixed {len(changed)} pages')
-        write_book(args.folder, args.title or args.folder.resolve().name, load_config())
+        write_book(args.folder, args.title or args.folder.resolve().name)
 
 
 if __name__ == '__main__':

@@ -8,11 +8,13 @@ and go on to the next by the checks' verdict, with no one asked in between.
 books.tsv has one `ASIN<TAB>title` per line (`#` lines are skipped). Progress goes to books.progress.json next
 to it: a book marked done or failed is not run again, so an interrupted run resumes at the next book. A book the
 list stopped on (a Brave or extension failure, STOP_CHECKS) is run again, as #recapture, unless a good capture of it
-was saved after it stopped: then that ZIP is converted with no new capture.
+was saved after it stopped: then that ZIP is converted with no new capture. A book that failed its Markdown checks is
+converted again from its ZIP, once, when the converter's code has changed since.
 At the end the summary lists what was done and what failed and why; the exit code is 1 when anything failed.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -42,6 +44,24 @@ STOP_CHECKS = {'download', 'extension_version', 'tab_closed', 'start_position', 
 
 
 HERE = Path(__file__).resolve().parent
+
+
+def converter_version(here=HERE):
+    """A digest of the converter's code. A book that failed its Markdown checks under other code is converted again from
+    its ZIP: on 2026-10-11 Dilla Time and Building a Second Brain passed once fixes were merged, but their entries
+    still said failed, so the list never went back to them."""
+    digest = hashlib.sha256()
+    for path in sorted(Path(here).glob('*.py')):
+        if not path.name.startswith('test_'):
+            digest.update(path.name.encode() + b'\0' + path.read_bytes())
+    return digest.hexdigest()[:12]
+
+
+def stale_failure(entry, converter):
+    """Whether entry failed on the converter (not the capture, not the Kindle-app-only refusal) under other code."""
+    failures = set(entry.get('failures', []))
+    return (entry.get('verdict') == 'failed' and not failures & (STOP_CHECKS | {capture_book.APP_ONLY})
+            and entry.get('converter') != converter)
 
 
 def update_checkout(git=None):
@@ -95,8 +115,9 @@ def comparable(text):
     return re.sub(r'[^a-z0-9]', '', (text or '').lower())
 
 
-def saved_capture(downloads, title, since, version=None):
+def saved_capture(downloads, title, since, version=None, any_version=False):
     """The newest ZIP of this book saved after since (epoch seconds) by the extension on main, run to the end; else None.
+    any_version: a ZIP from an older extension will do (a book converted again after a converter fix).
 
     On 2026-10-10 Facing the Mountain was captured well on 1.7 after the list had stopped on it, but its entry still
     said stopped, so the resumed list paged through all 673 screens again.
@@ -114,9 +135,17 @@ def saved_capture(downloads, title, since, version=None):
                 made = json.loads(archive.read(CAPTURE))
         except (KeyError, zipfile.BadZipFile, json.JSONDecodeError):
             continue
-        if made.get('extension_version') == version and not made.get('stopped'):
+        if (any_version or made.get('extension_version') == version) and not made.get('stopped'):
             return path
     return None
+
+
+def earlier_capture(entry, downloads, title):
+    """The ZIP an earlier run converted (its recorded source, else the newest one of this book that ran to the end)."""
+    source = Path(entry.get('source') or '')
+    if source.suffix == '.zip' and source.is_file():
+        return source
+    return saved_capture(downloads, title, 0, any_version=True)
 
 
 def run_book(asin, title, options, convert=None, again=False):
@@ -148,6 +177,7 @@ def main():
     progress_path = args.list.with_suffix('.progress.json')
     progress = load_progress(progress_path)
     options = {'model': args.model, 'domain': args.domain, 'downloads': args.downloads}
+    converter = converter_version()
     for asin, title in read_list(args.list):
         update = update_checkout()
         if update == 'python':
@@ -161,21 +191,32 @@ def main():
             print(f'=== {update}; going on with the code already here', flush=True)
         entry = progress.get(asin, {})
         waiting = entry.get('verdict') == 'waiting' and entry.get('source')
+        stale = stale_failure(entry, converter)
+        earlier = stale and earlier_capture(entry, args.downloads, title)
+        if stale and not earlier:
+            entry['converter'] = converter  # no ZIP to convert again: look once per converter change
+            progress_path.write_text(json.dumps(progress, ensure_ascii=False, indent=1), encoding='utf-8')
         if entry.get('verdict') == 'done' or (
-                entry.get('verdict') == 'failed' and not STOP_CHECKS & set(entry.get('failures', []))):
+                entry.get('verdict') == 'failed' and not STOP_CHECKS & set(entry.get('failures', [])) and not earlier):
             continue
         print(f'=== {title or asin} ({asin})', flush=True)
         try:
-            # Any earlier attempt may have saved the ASIN in the extension, which then refuses #autocapture.
-            again = asin in progress and not waiting
-            # A book stopped by a Gemini failure was captured well: convert its folder again, without Brave.
-            book_options = {**options, 'source': Path(entry['source'])} if waiting else options
-            saved = again and entry.get('at') and saved_capture(
-                args.downloads, title, time.mktime(time.strptime(entry['at'], '%Y-%m-%dT%H:%M:%S')))
-            if saved:
-                print(f'=== converting {saved.name}, captured after the list stopped on this book', flush=True)
-                book_options, again = {**options, 'source': saved}, False
-            verdict, data = run_book(asin, title, book_options, again=again)
+            if earlier:
+                print(f'=== converting {earlier.name} again: it failed {", ".join(entry["failures"])} under older code',
+                      flush=True)
+                # Its capture was used before, so a capture defect found now is redone as for any unusable ZIP.
+                verdict, data = run_book(asin, title, {**options, 'source': earlier}, again=True)
+            else:
+                # Any earlier attempt may have saved the ASIN in the extension, which then refuses #autocapture.
+                again = asin in progress and not waiting
+                # A book stopped by a Gemini failure was captured well: convert its folder again, without Brave.
+                book_options = {**options, 'source': Path(entry['source'])} if waiting else options
+                saved = again and entry.get('at') and saved_capture(
+                    args.downloads, title, time.mktime(time.strptime(entry['at'], '%Y-%m-%dT%H:%M:%S')))
+                if saved:
+                    print(f'=== converting {saved.name}, captured after the list stopped on this book', flush=True)
+                    book_options, again = {**options, 'source': saved}, False
+                verdict, data = run_book(asin, title, book_options, again=again)
         except Exception as e:  # a crash in one book must not stop the list, and must be in the summary
             verdict, data = 'failed', {'error': str(e), 'blocking_failures': ['crash'], 'warnings': []}
         stop = STOP_CHECKS & set(data['blocking_failures'])
@@ -185,8 +226,9 @@ def main():
         if gemini:
             verdict = 'waiting'  # Gemini failed; every later book would fail its layout too
         progress[asin] = {'title': title, 'verdict': verdict, 'failures': data['blocking_failures'],
-                          'warnings': data['warnings'], 'error': data.get('error'), 'at': time.strftime('%Y-%m-%dT%H:%M:%S')}
-        if gemini:
+                          'warnings': data['warnings'], 'error': data.get('error'), 'at': time.strftime('%Y-%m-%dT%H:%M:%S'),
+                          'converter': converter}
+        if data.get('source'):
             progress[asin]['source'] = data['source']
         progress_path.write_text(json.dumps(progress, ensure_ascii=False, indent=1), encoding='utf-8')
         print(f'=== {verdict}: {title or asin}' + (f' ({", ".join(data["blocking_failures"])})' if verdict != 'done' else ''), flush=True)
