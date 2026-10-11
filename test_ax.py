@@ -34,6 +34,13 @@ def fake_api(tree, active=True):
         def AXValueGetValue(v, kind, out):
             return True, v
 
+        pressed = []
+
+        @staticmethod
+        def AXUIElementPerformAction(e, action):
+            AS.pressed.append((e.get('AXDescription') or e.get('AXTitle'), action))
+            return 0 if e.get('AXRole') == 'AXButton' else -25205
+
     class Running:
         def processIdentifier(self):
             return 42
@@ -92,3 +99,17 @@ def test_the_tree_is_read_through_the_api_only_for_the_real_osascript(monkeypatc
 @pytest.mark.skipif(sys.platform != 'darwin', reason='pyobjc is installed on macOS only')
 def test_the_framework_is_installed_on_the_mac():
     assert ax.api() is not None and ax.usable()
+
+
+def test_a_press_through_the_api_finds_the_element_by_role_and_name_in_either_column():
+    # 2026-10-11 20:45: AppleScript's `entire contents` did not find the Table of Contents' "Cover" button; the API did.
+    cover = {'AXRole': 'AXButton', 'AXDescription': 'Cover', 'AXPosition': Pt(325, 1276), 'AXSize': Sz(473, 43)}
+    group = {'AXRole': 'AXGroup', 'AXPosition': Pt(325, 1276), 'AXSize': Sz(473, 43), 'AXChildren': [cover]}
+    text = {'AXRole': 'AXStaticText', 'AXTitle': 'Beginning', 'AXPosition': Pt(325, 1319), 'AXSize': Sz(59, 15)}
+    api = fake_api({'AXWindows': [{'AXTitle': 'Kindle', 'AXChildren': [group, text]}]})
+    assert ax.press('AXButton', 'Cover', api=api) is True
+    assert ax.press('AXStaticText', 'Beginning', api=api) is False  # the fake refuses a press on a text
+    assert ax.press('AXButton', 'Absent', api=api) is False
+    assert api()[0].pressed == [('Cover', 'AXPress'), ('Beginning', 'AXPress')]
+    assert ax.press('AXButton', 'Cover', api=lambda: None) is None
+    assert ax.scroll(1, 2, 3, api=None) in ('no Quartz',) or sys.platform == 'darwin'

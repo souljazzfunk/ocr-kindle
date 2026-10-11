@@ -427,39 +427,82 @@ def menu_open(found):
     return any(MENU_CLOSE in (e['title'], e['description']) for e in found)
 
 
+TOC_ROW_MIN_W = 200  # a panel row spans the panel (473 px on 2026-10-11 20:45); the toolbar's buttons are 40 px and
+# the footer's "Location 185" button 100 px (fixtures/kindle/applescript-toc-bolivia.txt)
+
+
 def toc_entries(found):
-    """The Table of Contents panel's entries: the static texts after its "Close menu" X (the title and author
-    stand above the X), footer lines aside. Recorded in fixtures/kindle/applescript-toc-bolivia.txt."""
+    """The Table of Contents panel's entries after its "Close menu" X (the title and author stand above the X):
+    static texts (Bolivia, 19:20, fixtures/kindle/applescript-toc-bolivia.txt) or wide buttons named after the
+    chapter (Sri Lanka, 2026-10-11 20:45: AXButton rows 473 px wide in an untitled group), footer lines aside."""
     closes = [i for i, e in enumerate(found) if MENU_CLOSE in (e['title'], e['description'])]
     if not closes:
         return []
-    return [e for e in found[closes[-1] + 1:] if e['role'] == 'AXStaticText'
-            and not LOCATION.search(e['description']) and not LOCATION.search(e['value'])]
+    rows = []
+    for e in found[closes[-1] + 1:]:
+        name = e['description'] or e['title']
+        if not name or name.startswith('Location ') or LOCATION.search(e['value']):
+            continue
+        if e['role'] == 'AXStaticText' or (e['role'] == 'AXButton' and _frame(e)[2] >= TOC_ROW_MIN_W):
+            rows.append(e)
+    return rows
 
 
-def toc_first(script=osascript, sleep=time.sleep, clock=time.monotonic):
-    """Open the Table of Contents and press its topmost entry. Probe of 2026-10-11 19:20 (Bolivia): the panel slides
-    in at the left with the title (AXHeading), the author, a "Close menu" X, then the entries ("Cover", "Beginning")
-    as AXStaticText, not buttons. Laiken, 19:26: any topmost entry leads to the start, not only "Cover". Checked on
-    the Mac at 19:26: AXPress on the "Cover" text moved Bolivia from Location 185 to Location 1, while synthetic
-    mouse events are unreliable in this app; so the first static text after the X is pressed, and only clicked at
-    its centre when the press is refused."""
+TOC_SCROLL_LINES = 40
+TOC_SCROLLS = 8
+
+
+def toc_top(script, sleep, clock, found, scroll):
+    """Scroll the panel to its top: it opens at the current chapter (Sri Lanka at 30%, 2026-10-11 20:45, showed
+    "After One Month in Sri Lanka" first; 40 lines of scroll-wheel up over the panel brought "Cover" to the top).
+    Stops once the topmost row no longer changes. Returns the panel as last read."""
+    for _ in range(TOC_SCROLLS):
+        rows = toc_entries(found)
+        if not rows:
+            return found
+        x, y, w, h = _frame(rows[0])
+        top = rows[0]['description'] or rows[0]['title']
+        scroll(x + w // 2, y + 4 * h, TOC_SCROLL_LINES)
+        found = wait_for(lambda f: (toc_entries(f) or [{'description': top, 'title': ''}])[0]['description'] != top
+                         and True, script, sleep, clock, timeout=1)
+        rows = toc_entries(found)
+        if rows and (rows[0]['description'] or rows[0]['title']) == top:
+            return found
+    return found
+
+
+def toc_first(script=osascript, sleep=time.sleep, clock=time.monotonic, scroll=None, press=None):
+    """Open the Table of Contents, scroll it to its top and press its topmost entry. Probe of 2026-10-11 19:20
+    (Bolivia): the panel slides in at the left with the title (AXHeading), the author, a "Close menu" X, then the
+    entries ("Cover", "Beginning") as AXStaticText; Sri Lanka (20:45) lists them as AXButton rows. Laiken, 19:26:
+    any topmost entry leads to the start, not only "Cover". Checked on the Mac at 19:26: AXPress on the "Cover"
+    text moved Bolivia from Location 185 to Location 1; at 20:45 AXPress through the Accessibility API on the
+    "Cover" button put Sri Lanka on its cover while AppleScript did not find the button. Synthetic mouse events
+    are unreliable in this app, so a click at the row's centre comes only when the presses are refused."""
     _, pressed, _ = script(PRESS_TITLED.format(title='"Table of Contents"'))
     if pressed != 'pressed':
         return 'no Table of Contents button'
     found = wait_for(menu_open, script, sleep, clock)
+    if script is osascript:
+        scroll = scroll or ax.scroll
+        press = press or ax.press
+    if scroll:
+        found = toc_top(script, sleep, clock, found, scroll)
     rows = toc_entries(found)
     if not rows:
         script(PRESS_TITLED.format(title=_quote(MENU_CLOSE)))
         return 'no entry in the table of contents'
     name = rows[0]['description'] or rows[0]['title']
-    _, pressed, _ = script(PRESS_TEXT.format(title=_quote(name)))
-    if pressed == 'pressed':
+    if press and press(rows[0]['role'], name):
         how = f'pressed "{name}" at the top of the table of contents'
     else:
-        x, y, w, h = _frame(rows[0])
-        script(CLICK_AT.format(x=x + w // 2, y=y + h // 2))
-        how = f'clicked "{name}" at the top of the table of contents'
+        _, pressed, _ = script((PRESS_TITLED if rows[0]['role'] == 'AXButton' else PRESS_TEXT).format(title=_quote(name)))
+        if pressed == 'pressed':
+            how = f'pressed "{name}" at the top of the table of contents'
+        else:
+            x, y, w, h = _frame(rows[0])
+            script(CLICK_AT.format(x=x + w // 2, y=y + h // 2))
+            how = f'clicked "{name}" at the top of the table of contents'
     wait_for(lambda f: not menu_open(f), script, sleep, clock)
     return how
 
@@ -493,7 +536,7 @@ def page_back(script=osascript, sleep=time.sleep, clock=time.monotonic, batch=20
     return f'paged back {presses} times'
 
 
-def go_to_start(script=osascript, sleep=time.sleep, clock=time.monotonic):
+def go_to_start(script=osascript, sleep=time.sleep, clock=time.monotonic, scroll=None, press=None):
     """Back to the start of the open book: close the details sheet, show the toolbar, open the Table of Contents and
     press its topmost entry, else page back with ← until the start; read the footer's "Location N of M", then hide
     the toolbar again. Returns '' or why it could not. Written from the probes of 2026-10-11 17:56 and 19:20.
@@ -513,10 +556,15 @@ def go_to_start(script=osascript, sleep=time.sleep, clock=time.monotonic):
             break
         bring_front(script, sleep)
         started = clock()
-        how = move(script, sleep, clock)
+        how = move(script, sleep, clock, scroll=scroll, press=press) if move is toc_first else move(script, sleep, clock)
         found = show_chrome(script, sleep, clock)
         where = location_of(found)
         tried.append(f'{how} ({clock() - started:.0f} s)')
+        if move is toc_first and where is None and how.startswith(('pressed', 'clicked')):
+            # On the cover the toolbar shows no "Location N of M" (Sri Lanka, 2026-10-11 20:45: only the scrubber's
+            # marks), so the pressed top entry is the start.
+            where = (1, 0)
+            break
     if where is None or where[0] > 1:
         return (f'could not go to the start (tried: {", ".join(tried)}, footer: '
                 f'{"Location %d of %d" % where if where else "no location"})')

@@ -1,9 +1,6 @@
 {
-  "ax-reader-toolbar-iceland.txt": {"in_library": false, "chrome_shown": true, "menu_open": false,
-                                     "location": [1, 2344], "covers": [], "tabs": [], "toc": []},
-  "ax-library-iceland-recent.txt": {"in_library": true, "chrome_shown": false, "menu_open": false,
-                                     "location": null, "covers": ["For 91 Days in Iceland", "For 91 Days In Tokyo"],
-                                     "tabs": ["For 91 Days in Iceland"], "toc": []},
-  "applescript-toc-bolivia.txt": {"in_library": false, "chrome_shown": true, "menu_open": true,
-                                   "location": [185, 0], "covers": [], "tabs": [], "toc": ["Cover", "Beginning"]}
+  "ax-reader-toolbar-iceland.txt": {"in_library": false, "chrome_shown": true, "menu_open": false, "location": [1, 2344], "covers": [], "tabs": [], "toc": []},
+  "ax-library-iceland-recent.txt": {"in_library": true, "chrome_shown": false, "menu_open": false, "location": null, "covers": ["For 91 Days in Iceland", "For 91 Days In Tokyo"], "tabs": ["For 91 Days in Iceland"], "toc": []},
+  "applescript-toc-bolivia.txt": {"in_library": false, "chrome_shown": true, "menu_open": true, "location": [185, 0], "covers": [], "tabs": [], "toc": ["Cover", "Beginning"]},
+  "ax-toc-sri-lanka-scrolled.txt": {"in_library": false, "chrome_shown": true, "menu_open": true, "location": [2127, 7090], "covers": [], "tabs": [], "toc": ["After One Month in Sri Lanka", "Nuwara Eliya", "Horton Plains and World's End"]}
 }
