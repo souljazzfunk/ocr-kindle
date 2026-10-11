@@ -26,10 +26,12 @@ DEFAULT_TITLES = re.compile(r'^(kindle-book|[A-Z0-9]{10})$')
 DECORATIVE_HEADING = re.compile(r'(?m)^#+\s*(?:Chapter\s+|Part\s+)?[Z&]+(?:\s.*)?$', re.I)
 HEADING = re.compile(r'(?m)^(#+) (.*)$')
 # A bare chapter number on its own line, then a short title, then body text: a chapter opening with no heading.
-MISSED_CHAPTER = re.compile(r'(?m)^(?:[1-9]|1\d|20|[Z&])\n\n(?![#\d])[^\n]{1,80}\n\n[^#\n]{%d,}' % 100)
+# An index entry ("Zen of Python, 30-31") is not a title: Python Crash Course's index letter Z, read as 7, came before one.
+MISSED_CHAPTER = re.compile(r'(?m)^(?:[1-9]|1\d|20|[Z&])\n\n(?![#\d])(?![^\n]*,\s*\d+(?:[-–]\d+)?\s*\n)[^\n]{1,80}\n\n'
+                            r'[^#\n]{%d,}' % 100)
 # Proofread kinds whose fix is safe without a look at samples; the others are reported for a human.
 AUTO_KINDS = ('duplicate_page', 'foreign_page', 'seam_overlap', 'dash_as_hyphen', 'stray_symbol', 'homoglyph',
-              'decorative_digit', 'l_for_i', 'digits_for_ll', 'binary_art', 'stray_colon')
+              'decorative_digit', 'repl_prompt', 'l_for_i', 'digits_for_ll', 'binary_art', 'stray_colon')
 REVIEW_KINDS = ('hyphen_break', 'odd_case')
 
 
