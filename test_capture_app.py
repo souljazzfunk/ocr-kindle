@@ -260,6 +260,12 @@ def test_the_start_is_reached_through_the_table_of_contents_and_read_from_the_fo
     app = App([READER])
     assert 'no toolbar after clicks' in go(app)
     assert sum('click at' in c for c in app.calls) == capture_app.RENDER_TRIES
+    # The Accessibility API's tree (run of 2026-10-11 20:15) holds the toolbar's buttons and the footer but no
+    # slider; the Close Book button is enough to know the toolbar is shown.
+    no_slider = READER + ('element|AXButton|||Close Book||337,1215|40,40\n'
+                          'element|AXStaticText|||Location 1 of 2344 , 1%||940,2019|122,11\n')
+    app = App([no_slider, READER])
+    assert go(app) == '' and sum('click at' in c for c in app.calls) == 1
     app = App([READER] * 20 + [CHROME.format(at=1), READER])
     assert go(app) == ''
 

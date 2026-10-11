@@ -41,6 +41,7 @@ DOWNLOAD_WAIT_S = 300
 # The reader's footer, shown with its toolbar after a click on the page (probe of 2026-10-11 17:56).
 LOCATION = re.compile(r'Location (\d+) of (\d+)')
 PROGRESS_BAR = 'Reading Progress Bar'
+CLOSE_BOOK = 'Close Book'
 
 
 def osascript(script, runner=subprocess.run):
@@ -270,10 +271,13 @@ def describe(found):
 
 
 def chrome_shown(found):
-    """The toolbar is in the tree. The reader's controls carry their names in the description, not the title
-    (dump of 2026-10-11 18:04: element|AXSlider|||Reading Progress Bar|Location 1 , 1%|…), and the run of 18:09
-    clicked the shown toolbar away three times because the title alone was read."""
-    return any(e['role'] == 'AXSlider' and PROGRESS_BAR in (e['title'], e['description']) for e in found)
+    """The toolbar is in the tree: its Close Book button, or the Reading Progress Bar. The reader's controls carry
+    their names in the description, not the title (dump of 2026-10-11 18:04), and the run of 18:09 clicked the shown
+    toolbar away three times because the title alone was read. The slider was the only sign until the run of 20:15:
+    the Accessibility API's tree (ax.py) listed Close Book ... Location 1 of 2344 but no slider, and the book was
+    refused as "no toolbar"; so the Close Book button counts too."""
+    return any((e['role'] == 'AXSlider' and PROGRESS_BAR in (e['title'], e['description']))
+               or (e['role'] == 'AXButton' and CLOSE_BOOK in (e['title'], e['description'])) for e in found)
 
 
 def location_of(found):
