@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Kindle Cloud Reader Capture",
-  "version": "1.10",
-  "description": "Saves every Kindle Cloud Reader page image and text layer of a book as <book title>.zip for img2txt.py.",
-  "permissions": ["storage", "downloads"],
+  "version": "2.0",
+  "description": "Pages through a Kindle Cloud Reader book for the ocr-kindle channel on 127.0.0.1 and sends every page image and text layer to it.",
+  "permissions": ["storage", "alarms", "tabs"],
+  "host_permissions": ["http://127.0.0.1/*"],
   "background": { "service_worker": "background.js" },
-  "action": { "default_title": "Start / stop capture" },
   "content_scripts": [{
     "matches": [
       "https://read.amazon.com/*", "https://read.amazon.co.jp/*", "https://read.amazon.co.uk/*",
@@ -13,6 +13,6 @@
       "https://read.amazon.it/*", "https://read.amazon.ca/*", "https://read.amazon.com.au/*",
       "https://read.amazon.in/*", "https://read.amazon.com.br/*", "https://read.amazon.com.mx/*"
     ],
-    "js": ["autostart.js", "pagemeta.js", "content.js"]
+    "js": ["pagemeta.js", "policy.js", "content.js"]
   }]
 }

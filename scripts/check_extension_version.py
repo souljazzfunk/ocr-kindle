@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """CI: a change under extension/ must raise extension/manifest.json's version.
 
-capture_book.py tells a stale Brave (not reloaded after a change) from the version the extension writes into
-each ZIP, so two different builds must never share a version.
+The extension reloads itself when the channel (channel.py) reports another version on disk, and capture_book.py checks
+the version each capture.json names, so two different builds must never share a version.
 
     python scripts/check_extension_version.py origin/main
 """
@@ -28,7 +28,7 @@ def check(base):
     after = json.loads(open('extension/manifest.json', encoding='utf-8').read())['version']
     if version_tuple(after) <= version_tuple(before):
         return (f'{", ".join(changed)} changed but extension/manifest.json is still {after} (base {before}). '
-                'Raise "version" so capture_book.py can tell whether Brave runs this build.')
+                'Raise "version" so the extension reloads itself into this build.')
     return None
 
 

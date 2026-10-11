@@ -1,6 +1,6 @@
-// Book title and a record of the reader's page structure, shared by content.js and pagemeta.test.js.
+// What content.js reads off the page (title, position, structure, notices, library entries), shared with pagemeta.test.js.
 // The full-book reader on read.amazon.com has neither .book-title nor the text layer the sample reader has,
-// and its structure can only be read inside Laiken's signed-in Brave, so a capture records it in the ZIP.
+// and its structure can only be read inside Laiken's signed-in Chrome, so a capture records it (dom-probe.json).
 
 const GENERIC_TITLES = /^(kindle|amazon|kindle cloud reader|amazon kindle|read\.amazon\.\w+)$/i;
 
@@ -58,81 +58,33 @@ function parsePosition(text) {
   return m ? { n: Number(m[1]), m: Number(m[2]) } : null;
 }
 
-// Whether paging back has reached the start: the reader says page 1, or, when it shows no page number,
-// the previous-page button stopped turning.
-function atStart(pos, turned) {
-  return pos ? pos.n === 1 : !turned;
-}
-
-// Caps on page turns. On 2026-10-10 Automate the Boring Stuff (552 pages, opened at 517) turned for over 15 minutes
-// with nothing to stop it but the end of the book, and looked like an endless loop. A guard is called once per turn
-// with the reader's position and returns why to stop, or '' to go on.
-// One page can take more than one turn (figures, code listings): 1.5 paged back from 517 to 12 in 603 turns and was
-// stopped by a cap of one turn per page. The stuck check catches a reader that does not move; the cap is only a backstop.
-// A turn that brought a new screen is progress even when the page number stays: Facing the Mountain's notes run for
-// more than 30 screens all numbered 540 of 540, and 1.6 stopped there as stuck. The caller says so with fresh.
-const TURNS_PER_PAGE = 3;
-const EXTRA_TURNS = 50;
-const UNKNOWN_LENGTH = 3000;
-const STUCK_TURNS = 30;
-
-function turnGuard(total) {
-  const limit = TURNS_PER_PAGE * (total || UNKNOWN_LENGTH) + EXTRA_TURNS;
-  let turns = 0;
-  let last = null;
-  let same = 0;
-  return (pos, fresh = false) => {
-    turns++;
-    if (turns > limit) return `${turns} turns, more than the ${limit} a book of ${total || 'unknown'} pages needs`;
-    const n = pos ? pos.n : null;
-    if (n !== null && n === last && !fresh) {
-      if (++same >= STUCK_TURNS) return `the reader stayed on page ${n} for ${STUCK_TURNS} turns`;
-    } else {
-      same = 0;
-      last = n;
-    }
-    return '';
-  };
-}
-
 // Some books open in Cloud Reader only as a notice that they need the Kindle app (2026-10-11, For 91 Days In
-// Tokyo), with no page to capture. The words start the reason, so capture_book.py can tell this book-level refusal
-// from a browser problem.
-const APP_ONLY = 'kindle app required';
-
+// Tokyo), with no page to capture.
 function appOnly(text) {
   return /Kindle App Is Required|can only be opened using Kindle app/i.test(text || '');
 }
 
-// A heartbeat in the tab title, which capture_book.py reads through AppleScript, so a capture that stopped moving is
-// told from a long book that is still turning. On 2026-10-11 For 91 Days in Oviedo (265 pages) and Python Crash
-// Course (500+) gave no ZIP in an hour, while Oviedo's recapture took two minutes, and nothing showed which it was.
-// The page's visibility is in it too: Chrome slows the timers of a hidden tab, and the capture turns pages on timers.
-const BEAT = /^\[kc [^\]]*\] /;
-
-function heartbeat(title, stage, pos, visibility) {
-  return `[kc ${stage} ${pos || '?'} ${visibility}] ${withoutHeartbeat(title)}`;
+// Cloud Reader sends a signed-out reader to Amazon's sign-in page, which content scripts do not run on (the worker
+// watches for it); a sign-in form inside the reader is caught here.
+function signedOut(doc) {
+  return /\/ap\/signin/.test(doc.location.pathname) || Boolean(doc.querySelector('input[type="password"]'));
 }
 
-function withoutHeartbeat(title) {
-  return (title || '').replace(BEAT, '');
+const ASIN = /\b(B0[0-9A-Z]{8})\b/;
+
+// Books on the library page as { asin, title }. Its structure has not been recorded yet, so this reads every element
+// that carries an ASIN in an attribute, and the library event also sends probePage's record to fix it from.
+function parseLibraryGuess(doc) {
+  const books = new Map();
+  for (const el of doc.querySelectorAll('[data-asin], [id*="B0"], a[href*="asin="]')) {
+    const asin = ['data-asin', 'id', 'href'].map((name) => ASIN.exec(el.getAttribute(name) || '')?.[1]).find(Boolean);
+    if (!asin) continue;
+    const image = el.querySelector('img[alt]');
+    const title = [el.getAttribute('aria-label'), el.getAttribute('title'), image?.getAttribute('alt'), el.textContent]
+      .map((text) => (text || '').trim()).find(Boolean) || '';
+    if (!books.has(asin) || (!books.get(asin).title && title)) books.set(asin, { asin, title: title.slice(0, 200) });
+  }
+  return [...books.values()];
 }
 
-// Laiken, 2026-10-11: reach page 1 through the reader's contents, not by paging back one turn at a time (Automate the
-// Boring Stuff paged back from 517). These pick by label only, so a reader that names them otherwise is found out by
-// the jump not landing near page 1; content.js then pages back the rest of the way as before.
-const CONTENTS = /table of contents|^contents$|^toc$|目次/i;
-const START_ENTRY = /^(cover|beginning|start|title page|表紙|はじめに|最初)/i;
-
-// Index of the control that opens the contents, or -1.
-function contentsControl(labels) {
-  return labels.findIndex((label) => CONTENTS.test((label || '').trim()));
-}
-
-// Index of the contents entry nearest the start: a cover or beginning entry when there is one, else the first.
-function startEntry(labels) {
-  const named = labels.findIndex((label) => START_ENTRY.test((label || '').trim()));
-  return named >= 0 ? named : labels.findIndex((label) => (label || '').trim());
-}
-
-if (typeof module !== 'undefined') module.exports = { pickTitle, probePage, parsePosition, atStart, turnGuard, appOnly, APP_ONLY, TURNS_PER_PAGE, EXTRA_TURNS, STUCK_TURNS, heartbeat, withoutHeartbeat, contentsControl, startEntry };
+if (typeof module !== 'undefined') module.exports = { pickTitle, probePage, parsePosition, appOnly, signedOut, parseLibraryGuess };

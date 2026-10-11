@@ -106,16 +106,6 @@ def test_correct_gives_up_after_the_round_limit(tmp_path):
     assert [c.name for c in checks if not c.ok and c.blocking] == ['layout', 'headings']
 
 
-def test_wait_for_zip_returns_the_new_settled_archive(tmp_path):
-    before = {tmp_path / 'old.zip'}
-    (tmp_path / 'old.zip').write_bytes(b'x')
-    ticks = iter(range(0, 100, 1))
-    assert capture_book.wait_for_zip(tmp_path, before, timeout=5, clock=lambda: next(ticks), sleep=lambda s: None) is None
-    (tmp_path / 'New Book.zip').write_bytes(b'zip')
-    ticks = iter(range(0, 100, 1))
-    assert capture_book.wait_for_zip(tmp_path, before, timeout=5, clock=lambda: next(ticks), sleep=lambda s: None) == tmp_path / 'New Book.zip'
-
-
 def test_report_lists_failures_and_warnings(tmp_path):
     folder = book(tmp_path, [BODY], md=BODY, name='kindle-book')
     data = capture_book.report(folder, check_folder(folder), {'asin': 'X'})
@@ -158,18 +148,6 @@ def test_without_positions_the_probe_gives_the_start_and_a_warning_remains(tmp_p
     assert checks['end_position'].ok and checks['end_position'].detail == 'end not recorded'
 
 
-def test_tab_left_open_is_closed_and_reported(tmp_path):
-    counts = iter([1, 0])
-    closed = []
-    assert capture_book.ensure_tab_closed('B1', count=lambda a: next(counts), close=closed.append, sleep=lambda s: None)
-    assert closed == ['B1']
-    closed.clear()
-    assert not capture_book.ensure_tab_closed('B1', count=lambda a: 1, close=closed.append, sleep=lambda s: None)
-    assert closed == ['B1'] * capture_book.TAB_TRIES
-    # Brave could not be asked: nothing is closed blindly, and the tab is not reported closed.
-    assert not capture_book.ensure_tab_closed('B1', count=lambda a: None, close=closed.append, sleep=lambda s: None)
-
-
 def test_heading_noise_missed_chapters_and_digits_in_the_text_are_caught(tmp_path):
     # How to Write a Lot after the first heading rule: cover words, a photo, a mid-sentence line as headings,
     # chapter numbers and titles left as plain text, and Z for 7 in a chapter reference.
@@ -204,40 +182,6 @@ def test_a_capture_cut_off_by_a_turn_cap_is_caught(tmp_path):
     assert by_name(check_folder(folder))['capture_stop'].ok
 
 
-def test_a_skip_notice_ends_the_wait_at_once(tmp_path):
-    before = {tmp_path / 'B07VSXS4NK.skip.json'}
-    (tmp_path / 'B07VSXS4NK.skip.json').write_text('{}')  # from an earlier run: not this capture's
-    (tmp_path / 'B0OTHER.skip.json').write_text('{}')
-    ticks = iter(range(0, 100, 1))
-    wait = lambda: capture_book.wait_for_zip(tmp_path, before, timeout=5, clock=lambda: next(ticks), sleep=lambda s: None,
-                                            asin='B07VSXS4NK')
-    assert wait() is None
-    (tmp_path / 'B07VSXS4NK.skip (1).json').write_text(json.dumps({'reason': 'could not page back to page 1'}))
-    ticks = iter(range(0, 100, 1))
-    assert wait() == tmp_path / 'B07VSXS4NK.skip (1).json'
-
-
-def test_a_tab_left_on_the_book_is_closed_before_opening_another_or_the_book_is_not_started(tmp_path, monkeypatch):
-    opened = []
-    monkeypatch.setattr(capture_book, 'folder_problem', lambda: None)
-    monkeypatch.setattr(capture_book, 'open_in_browser', lambda *a: opened.append(a))
-    monkeypatch.setattr(capture_book, 'ensure_tab_closed', lambda asin: False)  # Brave would not close it
-    data = capture_book.convert('B07VSXS4NK', 'Automate', downloads=tmp_path, recapture=True)
-    assert data['blocking_failures'] == ['tab_before'] and opened == []
-
-
-def test_a_refused_capture_fails_with_the_extensions_reason(tmp_path, monkeypatch):
-    monkeypatch.setattr(capture_book, 'folder_problem', lambda: None)
-    monkeypatch.setattr(capture_book, 'ensure_tab_closed', lambda asin: True)
-
-    def open_in_browser(asin, domain, recapture):
-        (tmp_path / f'{asin}.skip.json').write_text(json.dumps({'reason': 'tab 7 is already capturing B07VSXS4NK'}))
-
-    monkeypatch.setattr(capture_book, 'open_in_browser', open_in_browser)
-    data = capture_book.convert('B07VSXS4NK', 'Automate', downloads=tmp_path)
-    assert data['blocking_failures'] == ['capture_refused'] and 'already capturing' in data['error']
-
-
 def test_a_gemini_failure_is_reported_with_its_reason_and_the_folder_to_convert_again(tmp_path, monkeypatch):
     import subprocess
     folder = tmp_path / 'Facing the Mountain'
@@ -251,58 +195,6 @@ def test_a_gemini_failure_is_reported_with_its_reason_and_the_folder_to_convert_
     data = capture_book.convert('B0X', 'Facing the Mountain', source=folder)
     assert data['blocking_failures'] == ['gemini'] and data['source'] == str(folder)
     assert data['error'].endswith('429 PerDay')
-
-
-def test_a_book_tab_gone_with_no_zip_ends_the_wait_in_minutes_not_an_hour(tmp_path):
-    # 2026-10-11: For 91 Days In Tokyo's tab vanished a second after opening; the list waited the full hour.
-    now = [0]
-
-    def clock():
-        return now[0]
-
-    def sleep(s):
-        now[0] += s
-
-    counts = iter([None, 0, 1, 1, 0])  # not asked yet, not open yet, capturing, then gone for good
-    tabs = lambda asin: next(counts, 0)
-    assert capture_book.wait_for_zip(tmp_path, set(), timeout=3600, clock=clock, sleep=sleep, asin='B00S1MW0KM',
-                                     tabs=tabs) == capture_book.TAB_GONE
-    assert now[0] < 300
-
-
-def test_a_book_tab_still_open_keeps_the_wait_going(tmp_path):
-    now = [0]
-
-    def sleep(s):
-        now[0] += s
-
-    assert capture_book.wait_for_zip(tmp_path, set(), timeout=600, clock=lambda: now[0], sleep=sleep, asin='B0',
-                                     tabs=lambda asin: 1) is None
-    assert now[0] >= 600
-
-
-def test_a_book_cloud_reader_cannot_open_is_the_book_s_failure_not_the_browser_s(tmp_path, monkeypatch):
-    # 2026-10-11: For 91 Days In Tokyo opened to "Kindle App Is Required" and the list waited an hour.
-    import capture_books
-    monkeypatch.setattr(capture_book, 'folder_problem', lambda: None)
-    monkeypatch.setattr(capture_book, 'ensure_tab_closed', lambda asin: True)
-
-    def open_in_browser(asin, domain, recapture):
-        (tmp_path / f'{asin}.skip.json').write_text(json.dumps({'reason': 'kindle app required: Cloud Reader cannot open this book'}))
-
-    monkeypatch.setattr(capture_book, 'open_in_browser', open_in_browser)
-    data = capture_book.convert('B00S1MW0KM', 'For 91 Days In Tokyo', downloads=tmp_path)
-    assert data['blocking_failures'] == ['kindle_app_only']
-    assert 'kindle_app_only' not in capture_books.STOP_CHECKS
-    assert capture_books.decide(data, 1) == 'failed'
-
-
-def test_book_tabs_are_closed_one_by_one_from_the_last():
-    # 2026-10-11: Brave ignored `close (every tab ... whose URL contains ...)` and a book tab stayed open.
-    script = capture_book.close_tab_script('B005RR0XRG')
-    assert 'whose URL' not in script
-    assert 'repeat with i from (count of tabs of w) to 1 by -1' in script
-    assert 'if URL of tab i of w contains "asin=B005RR0XRG" then close tab i of w' in script
 
 
 def test_a_book_that_passed_starts_the_wiki_watcher_and_a_failed_one_does_not(tmp_path):
@@ -344,47 +236,9 @@ def test_a_book_that_failed_its_checks_is_not_copied_to_drive(tmp_path, monkeypa
     monkeypatch.setattr(capture_book, 'run', lambda *a, **k: None)
     monkeypatch.setattr(capture_book, 'correct', lambda f, t: ([capture_book.Check('headings', False, '0 headings')], 1))
     monkeypatch.setattr(capture_book, 'start_wiki_ingest', lambda data: None)
-    data = capture_book._convert_folder('B0', 'Book', 'vision', folder, folder, False, None, 0)
+    data = capture_book._convert_folder('B0', 'Book', 'vision', folder, folder, False, False, 0)
     assert data['blocking_failures'] == ['headings']
     assert not list(drive.iterdir())
-
-
-def stalled_wait(tmp_path, titles, seconds=3600):
-    now = [0]
-    def sleep(s):
-        now[0] += s
-    beats = iter(titles)
-    last = ['']
-    def beat(asin):
-        last[0] = next(beats, last[0])
-        return last[0]
-    result = capture_book.wait_for_zip(tmp_path, set(), timeout=seconds, clock=lambda: now[0], sleep=sleep, asin='B07J4521M3',
-                                       tabs=lambda a: 1, beats=beat)
-    return result, now[0]
-
-
-def test_a_capture_whose_heartbeat_stops_is_ended_in_minutes_not_an_hour(tmp_path):
-    # 2026-10-11: Python Crash Course gave no ZIP in an hour and nothing showed whether it had stopped.
-    result, waited = stalled_wait(tmp_path, ['page 40/540 visible', 'page 41/540 visible'])
-    assert isinstance(result, capture_book.Stalled) and result == 'page 41/540 visible'
-    assert waited < capture_book.STALL_S + 10
-
-
-def test_a_hidden_tab_that_still_turns_slowly_is_redone_rather_than_waited_on(tmp_path):
-    titles = [f'page {n // 30}/540 hidden' for n in range(1000)]  # one new page a minute
-    result, waited = stalled_wait(tmp_path, titles)
-    assert isinstance(result, capture_book.Stalled) and 'hidden' in result and waited < capture_book.STALL_S + 10
-
-
-def test_a_long_book_that_keeps_turning_is_waited_on_past_the_hour(tmp_path):
-    titles = [f'page {n}/3000 visible' for n in range(10000)]
-    result, waited = stalled_wait(tmp_path, titles, seconds=600)
-    assert result is None and waited >= capture_book.ZIP_WAIT_LONG_S
-
-
-def test_without_a_heartbeat_the_wait_is_as_before(tmp_path):
-    result, waited = stalled_wait(tmp_path, [], seconds=600)
-    assert result is None and 600 <= waited < 620
 
 
 def test_index_letter_is_not_a_chapter_opening(tmp_path):
@@ -422,3 +276,60 @@ def test_a_code_book_without_code_blocks_is_caught_and_its_pages_read_again(tmp_
     assert checks['code_blocks'].ok and checks['layout'].ok and checks['headings'].detail.startswith('1 headings')
     # A book without code gets no such check.
     assert 'code_blocks' not in by_name(check_folder(book(tmp_path, [BODY], md='# One\n\n' + BODY)))
+
+
+def offer(monkeypatch, result, seen=None):
+    """capture_book.convert with the channel answering result for the capture."""
+    from channel import CaptureResult
+    monkeypatch.setattr(capture_book, 'folder_problem', lambda: None)
+
+    def capture(asin, domain, folder, recapture):
+        if seen is not None:
+            seen.append((asin, domain, folder, recapture))
+        folder.mkdir(parents=True, exist_ok=True)
+        return CaptureResult(*result)
+
+    monkeypatch.setattr(capture_book, 'channel', lambda: type('C', (), {'capture': staticmethod(capture)})())
+
+
+def test_a_refused_capture_fails_with_the_extensions_reason(tmp_path, monkeypatch):
+    offer(monkeypatch, ('refused', 'could not page back past page 3 of 4'))
+    data = capture_book.convert('B07VSXS4NK', 'Automate', downloads=tmp_path)
+    assert data['blocking_failures'] == ['capture_refused'] and 'page 3 of 4' in data['error']
+
+
+def test_a_book_cloud_reader_cannot_open_is_the_book_s_failure_not_the_browser_s(tmp_path, monkeypatch):
+    # 2026-10-11: For 91 Days In Tokyo opened to "Kindle App Is Required" and the list waited an hour.
+    import capture_books
+    offer(monkeypatch, ('refused', 'kindle app required: Cloud Reader cannot open this book'))
+    data = capture_book.convert('B00S1MW0KM', 'For 91 Days In Tokyo', downloads=tmp_path)
+    assert data['blocking_failures'] == ['kindle_app_only']
+    assert 'kindle_app_only' not in capture_books.STOP_CHECKS
+    assert capture_books.decide(data, 1) == 'failed'
+
+
+def test_a_stalled_or_unreached_capture_stops_with_its_own_check(tmp_path, monkeypatch):
+    import capture_books
+    offer(monkeypatch, ('stalled', 'no page and no event for 5 minutes after 41 screens'))
+    data = capture_book.convert('B07J4521M3', 'Python Crash Course', downloads=tmp_path)
+    assert data['blocking_failures'] == ['capture_stall'] and '41 screens' in data['error']
+    assert capture_books.decide(data, 1) == 'recapture' and capture_books.decide(data, 2) == 'failed'
+    offer(monkeypatch, ('unreachable', 'no worker asked for work in 90 s'))
+    data = capture_book.convert('B07J4521M3', 'Python Crash Course', downloads=tmp_path)
+    assert data['blocking_failures'] == ['extension_unreachable']
+    assert capture_books.decide(data, 1) == 'failed' and 'extension_unreachable' in capture_books.STOP_CHECKS
+
+
+def test_a_capture_lands_in_a_folder_named_by_the_list_title_and_its_version_is_checked(tmp_path, monkeypatch):
+    seen, ran = [], []
+    offer(monkeypatch, ('done', '', 'Zero to Sold_ How to Start', 3), seen)
+    monkeypatch.setattr(capture_book, 'run', lambda command, **k: ran.append(command))
+    monkeypatch.setattr(capture_book, 'correct', lambda f, t: ([], 1))
+    monkeypatch.setattr(capture_book, 'start_wiki_ingest', lambda data: None)
+    monkeypatch.setattr(capture_book, 'publish', lambda folder, title: None)
+    data = capture_book.convert('B0ZERO', 'Zero to Sold: How to Start/Run', downloads=tmp_path)
+    assert seen == [('B0ZERO', 'read.amazon.com', tmp_path / 'Zero to Sold_ How to Start_Run', False)]
+    assert data['blocking_failures'] == ['extension_version']  # the fake capture wrote no capture.json
+    # With no title from the list, the reader's title names the Markdown; the folder keeps the ASIN.
+    capture_book.convert('B0ZERO', None, downloads=tmp_path)
+    assert seen[-1][2] == tmp_path / 'B0ZERO' and ran[-1][-2:] == ['--title', 'Zero to Sold_ How to Start']

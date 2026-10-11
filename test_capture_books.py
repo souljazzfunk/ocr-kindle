@@ -10,8 +10,7 @@ update_checkout = capture_books.update_checkout  # the real one; tests below stu
 
 
 @pytest.fixture(autouse=True)
-def browser_saves_without_asking(monkeypatch):
-    monkeypatch.setattr(capture_books.browser, 'prompt_problem', lambda: None)
+def main_does_not_move(monkeypatch):
     monkeypatch.setattr(capture_books, 'update_checkout', lambda **_: 'same')
 
 
@@ -89,10 +88,12 @@ def test_a_book_whose_markdown_fails_stops_the_list_until_the_converter_is_fixed
     assert 'Stopped the list: Automate failed heading_noise' in capsys.readouterr().out
 
 
-def test_a_capture_that_missed_the_start_or_end_is_redone_and_a_tab_left_open_is_not():
+def test_a_capture_that_missed_the_start_or_end_or_stalled_is_redone_once():
     assert capture_books.decide(result(['start_position']), 1) == 'recapture'
-    assert capture_books.decide(result(['end_position', 'tab_closed']), 1) == 'recapture'
-    assert capture_books.decide(result(['tab_closed']), 1) == 'failed'
+    assert capture_books.decide(result(['end_position', 'pages']), 1) == 'recapture'
+    assert capture_books.decide(result(['capture_stall']), 1) == 'recapture'
+    assert capture_books.decide(result(['capture_stall']), 2) == 'failed'
+    assert capture_books.decide(result(['end_position', 'headings']), 1) == 'failed'
 
 
 def test_a_book_an_earlier_run_captured_badly_is_captured_anew_from_the_start(tmp_path, monkeypatch):
@@ -120,15 +121,14 @@ def test_the_list_stops_at_a_browser_or_extension_failure(tmp_path, monkeypatch,
 
     def convert(asin, title=None, recapture=False, **options):
         started.append((asin, recapture))
-        # The 2026-10-10 dialog: the ZIP came, but not through the extension's download.
-        return {'blocking_failures': ['download'], 'warnings': []}
+        return {'blocking_failures': ['extension_version'], 'warnings': []}  # Chrome ran another build
 
     monkeypatch.setattr(capture_books.capture_book, 'convert', convert)
     monkeypatch.setattr(sys, 'argv', ['capture_books.py', str(books)])
     with pytest.raises(SystemExit) as exit_info:
         capture_books.main()
     assert exit_info.value.code == 2 and started == [('B1', False)]
-    assert 'Stopped the list: download failed on AI for Educators' in capsys.readouterr().out
+    assert 'Stopped the list: extension_version failed on AI for Educators' in capsys.readouterr().out
     assert json.loads((tmp_path / 'books.progress.json').read_text())['B1']['verdict'] == 'stopped'
 
 
@@ -205,21 +205,11 @@ def fake_git(heads, changed='', branch='main', pull_code=0, fetched=''):
 def test_main_is_pulled_before_each_book_and_says_what_a_change_needs():
     assert update_checkout(fake_git(['a', 'a'])) == 'same'
     assert update_checkout(fake_git(['a', 'b'], 'img2txt.py\ntest_img2txt.py')) == 'python'
-    assert update_checkout(fake_git(['a', 'b'], 'extension/pagemeta.js\nextension/manifest.json')) == 'extension'
-    assert update_checkout(fake_git(['a', 'b'], 'extension/pagemeta.test.js')) == 'python'
+    # The extension reloads itself from the checkout when the channel reports its new version: nothing restarts.
+    assert update_checkout(fake_git(['a', 'b'], 'extension/pagemeta.js\nextension/manifest.json')) == 'same'
+    assert update_checkout(fake_git(['a', 'b'], 'extension/policy.js\ncapture_book.py')) == 'python'
     assert update_checkout(fake_git(['a'], branch='vision-headings-fix')) == 'same'
     assert update_checkout(fake_git(['a'], pull_code=1)).startswith('could not pull main')
-
-
-def test_an_extension_change_on_main_stops_the_list_before_the_next_book(tmp_path, monkeypatch, capsys):
-    books = tmp_path / 'books.tsv'
-    books.write_text('B1\tOne\n')
-    monkeypatch.setattr(capture_books, 'update_checkout', lambda **_: 'extension')
-    monkeypatch.setattr(capture_books.capture_book, 'convert', lambda *a, **k: pytest.fail('captured with a stale extension'))
-    monkeypatch.setattr(sys, 'argv', ['capture_books.py', str(books)])
-    with pytest.raises(SystemExit) as exit_info:
-        capture_books.main()
-    assert exit_info.value.code == 2 and 'reload it once' in capsys.readouterr().out
 
 
 def test_a_gemini_failure_stops_the_list_and_the_book_resumes_from_its_folder(tmp_path, monkeypatch, capsys):
@@ -274,13 +264,6 @@ def test_a_recapture_after_a_saved_zip_failed_does_not_reuse_that_zip():
 
     verdict, _ = capture_books.run_book('B0', 'Book', {'source': 'old.zip'}, convert=convert)
     assert verdict == 'done' and calls == [(False, 'old.zip'), (True, None)]
-
-
-def test_a_capture_with_no_zip_is_tried_once_more_then_stops_the_list():
-    assert capture_books.decide(result(['tab_gone']), 1) == 'recapture'
-    assert capture_books.decide(result(['no_zip', 'tab_closed']), 1) == 'recapture'
-    assert capture_books.decide(result(['tab_gone']), 2) == 'failed'
-    assert 'tab_gone' in capture_books.STOP_CHECKS  # a second vanished tab stops the list: later books would follow
 
 
 def test_a_book_that_failed_under_older_code_is_converted_again_from_its_zip_once(tmp_path, monkeypatch, capsys):

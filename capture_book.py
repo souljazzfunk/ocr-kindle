@@ -1,179 +1,62 @@
 #!/usr/bin/env python3
 """
-Capture one book from Kindle Cloud Reader in the browser (browser.py: Chrome) and turn it into checked Markdown, in the order CLAUDE.md sets.
+Capture one book from Kindle Cloud Reader through the extension channel (channel.py) and turn it into checked Markdown,
+in the order CLAUDE.md sets.
 
     venv/bin/python capture_book.py B07HNMJV57 --title "How to Write a Lot"
 
-1. Opens the book in the browser with `#autocapture` (never the Kindle app, never a browser restart).
-2. Waits for the extension's ZIP in ~/Downloads, then closes only that book's tab.
-3. Runs img2txt.py, then check_book.py; runs each automatic fix it names and checks again, up to ROUNDS times.
-4. Writes report.json next to the book and exits 1 when a blocking check still fails.
+1. Offers the book to the extension, which opens it in Chrome, sends every page into ~/Downloads/<title>/ and closes its
+   own window (never the Kindle app, never a browser restart).
+2. Runs img2txt.py, then check_book.py; runs each automatic fix it names and checks again, up to ROUNDS times.
+3. Writes report.json next to the book and exits 1 when a blocking check still fails.
 
 It handles one book; `capture_books.py` runs a list and decides from the checks whether to go on or redo.
-`--zip` skips the capture and starts from an existing ZIP or folder; `--recapture` captures a book again whose
-first ZIP was unusable (the extension otherwise refuses to auto-start a saved book).
+`--zip` skips the capture and starts from an existing ZIP or folder.
 """
 
 import argparse
 import contextlib
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
 
 from check_book import Check, check_folder, markdown_file
-import browser
 import locks
-from extension_state import folder_problem, repo_version, zip_version
+from channel import Channel, safe_name
+from extension_state import capture_version, folder_problem, repo_version
 from img2txt import GEMINI_ERROR, GEMINI_FAILED_EXIT, load_config
 
-APP = browser.APP
 ROUNDS = 3
-ZIP_WAIT_S = 3600
-SETTLE_S = 5
-TAB_GONE_S = 120  # no tab on the book this long, and no ZIP: the capture is over without one
-TAB_GONE = 'tab_gone'
-# The extension (1.9) keeps "[kc <stage> <page>/<pages> <visible|hidden>]" in the book tab's title while it captures.
-# Once one is seen, a capture whose heartbeat has not changed for STALL_S has stopped, however long the book; one that
-# keeps changing may run to ZIP_WAIT_LONG_S. On 2026-10-11 Python Crash Course and For 91 Days in Oviedo gave no ZIP
-# in an hour, and nothing showed whether they had stopped or were slow.
-HEARTBEAT = re.compile(r'\[kc ([^\]]*)\]')
-STALL_S = 300
-ZIP_WAIT_LONG_S = 4 * 3600
 STALL = 'capture_stall'
+UNREACHABLE = 'extension_unreachable'
 APP_ONLY = 'kindle_app_only'  # Cloud Reader shows "Kindle App Is Required"; the Kindle app is used only on Laiken's word
-TAB_TRIES = 3
 GEMINI_CHECK = 'gemini'
 PYTHON = sys.executable
 HERE = Path(__file__).resolve().parent
 # The LLM wiki's watcher (llm-wiki/scripts/watch.sh). It takes only books whose report.json passed.
 WIKI_WATCH = Path(os.environ.get('WIKI_WATCH', Path.home() / 'Documents/GitHub.nosync/llm-wiki/scripts/watch.sh'))
+_channel = None
+_channel_lock = threading.Lock()
+
+
+def channel():
+    """The process's one channel, started on first use; capture_books.py's book threads share it."""
+    global _channel
+    with _channel_lock:
+        if _channel is None:
+            _channel = Channel().start()
+        return _channel
 
 
 def run(command, **kwargs):
     print('$', ' '.join(map(str, command)), flush=True)
     return subprocess.run(command, check=True, **kwargs)
-
-
-def open_in_browser(asin, domain, recapture=False):
-    run(['open', '-a', APP, f'https://{domain}/?asin={asin}#{"recapture" if recapture else "autocapture"}'])
-
-
-def close_tab_script(asin):
-    """AppleScript closing only the tabs showing this book, one by one from the last, so closing one does not shift
-    the index of the next. Brave ignored the shorter `close (every tab ... whose URL contains ...)` form at times
-    (2026-10-11: For 91 Days in Oviedo's tab stayed open and the list stopped on tab_before)."""
-    return f'''tell application "{APP}"
-    repeat with w in windows
-        repeat with i from (count of tabs of w) to 1 by -1
-            if URL of tab i of w contains "asin={asin}" then close tab i of w
-        end repeat
-    end repeat
-end tell'''
-
-
-def close_book_tab(asin):
-    """Close only the tabs showing this book; the rest of the browser stays as it is."""
-    subprocess.run(['osascript', '-e', close_tab_script(asin)], capture_output=True)
-
-
-def book_tabs(asin):
-    """How many browser tabs show this book (read only), or None when the browser could not be asked."""
-    script = f'tell application "{APP}" to get URL of every tab of every window'
-    result = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
-    if result.returncode:
-        print(f'Could not list {APP} tabs: {result.stderr.strip()}', flush=True)
-        return None
-    return result.stdout.count(f'asin={asin}')
-
-
-def ensure_tab_closed(asin, count=book_tabs, close=close_book_tab, tries=TAB_TRIES, sleep=time.sleep):
-    """The extension closes its own tab after the download; make sure, close what is left, and say whether it worked.
-
-    Tabs stayed open before because nothing checked: close_book_tab ignored osascript's errors, and captures
-    not started by this script had no one to close them at all.
-    """
-    for _ in range(tries):
-        left = count(asin)
-        if left == 0:
-            return True
-        if left:
-            close(asin)
-        sleep(2)
-    return count(asin) == 0
-
-
-def skip_notices(downloads, asin):
-    """The extension's <ASIN>.skip.json files (uniquified copies too): an automatic capture it would not run."""
-    return set(Path(downloads).glob(f'{asin}.skip*.json'))
-
-
-class Stalled(str):
-    """wait_for_zip's answer for a capture whose heartbeat stopped; the string is the last heartbeat."""
-
-
-def book_heartbeat(asin):
-    """The heartbeat in the title of this book's browser tab, or '' (read only)."""
-    script = (f'tell application "{APP}"\nset out to ""\nrepeat with w in windows\nrepeat with t in tabs of w\n'
-              f'if URL of t contains "asin={asin}" then set out to out & title of t & linefeed\n'
-              'end repeat\nend repeat\nreturn out\nend tell')
-    result = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
-    found = HEARTBEAT.search(result.stdout or '')
-    return found.group(1) if found else ''
-
-
-def wait_for_zip(downloads, before, timeout=ZIP_WAIT_S, clock=time.monotonic, sleep=time.sleep, asin=None, tabs=None,
-                 beats=None):
-    """The first new .zip whose size has stopped changing, a new skip notice for asin, TAB_GONE when the book's tab
-    has been gone TAB_GONE_S with neither, or None when nothing came in timeout.
-
-    2026-10-11: the tab on For 91 Days In Tokyo vanished a second after it opened, with no ZIP and no skip notice,
-    and the list waited the full hour for a ZIP that could no longer come.
-    """
-    start = clock()
-    deadline = start + timeout
-    gone_since = None
-    last_beat, beat_since, hidden_since = '', None, None
-    while clock() < deadline:
-        skipped = skip_notices(downloads, asin) - before if asin else set()
-        if skipped:
-            return max(skipped, key=lambda p: p.stat().st_mtime)
-        new = [p for p in Path(downloads).glob('*.zip') if p not in before and not p.name.endswith('.crdownload')]
-        if new:
-            path = max(new, key=lambda p: p.stat().st_mtime)
-            size = path.stat().st_size
-            sleep(SETTLE_S)
-            if path.exists() and path.stat().st_size == size and size > 0:
-                return path
-            continue
-        # Checked after the ZIP: the extension closes its own tab once the ZIP is saved.
-        if tabs and asin:
-            count = tabs(asin)
-            if count == 0:
-                gone_since = gone_since if gone_since is not None else clock()
-                if clock() - gone_since >= TAB_GONE_S:
-                    return TAB_GONE
-            elif count:
-                gone_since = None
-        if beats and asin:
-            beat = beats(asin)
-            if beat and beat != last_beat:
-                last_beat, beat_since = beat, clock()
-                deadline = start + ZIP_WAIT_LONG_S  # it is moving: a long book may take more than the hour
-            elif beat_since is not None and clock() - beat_since >= STALL_S:
-                return Stalled(last_beat)
-            # A hidden tab may still turn, but about once a minute: a long book would take hours, so it is redone in
-            # a fresh tab, which opens in front.
-            hidden_since = (hidden_since or clock()) if beat.endswith(' hidden') else None
-            if hidden_since is not None and clock() - hidden_since >= STALL_S:
-                return Stalled(last_beat)
-        sleep(2)
-    return None
 
 
 def plan_fixes(checks):
@@ -207,27 +90,16 @@ def correct(folder, title, rounds=ROUNDS, runner=run):
 
 
 def version_check(folder, expected=None):
-    """A fresh capture must come from the extension version on main; anything else means the browser was not reloaded."""
+    """A fresh capture must come from the extension version on disk; the worker reloads itself when they differ."""
     expected = expected or repo_version()
-    made_by = zip_version(folder)
+    made_by = capture_version(folder)
     return Check('extension_version', made_by == expected,
-                 f'ZIP made by extension {made_by or "1.3 or older (no capture.json)"}, main is {expected}'
-                 + ('' if made_by == expected else f'; reload the extension in {browser.NAME} once'))
-
-
-def download_check(zip_path, record=browser.download_record):
-    """The ZIP must have been saved by the extension through chrome.downloads and completed, per the browser's history."""
-    found = record(zip_path)
-    if found is None:
-        return Check('download', False, f'{Path(zip_path).name} not in {browser.NAME}\'s download history')
-    by_extension, complete = found
-    detail = ('saved by the extension' if by_extension else 'saved by a page link, not the extension') + (
-        ', complete' if complete else ', not complete')
-    return Check('download', by_extension and complete, detail)
+                 f'captured by extension {made_by or "1.3 or older (no capture.json)"}, the checkout has {expected}'
+                 + ('' if made_by == expected else '; the extension did not reload itself to the checkout\'s version'))
 
 
 def not_captured(asin, check, reason, recapture):
-    """The result for a book whose capture never produced a ZIP. These failures stop the list (capture_books.py)."""
+    """The result for a book whose capture handed over no pages. These failures stop the list (capture_books.py)."""
     print(f'FAIL {check:18} {reason}', flush=True)
     return {'asin': asin, 'recapture': recapture, 'blocking_failures': [check], 'warnings': [], 'error': reason}
 
@@ -273,51 +145,38 @@ def convert(asin, title=None, model='vision', domain='read.amazon.com', download
     the browser while this one converts, and these keep it to one capture and one conversion at a time.
     """
     started = time.time()
-    tab_closed = None  # no tab when converting an existing ZIP
+    captured = False
     if source is None:
         with capturing or contextlib.nullcontext():
-            captured = _capture(asin, domain, downloads, recapture)
-        if isinstance(captured, dict):
-            return captured
-        source, tab_closed = captured
+            result = _capture(asin, title, domain, downloads, recapture)
+        if isinstance(result, dict):
+            return result
+        source, title = result
+        captured = True
     folder = source.with_suffix('') if source.suffix == '.zip' else source
     with converting or contextlib.nullcontext(), locks.holding(locks.book_lock(source)):
-        return _convert_folder(asin, title, model, source, folder, recapture, tab_closed, started)
+        return _convert_folder(asin, title, model, source, folder, recapture, captured, started)
 
 
-def _capture(asin, domain, downloads, recapture):
-    """Capture one book in the browser: (ZIP, whether its tab closed), or the result of a capture that made no ZIP."""
+def _capture(asin, title, domain, downloads, recapture):
+    """Capture one book through the channel: (its folder, its title), or the result of a capture with no pages."""
     problem = folder_problem()
     if problem:
-        raise RuntimeError(f'{browser.NAME} loads the extension from this checkout, and it is not main: {problem}')
-    # A tab left from an earlier run may still be capturing this book; a second one must not start beside it
-    # (2026-10-10: a resumed run opened Automate the Boring Stuff again while the first tab was still paging).
-    if not ensure_tab_closed(asin):
-        return not_captured(asin, 'tab_before', f'a {browser.NAME} tab on this book was already open and could not be closed',
-                            recapture)
-    before = set(downloads.glob('*.zip')) | skip_notices(downloads, asin)
-    open_in_browser(asin, domain, recapture)
-    source = wait_for_zip(downloads, before, asin=asin, tabs=book_tabs, beats=book_heartbeat)
-    tab_closed = ensure_tab_closed(asin)
-    if isinstance(source, Stalled):
-        return not_captured(asin, STALL, f'the capture stopped moving for {STALL_S // 60} minutes at "{source}" '
-                            '(stage, page, and whether the tab was on screen); the tab was '
-                            f'{"closed" if tab_closed else "left open"}', recapture)
-    if source == TAB_GONE:
-        return not_captured(asin, TAB_GONE, f'the book tab closed with no ZIP and no skip notice in {downloads}; '
-                            f'{browser.NAME} or the reader may have dropped it', recapture)
-    if source is None:
-        return not_captured(asin, 'no_zip', f'no ZIP in {downloads} within {ZIP_WAIT_S // 60} minutes; the book tab '
-                            f'was {"closed" if tab_closed else "left open"}', recapture)
-    if source.suffix == '.json':
-        reason = json.loads(source.read_text(encoding='utf-8')).get('reason', 'no reason given')
+        raise RuntimeError(f'Chrome loads the extension from this checkout, and it is not main: {problem}')
+    folder = Path(downloads) / safe_name(title or asin)
+    result = channel().capture(asin, domain, folder, recapture)
+    if result.status == 'stalled':
+        return not_captured(asin, STALL, f'the capture stopped moving: {result.reason}', recapture)
+    if result.status == 'unreachable':
+        return not_captured(asin, UNREACHABLE, f'the extension never took the job: {result.reason}', recapture)
+    if result.status == 'refused':
         # A book Cloud Reader cannot open is this book's failure, not the browser's: the list goes on.
-        check = APP_ONLY if reason.startswith('kindle app required') else 'capture_refused'
-        return not_captured(asin, check, f'the extension did not capture: {reason}', recapture)
-    return source, tab_closed
+        check = APP_ONLY if result.reason.startswith('kindle app required') else 'capture_refused'
+        return not_captured(asin, check, f'the extension did not capture: {result.reason}', recapture)
+    return folder, title or (result.title if result.title not in ('', asin, 'kindle-book') else None)
 
 
-def _convert_folder(asin, title, model, source, folder, recapture, tab_closed, started):
+def _convert_folder(asin, title, model, source, folder, recapture, captured, started):
     """Convert, check, fix and publish one captured book; the caller holds the book's lock."""
     try:
         run([PYTHON, str(HERE / 'img2txt.py'), str(source), '--model', model] + (['--title', title] if title else []))
@@ -331,13 +190,10 @@ def _convert_folder(asin, title, model, source, folder, recapture, tab_closed, s
         print(f'FAIL {GEMINI_CHECK:18} {reason}', flush=True)
         return {'asin': asin, 'source': str(folder), 'recapture': recapture, 'blocking_failures': [GEMINI_CHECK],
                 'warnings': [], 'error': reason}
-    if tab_closed is not None:
-        # Blocking, but not a capture defect: the runner records it and goes on without recapturing.
-        checks.append(Check('tab_closed', tab_closed, f'book tab {"closed" if tab_closed else "still open"} after the capture'))
+    if captured:
         checks.append(version_check(folder))
-        checks.append(download_check(source))
     data = report(folder, checks, {'asin': asin, 'source': str(source), 'recapture': recapture, 'rounds': rounds,
-                                   'tab_closed': tab_closed, 'seconds': round(time.time() - started)})
+                                   'seconds': round(time.time() - started)})
     if not data['blocking_failures']:
         publish(folder, title)
     start_wiki_ingest(data)
@@ -352,7 +208,7 @@ def main():
     parser.add_argument('--domain', default='read.amazon.com')
     parser.add_argument('--downloads', type=Path, default=Path.home() / 'Downloads')
     parser.add_argument('--zip', type=Path, help='Skip the capture and start from this ZIP or folder')
-    parser.add_argument('--recapture', action='store_true', help='Capture again a book the extension already saved')
+    parser.add_argument('--recapture', action='store_true', help='Mark the capture as a second one (recorded in report.json)')
     args = parser.parse_args()
     try:
         data = convert(args.asin, args.title, args.model, args.domain, args.downloads, args.zip, args.recapture)

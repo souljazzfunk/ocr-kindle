@@ -7,7 +7,7 @@ and go on to the next by the checks' verdict, with no one asked in between.
 
 books.tsv has one `ASIN<TAB>title` per line (`#` lines are skipped). Progress goes to books.progress.json next
 to it: a book marked done or failed is not run again, so an interrupted run resumes at the next book. A book the
-list stopped on (a browser or extension failure, STOP_CHECKS) is run again, as #recapture, unless a good capture of it
+list stopped on (a browser or extension failure, STOP_CHECKS) is captured again, unless a good capture of it
 was saved after it stopped: then that ZIP is converted with no new capture. A book that failed its Markdown checks is
 converted again from its ZIP, once, when the converter's code has changed since.
 While one book converts, the next is captured in the browser (one capture and one conversion at a time); books are recorded
@@ -27,7 +27,6 @@ import time
 import zipfile
 from pathlib import Path
 
-import browser
 import capture_book
 import check_book
 import locks
@@ -35,17 +34,14 @@ from check_book import CAPTURE
 
 # A failure in these checks means the ZIP itself is unusable, so the book is captured again (once).
 CAPTURE_CHECKS = {'pages', 'text', 'start_position', 'end_position'}
-# A capture that ended with no ZIP and no reason (the tab vanished, 2026-10-11 For 91 Days In Tokyo) is also tried
-# once more in a fresh tab before the list stops on it.
-NO_ZIP_CHECKS = {'tab_gone', 'no_zip', 'capture_stall'}
+# A capture that stopped moving with no reason given is also tried once more in a fresh window before the list stops.
+RETRY_CHECKS = {capture_book.STALL}
 RECAPTURES = 1
 # Failures that come from the browser or the extension, not from one book: every later book would fail the same
-# way, so the list stops at the first book that still has one (after its recapture). On 2026-10-10 a run went on
-# while each ZIP opened a save dialog, and 1.3 was called fixed before any capture on the Mac had shown it.
-# A capture that never made a ZIP (refused, cut off by a turn cap, a tab left from an earlier run, an hour with no ZIP)
-# stops it too: on 2026-10-10 a resumed run opened a second tab on a book the first was still paging through.
-STOP_CHECKS = {'download', 'extension_version', 'tab_closed', 'start_position', 'end_position',
-               'capture_refused', 'capture_stop', 'tab_before', 'no_zip', 'tab_gone', 'capture_stall'}
+# way, so the list stops at the first book that still has one (after its recapture). On 2026-10-10 1.3 was called
+# fixed before any capture on the Mac had shown it.
+STOP_CHECKS = {'extension_version', 'start_position', 'end_position', 'capture_refused', 'capture_stop',
+               capture_book.STALL, capture_book.UNREACHABLE}
 
 
 HERE = Path(__file__).resolve().parent
@@ -89,8 +85,9 @@ def stale_pass(entry, converter, downloads, title, check=None):
 def update_checkout(git=None, settle=lambda: None):
     """Pull main before each book, so a fix merged mid-list is used without anyone asking for it.
 
-    Returns 'same', 'python' (this run restarts to load it), 'extension' (the browser must reload it first) or an error.
-    On 2026-10-10 each merge needed Laiken to type "pull main" to a session on the Mac.
+    Returns 'same', 'python' (this run restarts to load it) or an error. A change to extension/ alone needs no restart:
+    the channel reports the new version and the extension reloads itself. On 2026-10-10 each merge needed Laiken to
+    type "pull main" to a session on the Mac.
     settle() finishes the book still converting before the pull, so no conversion runs on half old, half new code.
     """
     git = git or (lambda *args: subprocess.run(['git', '-C', str(HERE), *args], capture_output=True, text=True))
@@ -109,9 +106,7 @@ def update_checkout(git=None, settle=lambda: None):
         if before == after:
             return 'same'
         changed = git('diff', '--name-only', before, after).stdout.split()
-    if any(path.startswith('extension/') and not path.endswith('.test.js') for path in changed):
-        return 'extension'
-    return 'python'
+    return 'python' if any(not path.startswith('extension/') for path in changed) else 'same'
 
 
 def read_list(path):
@@ -132,9 +127,7 @@ def decide(data, attempt):
     failures = data['blocking_failures']
     if not failures:
         return 'done'
-    # A tab left open is recorded but is no reason to capture again.
-    capture = set(failures) - {'tab_closed'}
-    if capture and capture <= CAPTURE_CHECKS | NO_ZIP_CHECKS and attempt <= RECAPTURES:
+    if set(failures) <= CAPTURE_CHECKS | RETRY_CHECKS and attempt <= RECAPTURES:
         return 'recapture'
     return 'failed'
 
@@ -169,15 +162,16 @@ def saved_capture(downloads, title, since, version=None, any_version=False):
 
 
 def earlier_capture(entry, downloads, title):
-    """The ZIP an earlier run converted (its recorded source, else the newest one of this book that ran to the end)."""
-    source = Path(entry.get('source') or '')
-    if source.suffix == '.zip' and source.is_file():
+    """The capture an earlier run converted (its recorded ZIP or folder, else the newest ZIP of this book that ran to
+    the end)."""
+    source = Path(entry['source']) if entry.get('source') else None
+    if source and ((source.suffix == '.zip' and source.is_file()) or source.is_dir()):
         return source
     return saved_capture(downloads, title, 0, any_version=True)
 
 
 def run_book(asin, title, options, convert=None, again=False):
-    """again: an earlier run's capture was unusable, so the extension (which saved the ASIN) must capture it anew."""
+    """again: an earlier run's capture was unusable, so this one is a recapture."""
     convert = convert or capture_book.convert
     for attempt in range(1, RECAPTURES + 2):
         if attempt > 1:
@@ -237,9 +231,6 @@ def main():
                         help='Record a book whose Markdown failed its checks and go on (default: stop there)')
     args = parser.parse_args()
 
-    problem = browser.prompt_problem()
-    if problem:
-        sys.exit(f'Not starting: {problem}')
     try:
         # One run per list: two runs would each write back the whole progress file over the other's results.
         locks.keep(args.list.with_suffix('.lock'), wait=False)
@@ -306,10 +297,6 @@ def main():
             print('=== main changed: restarting with it (the list resumes here)', flush=True)
             os.environ.pop(locks.HELD, None)  # exec lets go of the list lock, so the new run must take it again
             os.execv(sys.executable, [sys.executable, *sys.argv])
-        if update == 'extension':
-            print('\nStopped the list: main changed the extension. Ask Laiken to reload it once in ' + browser.NAME + ', then run the '
-                  'same command to resume.', flush=True)
-            sys.exit(2)
         if update != 'same':
             print(f'=== {update}; going on with the code already here', flush=True)
         entry = progress.get(asin, {})
@@ -340,7 +327,7 @@ def main():
             # Its capture was used before, so a capture defect found now is redone as for any unusable ZIP.
             work = (lambda a=asin, t=title, o={**book_options, 'source': earlier}: run_book(a, t, o, again=True))
         else:
-            # Any earlier attempt may have saved the ASIN in the extension, which then refuses #autocapture.
+            # A book an earlier attempt reached is marked as a recapture in its report.
             again = asin in progress and not waiting
             # A book stopped by a Gemini failure was captured well: convert its folder again, without the browser.
             if waiting:
