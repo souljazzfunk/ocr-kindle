@@ -10,6 +10,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import locks
+
 HERE = Path(__file__).resolve().parent
 CAPTURE = 'capture.json'
 
@@ -21,6 +23,11 @@ def repo_version(root=HERE):
 def folder_problem(root=HERE, git=None):
     """None when extension/ is exactly origin/main, else what is wrong and how to fix it."""
     git = git or (lambda *args: subprocess.run(['git', '-C', str(root), *args], capture_output=True, text=True))
+    with locks.git_checkout(root):
+        return _folder_problem(git)
+
+
+def _folder_problem(git):
     fetched = git('fetch', '-q', 'origin', 'main')
     if fetched.returncode:
         return f'could not fetch origin/main: {fetched.stderr.strip()}'

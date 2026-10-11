@@ -94,19 +94,21 @@ def update_checkout(git=None, settle=lambda: None):
     settle() finishes the book still converting before the pull, so no conversion runs on half old, half new code.
     """
     git = git or (lambda *args: subprocess.run(['git', '-C', str(HERE), *args], capture_output=True, text=True))
-    if git('rev-parse', '--abbrev-ref', 'HEAD').stdout.strip() != 'main':
-        return 'same'  # capture_book.py refuses a checkout that is not main and says why
-    before = git('rev-parse', 'HEAD').stdout.strip()
-    if git('fetch', '-q', 'origin', 'main').returncode == 0 and git('rev-parse', 'FETCH_HEAD').stdout.strip() == before:
-        return 'same'
-    settle()
-    pulled = git('pull', '--ff-only', '-q', 'origin', 'main')
-    if pulled.returncode:
-        return f'could not pull main: {pulled.stderr.strip()}'
-    after = git('rev-parse', 'HEAD').stdout.strip()
-    if before == after:
-        return 'same'
-    changed = git('diff', '--name-only', before, after).stdout.split()
+    with locks.git_checkout(HERE):  # a capture checking the extension folder fetches too
+        if git('rev-parse', '--abbrev-ref', 'HEAD').stdout.strip() != 'main':
+            return 'same'  # capture_book.py refuses a checkout that is not main and says why
+        before = git('rev-parse', 'HEAD').stdout.strip()
+        if git('fetch', '-q', 'origin', 'main').returncode == 0 and git('rev-parse', 'FETCH_HEAD').stdout.strip() == before:
+            return 'same'
+    settle()  # not under the lock: the books it waits for check the extension folder
+    with locks.git_checkout(HERE):
+        pulled = git('pull', '--ff-only', '-q', 'origin', 'main')
+        if pulled.returncode:
+            return f'could not pull main: {pulled.stderr.strip()}'
+        after = git('rev-parse', 'HEAD').stdout.strip()
+        if before == after:
+            return 'same'
+        changed = git('diff', '--name-only', before, after).stdout.split()
     if any(path.startswith('extension/') and not path.endswith('.test.js') for path in changed):
         return 'extension'
     return 'python'

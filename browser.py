@@ -4,7 +4,9 @@ Chrome since 2026-10-11 (Laiken installed the extension there and chose it over 
 back to Brave. Both are Chromium: the same AppleScript, Preferences and History.
 
 On 2026-10-10 extension 1.3 saved through chrome.downloads with saveAs:false and the save dialog still opened:
-the browser asks where to save by default (download.prompt_for_download unset), and that setting wins over saveAs.
+Brave asks where to save by default (download.prompt_for_download unset), and that setting wins over saveAs.
+Chrome's default is not to ask: on 2026-10-11 its switch was off, the setting unset, and the list refused to start
+because it read unset as Brave's default.
 capture_books.py refuses to start while the browser would ask, and each capture's download is checked in the
 browser's own history, so a save that took another route cannot pass. Nothing here writes to the browser.
 """
@@ -17,9 +19,10 @@ import tempfile
 from pathlib import Path
 
 SUPPORT = Path.home() / 'Library/Application Support'
-BROWSERS = {'chrome': ('Google Chrome', SUPPORT / 'Google/Chrome'),
-            'brave': ('Brave Browser', SUPPORT / 'BraveSoftware/Brave-Browser')}
-APP, ROOT = BROWSERS[os.environ.get('KINDLE_BROWSER', 'chrome')]
+# (app, profile folder, whether it asks where to save while download.prompt_for_download is unset)
+BROWSERS = {'chrome': ('Google Chrome', SUPPORT / 'Google/Chrome', False),
+            'brave': ('Brave Browser', SUPPORT / 'BraveSoftware/Brave-Browser', True)}
+APP, ROOT, ASKS_BY_DEFAULT = BROWSERS[os.environ.get('KINDLE_BROWSER', 'chrome')]
 NAME = APP.split()[-1] if APP == 'Google Chrome' else APP.split()[0]  # Chrome, Brave
 COMPLETE = 1  # history downloads.state
 
@@ -34,13 +37,13 @@ def extension_profile(root=ROOT, folder='ocr-kindle/extension'):
     return None, None
 
 
-def prompt_problem(root=ROOT):
-    """None when Brave saves without asking, else what to change. Unset means Brave's default, which asks."""
+def prompt_problem(root=ROOT, asks_by_default=ASKS_BY_DEFAULT):
+    """None when the browser saves without asking, else what to change. Unset means the browser's own default."""
     profile, _ = extension_profile(root)
     if profile is None:
         return f'no {NAME} profile loads ocr-kindle/extension'
     prefs = json.loads((profile / 'Preferences').read_text(encoding='utf-8'))
-    if prefs.get('download', {}).get('prompt_for_download') is False:
+    if not prefs.get('download', {}).get('prompt_for_download', asks_by_default):
         return None
     return (f'{NAME} ({profile.name}) asks where to save each download, which opens a dialog on every ZIP. '
             f'Ask Laiken to turn off "Ask where to save each file before downloading" in {NAME} Settings → Downloads.')
