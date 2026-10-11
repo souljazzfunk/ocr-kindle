@@ -1,0 +1,14 @@
+# ax.dump() lines of the Kindle for Mac 7.40 reader (Japan Travel Planner, B07KMM3GR1, at its last page) with the
+# toolbar shown, probe of 2026-10-11 21:06 JST (ui-toc.txt), as the Mac quoted the key lines. This book is page
+# numbered: the slider and the page's link say "Page 114", nothing says "Location N of M".
+frontmost=true
+windows=1
+window|Kindle|325,1187|1352,843
+element|AXGroup|iOSContentGroup||||325,1187|1352,843
+element|AXButton|||Close Book||337,1215|40,40
+element|AXButton|||Table of Contents||377,1215|40,40
+element|AXLink|||Page 114, Current Location||507,1314|986,615
+element|AXButton|||Page 114||900,1910|45,13
+element|AXSlider|||Reading Progress Bar|Page 114 , 100%|386,1974|1268,55
+element|AXStaticText|||114||1619,1976|15,11
+element|AXButton|||Bird's Eye View||337,1983|36,36

@@ -43,7 +43,9 @@ OPEN_WAIT_S = 45
 # (Laiken, 2026-10-11 17:21 JST), which takes longer than a plain open.
 DOWNLOAD_WAIT_S = 300
 # The reader's footer, shown with its toolbar after a click on the page (probe of 2026-10-11 17:56).
-LOCATION = re.compile(r'Location (\d+) of (\d+)')
+# "Location N of M , P%" in most books; some use page numbers: "Page N , P%" on the slider, "Page N, Current
+# Location" on the page's link, no "of" (Japan Travel Planner, probe of 2026-10-11 21:06).
+LOCATION = re.compile(r'\b(?:Location|Page) (\d+)(?: of (\d+))?')
 PROGRESS_BAR = 'Reading Progress Bar'
 CLOSE_BOOK = 'Close Book'
 
@@ -325,13 +327,17 @@ def chrome_shown(found):
 
 
 def location_of(found):
-    """(location, of) from the footer's "Location N of M , P%", or None. M came back as 0 in the probe of 2026-10-11
-    18:04 ("Location 1 of 0 , 1%"), so only N says whether the start was reached."""
+    """(position, of) from the footer's "Location N of M , P%" or a page-numbered book's "Page N , P%", or None. M
+    came back as 0 in the probe of 2026-10-11 18:04 ("Location 1 of 0 , 1%") and is absent with page numbers, so
+    only N says whether the start was reached."""
+    partial = None  # "Location N , P%" (the slider) or "Page N": kept only when no "N of M" is in the tree
     for e in found:
         m = LOCATION.search(e['description']) or LOCATION.search(e['value']) or LOCATION.search(e['title'])
-        if m:
+        if m and m.group(2):
             return int(m.group(1)), int(m.group(2))
-    return None
+        if m and partial is None:
+            partial = (int(m.group(1)), 0)
+    return partial
 
 
 HOVER_WAIT_S = 3  # after each pointer move to the top edge, before the move is repeated
@@ -441,7 +447,7 @@ def toc_entries(found):
     rows = []
     for e in found[closes[-1] + 1:]:
         name = e['description'] or e['title']
-        if not name or name.startswith('Location ') or LOCATION.search(e['value']):
+        if not name or name.startswith(('Location ', 'Page ')) or LOCATION.search(e['value']):
             continue
         if e['role'] == 'AXStaticText' or (e['role'] == 'AXButton' and _frame(e)[2] >= TOC_ROW_MIN_W):
             rows.append(e)
@@ -571,11 +577,8 @@ def go_to_start(script=osascript, sleep=time.sleep, clock=time.monotonic, scroll
         found = show_chrome(script, sleep, clock)
         where = location_of(found)
         tried.append(f'{how} ({clock() - started:.0f} s)')
-        if move is toc_first and where is None and how.startswith(('pressed', 'clicked')):
-            # On the cover the toolbar shows no "Location N of M" (Sri Lanka, 2026-10-11 20:45: only the scrubber's
-            # marks), so the pressed top entry is the start.
-            where = (1, 0)
-            break
+        # A pressed entry with no readable footer is not taken as the start: that rule (#81) let Japan Travel
+        # Planner pass at section 1.5 (2026-10-11 20:58). The cover does show the footer (Sri Lanka, 20:51).
     if where is None or where[0] > 1:
         return (f'could not go to the start (tried: {", ".join(tried)}, footer: '
                 f'{"Location %d of %d" % where if where else "no location"})')
