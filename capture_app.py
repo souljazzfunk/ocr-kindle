@@ -86,9 +86,12 @@ def capture(folder, script_path=HERE / 'kindle2img.applescript', run=capture_boo
 
 
 def app_books(books, progress):
-    """The books of the list Cloud Reader refused as app-only and no app run has finished yet."""
+    """The books of the list Cloud Reader refused as app-only and no app run has finished yet: a book an earlier app
+    run failed (app_open, app_capture, a check) is tried again, so the same command resumes at it. On 2026-10-11 the
+    resume skipped For 91 Days In Tokyo, whose record then said app_open instead of kindle_app_only."""
     return [(asin, title) for asin, title in books
-            if capture_book.APP_ONLY in progress.get(asin, {}).get('failures', [])]
+            if capture_book.APP_ONLY in progress.get(asin, {}).get('failures', [])
+            or (progress.get(asin, {}).get('capture') == 'kindle_app' and progress[asin].get('verdict') != 'done')]
 
 
 def run_book(asin, title, downloads, convert=capture_book.convert, open_=open_book, start=go_to_start, take=capture):

@@ -54,6 +54,11 @@ def test_the_first_book_that_fails_stops_the_run(tmp_path):
     assert stop.value.code == 2 and seen == ['For 91 Days In Tokyo']
     saved = json.loads((tmp_path / 'books.progress.json').read_text())
     assert saved['B2']['failures'] == ['headings'] and saved['B3'] == APP_ONLY
+    # The same command resumes at the failed book (2026-10-11: a resume skipped Tokyo once its record said app_open).
+    seen.clear()
+    with pytest.raises(SystemExit):
+        capture_app.main([str(books), '--downloads', str(tmp_path)], env={'KINDLE_APP_OK': '1'}, book=book)
+    assert seen == ['For 91 Days In Tokyo']
 
 
 def test_a_book_is_opened_paged_to_the_start_captured_then_converted(tmp_path):
