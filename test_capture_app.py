@@ -256,8 +256,12 @@ def test_the_start_is_reached_through_the_table_of_contents_and_read_from_the_fo
     at1 = CHROME.format(at=1).replace('of 2594', 'of 0')
     app = App([CHROME.format(at=12), TOC.format(at=12), at1, at1, READER])
     assert go(app) == ''
+    # A page that renders slowly (Iceland, 2026-10-11 20:11: blank for over 30 s) is clicked for about half a minute.
     app = App([READER])
     assert 'no toolbar after clicks' in go(app)
+    assert sum('click at' in c for c in app.calls) == capture_app.RENDER_TRIES
+    app = App([READER] * 20 + [CHROME.format(at=1), READER])
+    assert go(app) == ''
 
 
 def test_the_topmost_entry_is_pressed_whatever_its_name_and_clicked_when_the_press_is_refused():
