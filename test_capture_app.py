@@ -289,7 +289,7 @@ def test_when_the_slider_does_not_move_the_topmost_table_of_contents_entry_is_cl
     assert not any('"Powell, Michael"' in c for c in app.calls)  # the author line is not an entry
 
 
-def test_when_the_table_of_contents_does_not_move_the_book_pages_are_turned_back_one_at_a_time():
+def test_when_the_table_of_contents_does_not_move_the_book_pages_are_turned_back_one_at_a_time(capsys):
     # Laiken, 2026-10-11 19:27: when nothing else works, page back with ← rather than stop. The footer is read after
     # each batch of 20 presses, with the toolbar hidden while the keys are sent.
     at = CHROME.format(at=185)
@@ -298,6 +298,9 @@ def test_when_the_table_of_contents_does_not_move_the_book_pages_are_turned_back
                CHROME.format(at=1), READER])
     assert capture_app.go_to_start(app, sleep=lambda s: None, drag=lambda *a: None) == ''
     assert sum('key code 123' in c for c in app.calls) == 40
+    out = capsys.readouterr().out
+    assert 'start: Location 1 after: not needed, clicked the track start, dragged the knob, pressed "Cover"' in out
+    assert 'paged back 40 times' in out
     # ← presses that leave the footer where it is are counted and named, and the loop stops.
     app = App([at, at, at, TOC.format(at=185), at, at, READER, at, at, at])
     problem = capture_app.go_to_start(app, sleep=lambda s: None, drag=lambda *a: None)
