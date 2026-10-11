@@ -70,6 +70,49 @@ def _quote(text):
     return '"' + text.replace('\\', '\\\\').replace('"', '\\"') + '"'
 
 
+PRESS_TITLED = '''
+tell application "System Events" to tell process "Kindle"
+    set elems to entire contents of window 1
+    repeat with e in elems
+        set e to contents of e
+        try
+            if role of e is "AXButton" and (title of e is {title} or description of e is {title}) then
+                perform action "AXPress" of e
+                return "pressed"
+            end if
+        end try
+    end repeat
+    return "none"
+end tell
+'''
+CLICK_PAGE = '''
+tell application "System Events" to tell process "Kindle"
+    set {x, y} to position of window 1
+    set {w, h} to size of window 1
+    click at {x + (w div 2), y + (h div 2)}
+    return "clicked"
+end tell
+'''
+
+
+def dismiss_sheet(script=osascript, sleep=time.sleep):
+    """Close the book-details sheet the reader opens over a book (probe of 2026-10-11 17:51: a Close button, the
+    title, the author and Share, over the page). Returns what was done."""
+    _, pressed, _ = script(PRESS_TITLED.format(title='"Close"'))
+    if pressed != 'pressed':
+        script('tell application "System Events" to tell process "Kindle" to key code 53')  # Escape
+    sleep(2)
+    return pressed
+
+
+def reveal_chrome(script=osascript, sleep=time.sleep):
+    """Click the middle of the page so the reader shows its toolbar and progress (the probe saw neither in the dump
+    taken right after the open; the footer showed only "1%")."""
+    _, out, err = script(CLICK_PAGE)
+    sleep(2)
+    return out or err
+
+
 PRESS_COVER = '''
 tell application "System Events" to tell process "Kindle"
     set elems to entire contents of window 1
@@ -230,6 +273,15 @@ def probe(asin, title, folder, script=osascript, run=capture_book.run, sleep=tim
     run(['screencapture', '-x', *(str(folder / f'screen-{n}.png') for n in (1, 2, 3))])
     _, after, err = script(UI_DUMP)
     (folder / 'ui-book.txt').write_text(after or err, encoding='utf-8')
+    # The reader as it is used: the details sheet closed, then the page clicked once for its toolbar.
+    notes = ['sheet: ' + dismiss_sheet(script, sleep)]
+    _, reader, err = script(UI_DUMP)
+    (folder / 'ui-reader.txt').write_text(reader or err, encoding='utf-8')
+    notes.append('page: ' + reveal_chrome(script, sleep))
+    run(['screencapture', '-x', *(str(folder / f'chrome-{n}.png') for n in (1, 2, 3))])
+    _, chrome, err = script(UI_DUMP)
+    (folder / 'ui-chrome.txt').write_text(chrome or err, encoding='utf-8')
+    (folder / 'open.txt').write_text('\n'.join([problem or 'opened', *notes]), encoding='utf-8')
     downloaded = sorted(p.name for p in ebooks.glob(f'*{asin}*')) if ebooks.exists() else []
     (folder / 'probe.json').write_text(json.dumps({'asin': asin, 'downloaded': downloaded, 'ebooks': str(ebooks),
                                                    'at': time.strftime('%Y-%m-%dT%H:%M:%S')}, indent=1), encoding='utf-8')
@@ -273,7 +325,8 @@ def main(argv=None, env=os.environ, book=run_book):
     if args.probe:
         titles = dict(capture_books.read_list(args.list))
         folder = probe(args.probe, titles.get(args.probe, args.probe), args.downloads / 'kindle-probe' / args.probe)
-        print(f'Probe written to {folder}: open.txt, screen-<display>.png, ui-library.txt, ui-book.txt, probe.json')
+        print(f'Probe written to {folder}: open.txt, screen-<display>.png, chrome-<display>.png, ui-library.txt, ui-book.txt, '
+              'ui-reader.txt, ui-chrome.txt, probe.json')
         return
     try:
         # One run per list: two runs would each write back the whole progress file over the other's results.

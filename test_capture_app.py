@@ -116,6 +116,8 @@ class App:
         self.calls.append(text)
         if 'entire contents' in text and 'AXPress' not in text and 'keystroke' not in text:
             return 0, self.screens.pop(0) if len(self.screens) > 1 else self.screens[0], ''
+        if 'click at' in text:
+            return 0, 'pressed', ''  # the fake answers every action alike
         return 0, 'pressed' if 'AXPress' in text else 'searched', ''
 
 
@@ -169,11 +171,18 @@ def test_a_probe_records_what_the_new_app_shows_before_and_after_opening_a_book(
     calls, ebooks = [], tmp_path / 'eBooks'
     ebooks.mkdir()
     (ebooks / 'B2_EBOK').mkdir()
-    app = App([LIBRARY, LIBRARY, LIBRARY, READER.replace('page', 'page 1')])
+    sheet = READER + 'element|AXButton||Close|||988,1771|24,9\n'
+    chrome = READER + 'element|AXSlider||||12|500,2000|1000,20\n'
+    app = App([LIBRARY, LIBRARY, LIBRARY, sheet, sheet, READER, chrome])
     folder = capture_app.probe('B2', 'For 91 Days In Tokyo', tmp_path / 'probe', script=app, run=calls.append,
                                sleep=lambda s: None, ebooks=ebooks)
     assert 'Library Grid View' in (folder / 'ui-library.txt').read_text()
-    assert 'page 1' in (folder / 'ui-book.txt').read_text() and (folder / 'open.txt').read_text() == 'opened'
+    assert 'Close' in (folder / 'ui-book.txt').read_text()
+    # The sheet is closed and the page clicked once, and each state is kept (probe of 2026-10-11 17:51).
+    assert 'Close' not in (folder / 'ui-reader.txt').read_text() and 'AXSlider' in (folder / 'ui-chrome.txt').read_text()
+    assert (folder / 'open.txt').read_text() == 'opened\nsheet: pressed\npage: pressed'
+    assert any('"Close"' in c and 'AXPress' in c for c in app.calls) and any('click at' in c for c in app.calls)
+    assert ['screencapture', '-x', *(str(folder / f'chrome-{n}.png') for n in (1, 2, 3))] in calls
     assert json.loads((folder / 'probe.json').read_text())['downloaded'] == ['B2_EBOK']
     shots = ['screencapture', '-x', *(str(folder / f'screen-{n}.png') for n in (1, 2, 3))]  # every display
     assert shots in calls and any('AXPress' in c for c in app.calls)
