@@ -79,9 +79,70 @@ async function turnPage(prevSrc, label = 'Next page') {
   return null;
 }
 
+const MENU_WAIT_MS = 5000;
+let startedBy = '';
+
+function activate(el) {
+  for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+    const Event = type.startsWith('pointer') ? PointerEvent : MouseEvent;
+    el.dispatchEvent(new Event(type, { bubbles: true, cancelable: true, view: window }));
+  }
+}
+
+const label = (el) => (el.getAttribute('aria-label') || el.textContent || '').trim();
+
+// Opens the reader's contents and picks the entry nearest the start (pagemeta.js). Returns the new page image, or
+// null when there is no contents control or the jump did not change the page; goToStart then pages back as before.
+async function jumpToContentsStart() {
+  const img = pageImage();
+  const controls = [...document.querySelectorAll('button, [role="button"], [role="tab"], a[aria-label]')];
+  const opener = controls[contentsControl(controls.map(label))];
+  if (!img || !opener) return null;
+  activate(opener);
+  for (let t = 0; t < MENU_WAIT_MS; t += 250) {
+    await sleep(250);
+    const panel = document.querySelector('[role="dialog"], [role="navigation"], [role="menu"], [class*="toc" i], [class*="contents" i]');
+    const entries = panel ? [...panel.querySelectorAll('a, button, [role="link"], [role="menuitem"], [role="treeitem"], li')] : [];
+    const entry = entries[startEntry(entries.map(label))];
+    if (entry) {
+      activate(entry);
+      return waitForPage(img.src);
+    }
+  }
+  return null;
+}
+
+// Moves the reader's progress slider to its start: a range input takes its minimum value, an ARIA slider the Home
+// key. Returns the new page image, or null when there is no slider or the page did not change.
+async function jumpBySlider() {
+  const img = pageImage();
+  const slider = document.querySelector('input[type="range"], [role="slider"]');
+  if (!img || !slider) return null;
+  if (slider instanceof HTMLInputElement) {
+    slider.value = slider.min || '0';
+    for (const type of ['input', 'change']) slider.dispatchEvent(new Event(type, { bubbles: true }));
+  } else {
+    slider.focus();
+    for (const type of ['keydown', 'keyup']) {
+      slider.dispatchEvent(new KeyboardEvent(type, { key: 'Home', code: 'Home', keyCode: 36, bubbles: true }));
+    }
+  }
+  return waitForPage(img.src);
+}
+
 // The reader reopens a book where it was last read (AI for Educators opened at page 75 of 120), so an automatic
-// capture pages back to the start first. Returns '' once there, or why it could not get there.
+// capture goes back to the start first. Laiken, 2026-10-11: use the reader's own tools, not one turn per page. So the
+// progress slider goes to its start, else the contents' first entry, and only what is left (a contents' first entry
+// can sit a few pages after page 1) is paged back. Returns '' once there, or why it could not get there.
 async function goToStart(isRunning) {
+  const tried = [];
+  for (const [name, jump] of [['slider', jumpBySlider], ['contents', jumpToContentsStart]]) {
+    if (parsePosition(document.body.innerText)?.n === 1) break;
+    beat(name);
+    const jumped = await jump().catch(() => null);
+    tried.push(`${name} ${jumped ? `to ${position() || 'an unknown page'}` : 'not used'}`);
+  }
+  startedBy = tried.join('; ') || 'opened at page 1';
   let img = pageImage();
   const guard = turnGuard(parsePosition(document.body.innerText)?.m);
   while (img && isRunning()) {
@@ -132,7 +193,7 @@ async function captureBook(save, isRunning) {
   if (count) save('positions.json', new TextEncoder().encode(JSON.stringify(positions, null, 1)), '');
   // Which extension made this ZIP, so capture_book.py can tell a Brave that was not reloaded after a change,
   // and why the capture ended early when a turn cap stopped it (check_book.py's capture_stop).
-  if (count) save('capture.json', new TextEncoder().encode(JSON.stringify({ extension_version: chrome.runtime.getManifest().version, stopped })), '');
+  if (count) save('capture.json', new TextEncoder().encode(JSON.stringify({ extension_version: chrome.runtime.getManifest().version, stopped, start: startedBy })), '');
   return count;
 }
 
