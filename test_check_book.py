@@ -220,7 +220,7 @@ def test_a_skip_notice_ends_the_wait_at_once(tmp_path):
 def test_a_tab_left_on_the_book_is_closed_before_opening_another_or_the_book_is_not_started(tmp_path, monkeypatch):
     opened = []
     monkeypatch.setattr(capture_book, 'folder_problem', lambda: None)
-    monkeypatch.setattr(capture_book, 'open_in_brave', lambda *a: opened.append(a))
+    monkeypatch.setattr(capture_book, 'open_in_browser', lambda *a: opened.append(a))
     monkeypatch.setattr(capture_book, 'ensure_tab_closed', lambda asin: False)  # Brave would not close it
     data = capture_book.convert('B07VSXS4NK', 'Automate', downloads=tmp_path, recapture=True)
     assert data['blocking_failures'] == ['tab_before'] and opened == []
@@ -230,10 +230,10 @@ def test_a_refused_capture_fails_with_the_extensions_reason(tmp_path, monkeypatc
     monkeypatch.setattr(capture_book, 'folder_problem', lambda: None)
     monkeypatch.setattr(capture_book, 'ensure_tab_closed', lambda asin: True)
 
-    def open_in_brave(asin, domain, recapture):
+    def open_in_browser(asin, domain, recapture):
         (tmp_path / f'{asin}.skip.json').write_text(json.dumps({'reason': 'tab 7 is already capturing B07VSXS4NK'}))
 
-    monkeypatch.setattr(capture_book, 'open_in_brave', open_in_brave)
+    monkeypatch.setattr(capture_book, 'open_in_browser', open_in_browser)
     data = capture_book.convert('B07VSXS4NK', 'Automate', downloads=tmp_path)
     assert data['blocking_failures'] == ['capture_refused'] and 'already capturing' in data['error']
 
@@ -287,10 +287,10 @@ def test_a_book_cloud_reader_cannot_open_is_the_book_s_failure_not_the_browser_s
     monkeypatch.setattr(capture_book, 'folder_problem', lambda: None)
     monkeypatch.setattr(capture_book, 'ensure_tab_closed', lambda asin: True)
 
-    def open_in_brave(asin, domain, recapture):
+    def open_in_browser(asin, domain, recapture):
         (tmp_path / f'{asin}.skip.json').write_text(json.dumps({'reason': 'kindle app required: Cloud Reader cannot open this book'}))
 
-    monkeypatch.setattr(capture_book, 'open_in_brave', open_in_brave)
+    monkeypatch.setattr(capture_book, 'open_in_browser', open_in_browser)
     data = capture_book.convert('B00S1MW0KM', 'For 91 Days In Tokyo', downloads=tmp_path)
     assert data['blocking_failures'] == ['kindle_app_only']
     assert 'kindle_app_only' not in capture_books.STOP_CHECKS

@@ -7,8 +7,8 @@ spec = importlib.util.spec_from_file_location('guard', Path(__file__).parent / '
 guard = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(guard)
 
-BOOK = "open -a \"Brave Browser\" 'https://read.amazon.com/?asin=B07HNMJV57#autocapture'"
-NEXT = "open -a \"Brave Browser\" 'https://read.amazon.com/?asin=B0ZEROSOLD#autocapture'"
+BOOK = "open -a \"Google Chrome\" 'https://read.amazon.com/?asin=B07HNMJV57#autocapture'"
+NEXT = "open -a \"Google Chrome\" 'https://read.amazon.com/?asin=B0ZEROSOLD#autocapture'"
 
 
 @pytest.mark.parametrize('command', [
@@ -29,13 +29,16 @@ def test_kindle_app_needs_laikens_ask(command):
     'osascript -e \'tell application "Brave Browser" to quit\'',
     'killall "Brave Browser"',
     'pkill -x Brave',
+    'osascript -e \'quit app "Google Chrome"\'',
+    'killall "Google Chrome"',
 ])
-def test_brave_is_never_restarted(command):
-    assert 'Never quit or restart Brave' in guard.check(command)
+def test_the_browsers_are_never_restarted(command):
+    assert 'Never quit or restart Chrome or Brave' in guard.check(command)
 
 
-def test_cloud_reader_opens_in_brave_not_chrome():
-    assert 'Brave' in guard.check("open -a 'Google Chrome' 'https://read.amazon.com/?asin=B07HNMJV57'")
+def test_cloud_reader_opens_in_chrome():
+    # Laiken, 2026-10-11: the extension is in Chrome too, and captures move there.
+    assert guard.check("open -a 'Google Chrome' 'https://read.amazon.com/?asin=B07HNMJV57#autocapture'") is None
 
 
 def test_books_open_in_brave_one_after_another():

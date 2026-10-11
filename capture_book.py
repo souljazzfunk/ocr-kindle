@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Capture one book from Kindle Cloud Reader in Brave and turn it into checked Markdown, in the order CLAUDE.md sets.
+Capture one book from Kindle Cloud Reader in the browser (browser.py: Chrome) and turn it into checked Markdown, in the order CLAUDE.md sets.
 
     venv/bin/python capture_book.py B07HNMJV57 --title "How to Write a Lot"
 
-1. Opens the book in Brave with `#autocapture` (never the Kindle app, never Chrome, never a Brave restart).
+1. Opens the book in the browser with `#autocapture` (never the Kindle app, never a browser restart).
 2. Waits for the extension's ZIP in ~/Downloads, then closes only that book's tab.
 3. Runs img2txt.py, then check_book.py; runs each automatic fix it names and checks again, up to ROUNDS times.
 4. Writes report.json next to the book and exits 1 when a blocking check still fails.
@@ -27,12 +27,12 @@ from dataclasses import asdict
 from pathlib import Path
 
 from check_book import Check, check_folder, markdown_file
-import brave
+import browser
 import locks
 from extension_state import folder_problem, repo_version, zip_version
 from img2txt import GEMINI_ERROR, GEMINI_FAILED_EXIT, load_config
 
-BRAVE = 'Brave Browser'
+APP = browser.APP
 ROUNDS = 3
 ZIP_WAIT_S = 3600
 SETTLE_S = 5
@@ -60,15 +60,15 @@ def run(command, **kwargs):
     return subprocess.run(command, check=True, **kwargs)
 
 
-def open_in_brave(asin, domain, recapture=False):
-    run(['open', '-a', BRAVE, f'https://{domain}/?asin={asin}#{"recapture" if recapture else "autocapture"}'])
+def open_in_browser(asin, domain, recapture=False):
+    run(['open', '-a', APP, f'https://{domain}/?asin={asin}#{"recapture" if recapture else "autocapture"}'])
 
 
 def close_tab_script(asin):
     """AppleScript closing only the tabs showing this book, one by one from the last, so closing one does not shift
     the index of the next. Brave ignored the shorter `close (every tab ... whose URL contains ...)` form at times
     (2026-10-11: For 91 Days in Oviedo's tab stayed open and the list stopped on tab_before)."""
-    return f'''tell application "{BRAVE}"
+    return f'''tell application "{APP}"
     repeat with w in windows
         repeat with i from (count of tabs of w) to 1 by -1
             if URL of tab i of w contains "asin={asin}" then close tab i of w
@@ -78,16 +78,16 @@ end tell'''
 
 
 def close_book_tab(asin):
-    """Close only the tabs showing this book; the rest of Brave stays as it is."""
+    """Close only the tabs showing this book; the rest of the browser stays as it is."""
     subprocess.run(['osascript', '-e', close_tab_script(asin)], capture_output=True)
 
 
 def book_tabs(asin):
-    """How many Brave tabs show this book (read only), or None when Brave could not be asked."""
-    script = f'tell application "{BRAVE}" to get URL of every tab of every window'
+    """How many browser tabs show this book (read only), or None when the browser could not be asked."""
+    script = f'tell application "{APP}" to get URL of every tab of every window'
     result = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
     if result.returncode:
-        print(f'Could not list Brave tabs: {result.stderr.strip()}', flush=True)
+        print(f'Could not list {APP} tabs: {result.stderr.strip()}', flush=True)
         return None
     return result.stdout.count(f'asin={asin}')
 
@@ -118,8 +118,8 @@ class Stalled(str):
 
 
 def book_heartbeat(asin):
-    """The heartbeat in the title of this book's Brave tab, or '' (read only)."""
-    script = (f'tell application "{BRAVE}"\nset out to ""\nrepeat with w in windows\nrepeat with t in tabs of w\n'
+    """The heartbeat in the title of this book's browser tab, or '' (read only)."""
+    script = (f'tell application "{APP}"\nset out to ""\nrepeat with w in windows\nrepeat with t in tabs of w\n'
               f'if URL of t contains "asin={asin}" then set out to out & title of t & linefeed\n'
               'end repeat\nend repeat\nreturn out\nend tell')
     result = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
@@ -207,19 +207,19 @@ def correct(folder, title, rounds=ROUNDS, runner=run):
 
 
 def version_check(folder, expected=None):
-    """A fresh capture must come from the extension version on main; anything else means Brave was not reloaded."""
+    """A fresh capture must come from the extension version on main; anything else means the browser was not reloaded."""
     expected = expected or repo_version()
     made_by = zip_version(folder)
     return Check('extension_version', made_by == expected,
                  f'ZIP made by extension {made_by or "1.3 or older (no capture.json)"}, main is {expected}'
-                 + ('' if made_by == expected else '; reload the extension in Brave once'))
+                 + ('' if made_by == expected else f'; reload the extension in {browser.NAME} once'))
 
 
-def download_check(zip_path, record=brave.download_record):
-    """The ZIP must have been saved by the extension through chrome.downloads and completed, per Brave's history."""
+def download_check(zip_path, record=browser.download_record):
+    """The ZIP must have been saved by the extension through chrome.downloads and completed, per the browser's history."""
     found = record(zip_path)
     if found is None:
-        return Check('download', False, f'{Path(zip_path).name} not in Brave\'s download history')
+        return Check('download', False, f'{Path(zip_path).name} not in {browser.NAME}\'s download history')
     by_extension, complete = found
     detail = ('saved by the extension' if by_extension else 'saved by a page link, not the extension') + (
         ', complete' if complete else ', not complete')
@@ -266,16 +266,16 @@ def start_wiki_ingest(data, watch=WIKI_WATCH, spawn=subprocess.Popen):
 
 
 def convert(asin, title=None, model='vision', domain='read.amazon.com', downloads=Path.home() / 'Downloads',
-            source=None, recapture=False, brave=None, converting=None):
+            source=None, recapture=False, capturing=None, converting=None):
     """Capture (unless source is given), convert, check and fix one book. Returns the report data.
 
-    brave and converting are held around the capture and the conversion: capture_books.py captures the next book in
-    Brave while this one converts, and these keep it to one capture and one conversion at a time.
+    capturing and converting are held around the capture and the conversion: capture_books.py captures the next book in
+    the browser while this one converts, and these keep it to one capture and one conversion at a time.
     """
     started = time.time()
     tab_closed = None  # no tab when converting an existing ZIP
     if source is None:
-        with brave or contextlib.nullcontext():
+        with capturing or contextlib.nullcontext():
             captured = _capture(asin, domain, downloads, recapture)
         if isinstance(captured, dict):
             return captured
@@ -286,17 +286,17 @@ def convert(asin, title=None, model='vision', domain='read.amazon.com', download
 
 
 def _capture(asin, domain, downloads, recapture):
-    """Capture one book in Brave: (ZIP, whether its tab closed), or the result of a capture that made no ZIP."""
+    """Capture one book in the browser: (ZIP, whether its tab closed), or the result of a capture that made no ZIP."""
     problem = folder_problem()
     if problem:
-        raise RuntimeError(f'Brave loads the extension from this checkout, and it is not main: {problem}')
+        raise RuntimeError(f'{browser.NAME} loads the extension from this checkout, and it is not main: {problem}')
     # A tab left from an earlier run may still be capturing this book; a second one must not start beside it
     # (2026-10-10: a resumed run opened Automate the Boring Stuff again while the first tab was still paging).
     if not ensure_tab_closed(asin):
-        return not_captured(asin, 'tab_before', 'a Brave tab on this book was already open and could not be closed',
+        return not_captured(asin, 'tab_before', f'a {browser.NAME} tab on this book was already open and could not be closed',
                             recapture)
     before = set(downloads.glob('*.zip')) | skip_notices(downloads, asin)
-    open_in_brave(asin, domain, recapture)
+    open_in_browser(asin, domain, recapture)
     source = wait_for_zip(downloads, before, asin=asin, tabs=book_tabs, beats=book_heartbeat)
     tab_closed = ensure_tab_closed(asin)
     if isinstance(source, Stalled):
@@ -305,7 +305,7 @@ def _capture(asin, domain, downloads, recapture):
                             f'{"closed" if tab_closed else "left open"}', recapture)
     if source == TAB_GONE:
         return not_captured(asin, TAB_GONE, f'the book tab closed with no ZIP and no skip notice in {downloads}; '
-                            'Brave or the reader may have dropped it', recapture)
+                            f'{browser.NAME} or the reader may have dropped it', recapture)
     if source is None:
         return not_captured(asin, 'no_zip', f'no ZIP in {downloads} within {ZIP_WAIT_S // 60} minutes; the book tab '
                             f'was {"closed" if tab_closed else "left open"}', recapture)
@@ -344,7 +344,7 @@ def _convert_folder(asin, title, model, source, folder, recapture, tab_closed, s
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Capture one Kindle book in Brave and produce checked Markdown')
+    parser = argparse.ArgumentParser(description='Capture one Kindle book in the browser and produce checked Markdown')
     parser.add_argument('asin', help='The book\'s ASIN (?asin= in the Cloud Reader URL)')
     parser.add_argument('--title', help='Book title for the output file name (from the inventory)')
     parser.add_argument('--model', default='vision', help='img2txt --model (default: vision, no Gemini quota)')

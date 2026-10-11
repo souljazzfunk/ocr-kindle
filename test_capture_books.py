@@ -10,8 +10,8 @@ update_checkout = capture_books.update_checkout  # the real one; tests below stu
 
 
 @pytest.fixture(autouse=True)
-def brave_saves_without_asking(monkeypatch):
-    monkeypatch.setattr(capture_books.brave, 'prompt_problem', lambda: None)
+def browser_saves_without_asking(monkeypatch):
+    monkeypatch.setattr(capture_books.browser, 'prompt_problem', lambda: None)
     monkeypatch.setattr(capture_books, 'update_checkout', lambda **_: 'same')
 
 
@@ -361,12 +361,12 @@ def test_a_second_run_on_the_same_list_does_not_start(tmp_path, monkeypatch, cap
 
 
 def pipelined_convert(log, release, failures=lambda asin: []):
-    """A convert that captures under brave, then converts under converting until release[asin] is set."""
+    """A convert that captures under capturing, then converts under converting until release[asin] is set."""
     import threading
     lock = threading.Lock()
 
-    def convert(asin, title=None, recapture=False, brave=None, converting=None, **options):
-        with brave:
+    def convert(asin, title=None, recapture=False, capturing=None, converting=None, **options):
+        with capturing:
             with lock:
                 log.append(('capture', asin))
         with converting:

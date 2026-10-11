@@ -36,7 +36,7 @@ def test_an_ad_hoc_local_edit_is_refused():
 
 def test_capture_refuses_before_opening_brave(monkeypatch, tmp_path):
     monkeypatch.setattr(capture_book, 'folder_problem', lambda: 'branch is extension-dom-probe, not main')
-    monkeypatch.setattr(capture_book, 'open_in_brave', lambda *a: pytest.fail('opened Brave'))
+    monkeypatch.setattr(capture_book, 'open_in_browser', lambda *a: pytest.fail('opened Brave'))
     with pytest.raises(RuntimeError, match='not main'):
         capture_book.convert('B1', downloads=tmp_path)
 
