@@ -64,6 +64,19 @@ def cover_of(title, found):
     return None
 
 
+def tab_of(title, found):
+    """The tab bar's button for the recently read book (an AXRadioButton named after it), or None."""
+    key = capture_books.comparable(title)
+    for e in found:
+        if e['role'] == 'AXRadioButton' and key and capture_books.comparable(e['title'] or e['description']) == key:
+            return e
+    return None
+
+
+def framed(e):
+    return e is not None and e['size'] not in ('0,0', '')
+
+
 def in_library(found):
     return any(e['title'] == 'Library Grid View' or e['description'] == 'Library Grid View' for e in found)
 
@@ -136,6 +149,21 @@ tell application "System Events" to tell process "Kindle"
     return "none"
 end tell
 '''
+PRESS_TAB = '''
+tell application "System Events" to tell process "Kindle"
+    set elems to entire contents of window 1
+    repeat with e in elems
+        set e to contents of e
+        try
+            if role of e is "AXRadioButton" and (title of e is {title} or description of e is {title}) then
+                perform action "AXPress" of e
+                return "pressed"
+            end if
+        end try
+    end repeat
+    return "none"
+end tell
+'''
 SEARCH = '''
 tell application "System Events" to tell process "Kindle"
     set elems to entire contents of window 1
@@ -178,15 +206,21 @@ def open_book(asin, title, script=osascript, run=capture_book.run, clock=time.mo
     # that only focused the window (run of 18:12: Kindle was not frontmost, the library stayed).
     # The second press on a downloaded book is a real click on the cover's centre: in the runs of 2026-10-11 18:12
     # and 18:24, right after Close Book, AXPress on the cover left the library on screen with Kindle in front.
+    # The recently read book's cover reports a 0x0 frame (probe of 2026-10-11 18:42: "0,1152|0,0" while the other
+    # covers had 122x183), so neither AXPress nor a click at its centre opens it; that book is opened through the
+    # tab bar's button named after it, which has a real frame.
     presses = []
     sleep(SETTLE_S)
     while len(presses) < 2:
         presses.append(bring_front(script, sleep))
         cover = cover_of(title, found)
-        if presses[1:] and cover and 'Not Downloaded' not in cover['value']:
-            x, y = (int(v) for v in cover['position'].split(','))
-            w, h = (int(v) for v in cover['size'].split(','))
+        target = cover if framed(cover) else tab_of(title, found) or cover
+        if presses[1:] and framed(target) and 'Not Downloaded' not in cover['value']:
+            x, y = (int(v) for v in target['position'].split(','))
+            w, h = (int(v) for v in target['size'].split(','))
             script(CLICK_AT.format(x=x + w // 2, y=y + h // 2))
+        elif target['role'] == 'AXRadioButton':
+            script(PRESS_TAB.format(title=_quote(title)))
         else:
             script(PRESS_COVER.format(title=_quote(title)))
         wait = DOWNLOAD_WAIT_S if len(presses) == 2 and cover and 'Not Downloaded' in cover['value'] else OPEN_WAIT_S
@@ -202,7 +236,8 @@ def open_book(asin, title, script=osascript, run=capture_book.run, clock=time.mo
     return (f'the Kindle app still shows its library {OPEN_WAIT_S} s after pressing the cover of this book'
             + (' (and after pressing it again for its download)' if cover and 'Not Downloaded' in cover['value'] else '')
             + (' (and after clicking its centre)' if cover and 'Not Downloaded' not in cover['value'] and len(presses) == 2 else '')
-            + '; the cover says: ' + (cover['value'] if cover else 'gone')
+            + '; the cover says: ' + (f"{cover['value']} at {cover['position']} {cover['size']}" if cover else 'gone')
+            + (f"; the tab bar's button at {tab_of(title, found)['position']} {tab_of(title, found)['size']}" if tab_of(title, found) else '; no tab-bar button for it')
             + '; frontmost before the presses: ' + ', '.join(presses))
 
 
