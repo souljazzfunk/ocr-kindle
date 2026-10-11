@@ -126,3 +126,34 @@ def test_code_blocks_are_not_proofread():
     assert fixes(pages) == [('stray_symbol', 'page_0001', 'mpare ages. < ', 'mpare ages. ')]
     fixed = apply(pages, find_all(Book(Path('/nonexistent'), pages)))
     assert fixed == {'page_0001': code + '\n\n' + BODY + 'Compare ages. Then go on.'}
+
+
+def test_a_fix_lands_where_it_was_found_and_chevron_prompts_are_whole_again():
+    # Automate the Boring Stuff, 2026-10-11: stray_symbol's text ran across a code block taken out for the detectors,
+    # so its fix found nothing; repl_prompt's fix went to the first ">> " on the page, inside a whole prompt, and added a
+    # > there each round. The chevrons were prompts: "›› › spam" is ">>> spam".
+    prompts = ''.join(f'>>> x{i} = {i}\n' for i in range(10))
+    page = (prompts + 'Enter your text.\n\n```\n>>> spam = input()\n```\n\n›› › spam\n\n'
+            ">>> phoneNumRegex.findall('Cell: 415')\n› >> phoneNumRegex.findall('Cell: 415')\n" + BODY)
+    pages = {'page_0001': page}
+    for _ in range(3):
+        found = [f for f in find_all(Book(Path('/nonexistent'), pages)) if f.kind in ('stray_symbol', 'repl_prompt')]
+        pages = {**pages, **apply(pages, found)}
+    fixed = pages['page_0001']
+    assert '```\n>>> spam = input()\n```\n\n>>> spam\n' in fixed
+    assert fixed.count(">>> phoneNumRegex.findall('Cell: 415')\n") == 2 and '>>>>' not in fixed
+    assert not [f for f in find_all(Book(Path('/nonexistent'), pages)) if f.kind in ('stray_symbol', 'repl_prompt')]
+
+
+def test_a_prompt_with_extra_chevrons_from_the_old_fix_is_put_back():
+    prompts = ''.join(f'>>> x{i} = {i}\n' for i in range(10))
+    pages = {'page_0001': prompts + ">>>>>> phoneNumRegex.findall('Cell')\n" + BODY}
+    fixed = apply(pages, find_all(Book(Path('/nonexistent'), pages)))['page_0001']
+    assert ">>> phoneNumRegex.findall('Cell')\n" in fixed and '>>>>' not in fixed
+
+
+def test_prompts_in_code_blocks_are_mended_and_a_shift_is_not_a_prompt():
+    prompts = ''.join(f'>>> x{i} = {i}\n' for i in range(10))
+    pages = {'page_0001': prompts + '```\n>> > spam = int(spam)\n>>> y = x >> 2\n```\n\n' + BODY}
+    fixed = apply(pages, find_all(Book(Path('/nonexistent'), pages)))['page_0001']
+    assert '```\n>>> spam = int(spam)\n>>> y = x >> 2\n```' in fixed
