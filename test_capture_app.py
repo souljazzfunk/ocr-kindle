@@ -187,6 +187,18 @@ def test_the_recent_book_whose_cover_has_no_frame_is_opened_from_the_tab_bar():
     assert any('click at {753, 1993}' in c for c in app.calls) and 'at 0,1152 0,0' in problem and "tab bar's button at 730,1958" in problem
 
 
+def test_an_end_of_book_sheet_and_a_menu_over_it_are_dismissed_before_close_book():
+    # Run of 2026-10-11 18:59: the book read to its end showed the end-of-book sheet with a share menu over it, and
+    # clicks on the page brought no toolbar. Escape twice (and the sheet's Close) come before the clicks are repeated.
+    app = App([READER, READER, READER, READER, CHROME.format(at=2594), LIBRARY, LIBRARY, READER])
+    clock = iter(range(0, 1000, 2))
+    assert capture_app.open_book('B2', 'For 91 Days In Tokyo', script=app, run=lambda c: None,
+                                 clock=lambda: next(clock), sleep=lambda s: None) == ''
+    escapes = [i for i, c in enumerate(app.calls) if 'key code 53' in c]
+    close_book = next(i for i, c in enumerate(app.calls) if '"Close Book"' in c)
+    assert len(escapes) == 2 and all(e < close_book for e in escapes)
+
+
 def test_a_reader_left_open_is_closed_with_its_close_book_button_never_file_close():
     # Probe of 2026-10-11 17:56: the app reopens into the last book; File > Close (Cmd+W) quits the app.
     # With the toolbar hidden the tree holds only groups (probe of 18:04), and in the pilot one click did not show it.
@@ -199,7 +211,7 @@ def test_a_reader_left_open_is_closed_with_its_close_book_button_never_file_clos
     assert sum('click at' in c for c in app.calls) == 2
     app = App([READER])
     problem = capture_app.open_book('B2', 'For 91 Days In Tokyo', script=app, run=lambda c: None, sleep=lambda s: None)
-    assert 'neither its library nor the reader toolbar' in problem and sum('click at' in c for c in app.calls) == 3
+    assert 'neither its library nor the reader toolbar' in problem and sum('click at' in c for c in app.calls) == 6  # 3 clicks, Escape x2, 3 clicks
     assert not any('menu bar item "File"' in c or 'keystroke "w"' in c for c in app.calls)
     app = App([READER, CHROME.format(at=12), READER])
     problem = capture_app.open_book('B2', 'For 91 Days In Tokyo', script=app, run=lambda c: None, sleep=lambda s: None)
