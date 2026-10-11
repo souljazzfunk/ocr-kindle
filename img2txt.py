@@ -22,6 +22,8 @@ from statistics import median
 from google import genai
 from google.genai import types
 
+import locks
+
 CONFIG_PATH = Path(os.environ.get('KINDLE_OCR_CONFIG', Path(__file__).with_name('config.env')))
 # Most accurate first. The free tier allows gemini-3.8-flash only 20 requests a day, so the lite model takes over.
 # Gemini refuses well-known books with RECITATION; local Vision OCR has no such filter but loses heading marks.
@@ -385,6 +387,7 @@ def main():
                         help='Who reads the page structure: Gemini, falling back to Sonnet (claude -p) when it fails, or Sonnet only')
     args = parser.parse_args()
     config = load_config()
+    locks.keep(locks.book_lock(args.folder))
     if args.folder.suffix == '.zip':
         folder = args.folder.with_suffix('')
         archive = zipfile.ZipFile(args.folder)

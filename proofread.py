@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 
+import locks
 from img2txt import (TEXT_LAYER, VISION, page_images, read_sources, vision_lines, vision_transcribe,
                      write_book)
 
@@ -383,6 +384,7 @@ def main():
     parser.add_argument('--cross-read', action='store_true', help='Also compare non-Vision pages with a Vision reading')
     parser.add_argument('--title', help='Output file name without extension (default: folder name)')
     args = parser.parse_args()
+    locks.keep(locks.book_lock(args.folder))
 
     book, sources = Book(args.folder, load_pages(args.folder)), read_sources(args.folder)
     pages = book.pages

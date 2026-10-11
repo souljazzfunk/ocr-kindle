@@ -26,6 +26,7 @@ from pathlib import Path
 
 from check_book import Check, check_folder, markdown_file
 import brave
+import locks
 from extension_state import folder_problem, repo_version, zip_version
 from img2txt import GEMINI_ERROR, GEMINI_FAILED_EXIT, load_config
 
@@ -255,6 +256,12 @@ def convert(asin, title=None, model='vision', domain='read.amazon.com', download
             check = APP_ONLY if reason.startswith('kindle app required') else 'capture_refused'
             return not_captured(asin, check, f'the extension did not capture: {reason}', recapture)
     folder = source.with_suffix('') if source.suffix == '.zip' else source
+    with locks.holding(locks.book_lock(source)):
+        return _convert_folder(asin, title, model, source, folder, recapture, tab_closed, started)
+
+
+def _convert_folder(asin, title, model, source, folder, recapture, tab_closed, started):
+    """Convert, check, fix and publish one captured book; the caller holds the book's lock."""
     try:
         run([PYTHON, str(HERE / 'img2txt.py'), str(source), '--model', model] + (['--title', title] if title else []))
         checks, rounds = correct(folder, title)
