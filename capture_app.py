@@ -363,10 +363,29 @@ def _quartz_drag(x0, y0, x1, y1, sleep=time.sleep):
         sleep(0.3)
 
 
+def toc_cover(slider, script=osascript, sleep=time.sleep, drag=None):
+    """Open the Table of Contents and click its "Cover" row. Probe of 2026-10-11 19:20 (Bolivia): the panel slides
+    in at the left and lists "Cover" then "Beginning" as AXStaticText, not buttons, so the row is clicked at its
+    centre; the dimmed area and the X are "Close menu" buttons."""
+    _, pressed, _ = script(PRESS_TITLED.format(title='"Table of Contents"'))
+    if pressed != 'pressed':
+        return 'no Table of Contents button'
+    sleep(2)
+    found = elements(script)
+    row = next((e for e in found if e['role'] == 'AXStaticText' and 'Cover' in (e['title'], e['description'])), None)
+    if row is None:
+        script(PRESS_TITLED.format(title='"Close menu"'))
+        return 'no Cover row in the table of contents'
+    x, y, w, h = _frame(row)
+    script(CLICK_AT.format(x=x + w // 2, y=y + h // 2))
+    return 'clicked Cover in the table of contents'
+
+
 def go_to_start(script=osascript, sleep=time.sleep, drag=None):
     """Back to the start of the open book: close the details sheet, show the toolbar, click and then drag the
-    Reading Progress Bar to its start, read the footer's "Location N of M", then hide the toolbar again.
-    Returns '' or why it could not. Written from the probe of 2026-10-11 17:56, not guessed."""
+    Reading Progress Bar to its start, else open the Table of Contents and click "Cover"; read the footer's
+    "Location N of M", then hide the toolbar again.
+    Returns '' or why it could not. Written from the probes of 2026-10-11 17:56 and 19:20, not guessed."""
     dismiss_sheet(script, sleep)
     found = show_chrome(script, sleep)
     if not chrome_shown(found):
@@ -374,8 +393,9 @@ def go_to_start(script=osascript, sleep=time.sleep, drag=None):
     where = location_of(found)
     tried = ['not needed']
     # Setting the slider's value is not honoured (run of 2026-10-11 19:02: "slider: set" and the knob stayed at
-    # 13%, Location 185), so the slider's track is clicked at its left end, then the knob dragged there.
-    for move in (click_track_start, drag_knob_to_start):
+    # 13%, Location 185), so the slider's track is clicked at its left end, then the knob dragged there; neither
+    # moved it either (run of 19:11), so the Table of Contents' "Cover" row is the last resort.
+    for move in (click_track_start, drag_knob_to_start, toc_cover):
         if where is not None and where[0] <= 1:
             break
         bring_front(script, sleep)
@@ -384,7 +404,7 @@ def go_to_start(script=osascript, sleep=time.sleep, drag=None):
         found = show_chrome(script, sleep)
         where = location_of(found)
     if where is None or where[0] > 1:
-        return (f'could not go to the start (slider: {", ".join(tried)}, footer: '
+        return (f'could not go to the start (tried: {", ".join(tried)}, footer: '
                 f'{"Location %d of %d" % where if where else "no location"})')
     bring_front(script, sleep)
     reveal_chrome(script, sleep)  # the same click hides the toolbar again
