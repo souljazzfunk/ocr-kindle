@@ -162,6 +162,46 @@ def wait_for(ready, script=osascript, sleep=time.sleep, clock=time.monotonic, ti
     return found
 
 
+def window_frame(script=osascript):
+    """The Kindle window's (x, y, w, h) from the dump's window line, or None."""
+    for line in read_tree(script).splitlines():
+        parts = line.split('|')
+        if parts[0] == 'window' and len(parts) >= 4:
+            try:
+                x, y = (int(v) for v in parts[2].split(','))
+                w, h = (int(v) for v in parts[3].split(','))
+            except ValueError:
+                continue
+            return x, y, w, h
+    return None
+
+
+TOP_HOVER_PX = 60  # below the window's top edge: over the toolbar's row (Close Book at y = top + 28 on 2026-10-11 20:36)
+
+
+def hover(x, y, api=None):
+    """Move the pointer (no click) to the screen point through Quartz. Returns what was done, or why not."""
+    try:
+        import Quartz as api_module
+    except ImportError:
+        return 'no Quartz'
+    api = api or api_module
+    event = api.CGEventCreateMouseEvent(None, api.kCGEventMouseMoved, (x, y), 0)
+    api.CGEventPost(api.kCGHIDEventTap, event)
+    return f'moved to {x},{y}'
+
+
+def hover_window(script=osascript, where='top', move=hover):
+    """Move the pointer over the reader: 'top' (the toolbar's row) or 'page' (the middle). In Kindle 7.40 the toolbar
+    appears when the pointer rests near the top edge and goes once it leaves (Sri Lanka, 2026-10-11 20:36: four clicks
+    on the page brought no toolbar; one pointer move to the top did), so this comes before any click."""
+    frame = window_frame(script)
+    if frame is None:
+        return 'no window'
+    x, y, w, h = frame
+    return move(x + w // 2, y + (TOP_HOVER_PX if where == 'top' else h // 2))
+
+
 PRESS_COVER = '''
 tell application "System Events" to tell process "Kindle"
     set elems to entire contents of window 1
@@ -294,11 +334,16 @@ def location_of(found):
     return None
 
 
-def show_chrome(script=osascript, sleep=time.sleep, clock=time.monotonic, tries=3, found=None):
-    """Click the page until the toolbar is in the element tree. With the toolbar hidden the reader's tree holds only
-    groups and the window buttons (probe of 2026-10-11 18:04), and in the pilot run just before it one click did not
-    bring it (Close Book: none), so each click is checked and repeated. Returns what the app shows."""
+def show_chrome(script=osascript, sleep=time.sleep, clock=time.monotonic, tries=3, found=None, move=None):
+    """Bring the toolbar into the element tree: rest the pointer on the window's top edge, then click the page if it
+    still does not show. With the toolbar hidden the reader's tree holds only groups and the window buttons (probe of
+    2026-10-11 18:04); clicks brought it for Tokyo but not for Sri Lanka (20:34, four clicks), a pointer move to the
+    top did at once (20:36). Each attempt is checked and repeated. Returns what the app shows."""
     found = elements(script) if found is None else found
+    move = move or (hover if script is osascript else None)  # a fake script in the tests has no pointer
+    if move and not chrome_shown(found):
+        hover_window(script, 'top', move)
+        found = wait_for(chrome_shown, script, sleep, clock, timeout=2)
     for _ in range(tries):
         if chrome_shown(found):
             break
@@ -307,8 +352,14 @@ def show_chrome(script=osascript, sleep=time.sleep, clock=time.monotonic, tries=
     return found
 
 
-def hide_chrome(script=osascript, sleep=time.sleep, clock=time.monotonic):
-    """The click that shows the toolbar hides it again. Returns what the app shows."""
+def hide_chrome(script=osascript, sleep=time.sleep, clock=time.monotonic, move=None):
+    """Take the toolbar away again: the pointer back to the page's middle, else the click that toggles it."""
+    move = move or (hover if script is osascript else None)
+    if move:
+        hover_window(script, 'page', move)
+        found = wait_for(lambda f: not chrome_shown(f), script, sleep, clock, timeout=2)
+        if not chrome_shown(found):
+            return found
     reveal_chrome(script, sleep)
     return wait_for(lambda f: not chrome_shown(f), script, sleep, clock, timeout=2)
 
