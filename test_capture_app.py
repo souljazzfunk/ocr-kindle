@@ -235,8 +235,15 @@ def test_the_start_is_reached_by_clicking_the_progress_bar_track_and_read_from_t
     assert 'no toolbar after clicks' in capture_app.go_to_start(app, sleep=lambda s: None)
     # When the click leaves the book where it was, the knob is dragged; here the drag cannot run, and both are named.
     app = App([CHROME.format(at=12), CHROME.format(at=12), CHROME.format(at=12)])
-    problem = capture_app.go_to_start(app, sleep=lambda s: None)
-    assert 'clicked the track start' in problem and 'drag failed' in problem and 'Location 12 of 2594' in problem
+    drags = []
+    problem = capture_app.go_to_start(app, sleep=lambda s: None, drag=lambda *a: drags.append(a))
+    assert 'clicked the track start' in problem and 'dragged the knob' in problem and 'Location 12 of 2594' in problem
+    assert drags and drags[0][:4] == (533 + 980 * 1 // 100, 977, 534, 977)
+    # A drag that cannot run (no Quartz, no event tap) is named rather than raised.
+    def no_drag(*a):
+        raise RuntimeError('no event tap')
+    problem = capture_app.go_to_start(App([CHROME.format(at=12)] * 3), sleep=lambda s: None, drag=no_drag)
+    assert 'drag failed: no event tap' in problem
 
 
 def test_the_knob_is_dragged_from_its_percentage_to_the_track_start():

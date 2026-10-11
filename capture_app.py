@@ -331,7 +331,7 @@ def _frame(e):
     return x, y, w, h
 
 
-def click_track_start(slider, script=osascript, sleep=time.sleep):
+def click_track_start(slider, script=osascript, sleep=time.sleep, drag=None):
     """Click the progress bar's track at its left end."""
     if slider is None:
         return 'no slider'
@@ -363,7 +363,7 @@ def _quartz_drag(x0, y0, x1, y1, sleep=time.sleep):
         sleep(0.3)
 
 
-def go_to_start(script=osascript, sleep=time.sleep):
+def go_to_start(script=osascript, sleep=time.sleep, drag=None):
     """Back to the start of the open book: close the details sheet, show the toolbar, click and then drag the
     Reading Progress Bar to its start, read the footer's "Location N of M", then hide the toolbar again.
     Returns '' or why it could not. Written from the probe of 2026-10-11 17:56, not guessed."""
@@ -379,7 +379,7 @@ def go_to_start(script=osascript, sleep=time.sleep):
         if where is not None and where[0] <= 1:
             break
         bring_front(script, sleep)
-        tried.append(move(slider_of(found), script, sleep))
+        tried.append(move(slider_of(found), script, sleep, drag))
         sleep(3)
         found = show_chrome(script, sleep)
         where = location_of(found)
