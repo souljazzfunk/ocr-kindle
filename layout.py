@@ -10,6 +10,7 @@ go in one request. The answers are kept in layout.json, so a re-run asks only fo
 
 When Gemini fails (its free tier ran out mid-list on 2026-10-10), Sonnet answers the same question through the
 Claude Code CLI on the Mac (`claude -p`), on Laiken's Claude plan, so the list does not wait a day for the quota.
+Both are given LAYOUT_SCHEMA. Sonnet's answer is the CLI's structured_output, not prose around a JSON array.
 """
 
 import json
@@ -41,7 +42,6 @@ class GeminiFailed(RuntimeError):
 CLAUDE_MODEL = 'sonnet'
 CLAUDE_WORKERS = 3
 CLAUDE_TIMEOUT_S = 900
-CLAUDE_TRIES = 2  # asks for a batch whose reply held no JSON array
 CLAUDE = 'claude'  # the model name kept in layout.json for the pages Claude laid out
 LINE_PITCH = 1.6  # line pitch at most this many line heights
 MIN_FIGURE_LINES = 3
@@ -92,21 +92,62 @@ printed line, top to bottom. Describe the page's structure by line number.
 
 Give every page; leave a list empty when nothing on the page belongs in it."""
 
-_INT = types.Schema(type=types.Type.INTEGER)
-_LINES = types.Schema(type=types.Type.ARRAY, items=_INT)
-SCHEMA = types.Schema(type=types.Type.ARRAY, items=types.Schema(
-    type=types.Type.OBJECT, required=['page', 'titles', 'quotes', 'figures', 'art', 'code'], properties={
-        'page': types.Schema(type=types.Type.STRING),
-        'titles': types.Schema(type=types.Type.ARRAY, items=types.Schema(
-            type=types.Type.OBJECT, required=['line', 'level'], properties={'line': _INT, 'level': _INT})),
-        'quotes': _LINES,
-        'figures': types.Schema(type=types.Type.ARRAY, items=types.Schema(
-            type=types.Type.OBJECT, required=['lines', 'description'], properties={
-                'lines': _LINES, 'description': types.Schema(type=types.Type.STRING)})),
-        'art': _LINES,
-        'code': types.Schema(type=types.Type.ARRAY, items=_LINES),
-        'drop_cap': types.Schema(type=types.Type.OBJECT, nullable=True, required=['line', 'word'], properties={
-            'line': _INT, 'word': types.Schema(type=types.Type.STRING)})}))
+# One schema for a batch of pages. Gemini takes it as response_schema; Sonnet takes the same value as
+# `--json-schema`. Claude Code refuses a top-level array, so the pages sit under `pages`.
+_INT = {'type': 'integer'}
+_LINE_NUMBERS = {'type': 'array', 'items': _INT}
+
+
+def _object(required, properties):
+    return {'type': 'object', 'additionalProperties': False, 'required': required, 'properties': properties}
+
+
+LAYOUT_SCHEMA = _object(['pages'], {'pages': {'type': 'array', 'items': _object(
+    ['page', 'titles', 'quotes', 'figures', 'art', 'code'], {
+        'page': {'type': 'string'},
+        'titles': {'type': 'array', 'items': _object(['line', 'level'], {'line': _INT, 'level': _INT})},
+        'quotes': _LINE_NUMBERS,
+        'figures': {'type': 'array', 'items': _object(
+            ['lines', 'description'], {'lines': _LINE_NUMBERS, 'description': {'type': 'string'}})},
+        'art': _LINE_NUMBERS,
+        'code': {'type': 'array', 'items': _LINE_NUMBERS},
+        'drop_cap': _object(['line', 'word'], {'line': _INT, 'word': {'type': 'string'}})})}})
+
+_GEMINI_TYPES = {'integer': types.Type.INTEGER, 'string': types.Type.STRING, 'array': types.Type.ARRAY,
+                 'object': types.Type.OBJECT, 'boolean': types.Type.BOOLEAN, 'number': types.Type.NUMBER}
+
+
+def gemini_schema(schema):
+    """Gemini's Schema for a JSON Schema. LAYOUT_SCHEMA is the one both models are given."""
+    kwargs = {'type': _GEMINI_TYPES[schema['type']]}
+    if 'properties' in schema:
+        kwargs['properties'] = {key: gemini_schema(value) for key, value in schema['properties'].items()}
+    if 'items' in schema:
+        kwargs['items'] = gemini_schema(schema['items'])
+    if 'required' in schema:
+        kwargs['required'] = list(schema['required'])
+    if 'additionalProperties' in schema:
+        kwargs['additional_properties'] = schema['additionalProperties']
+    return types.Schema(**kwargs)
+
+
+def as_json(schema):
+    """The JSON Schema a Gemini Schema was built from."""
+    data = schema.model_dump(exclude_none=True) if isinstance(schema, types.Schema) else schema
+    kind = data['type']
+    out = {'type': kind.value.lower() if hasattr(kind, 'value') else str(kind).lower()}
+    if 'properties' in data:
+        out['properties'] = {key: as_json(value) for key, value in data['properties'].items()}
+    if 'items' in data:
+        out['items'] = as_json(data['items'])
+    if 'required' in data:
+        out['required'] = data['required']
+    if 'additional_properties' in data:
+        out['additionalProperties'] = data['additional_properties']
+    return out
+
+
+SCHEMA = gemini_schema(LAYOUT_SCHEMA)
 
 
 def read_layout(folder):
@@ -240,8 +281,21 @@ def ask_layout(client, images):
     response = client.models.generate_content(model=MODEL, contents=parts, config=types.GenerateContentConfig(
         temperature=0, response_mime_type='application/json', response_schema=SCHEMA,
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)))
-    stems = {image.stem for image in images}
-    return {page.pop('page'): page for page in json.loads(response.text) if page.get('page') in stems}
+    return laid_out(json.loads(response.text), {image.stem for image in images})
+
+
+def laid_out(value, stems, model=None):
+    """{stem: layout} for the pages of a schema answer that belong to this batch."""
+    out = {}
+    for page in value['pages']:
+        stem = page.get('page') if isinstance(page, dict) else None
+        if stem not in stems:
+            continue
+        page.pop('page')
+        if model:
+            page['model'] = model
+        out[stem] = page
+    return out
 
 
 def claude_cli():
@@ -251,46 +305,34 @@ def claude_cli():
          if os.access(p, os.X_OK)), None)
 
 
-class BadReply(ValueError):
-    """A reply that holds no JSON array: the model answered, so asking again may do."""
-
-
-def json_array(text):
-    """The first JSON array in a reply that may wrap it in a code fence or a sentence, or add one after it."""
-    decoder = json.JSONDecoder()
-    for start in (i for i, c in enumerate(text) if c == '['):
-        try:
-            value, _ = decoder.raw_decode(text, start)
-        except ValueError:
-            continue
-        if isinstance(value, list):
-            return value
-    raise BadReply(f'no JSON array in the reply: {text[:200]}')
+def ask_claude(cli, prompt, schema, *, cwd, add_dir):
+    """The only `claude -p`. `--json-schema` puts the value in `structured_output`. `result` is the model's prose:
+    on 2026-10-12 (Steve Jobs) a sentence after the array was read as the layout, and the book stopped."""
+    run = subprocess.run(
+        [cli, '-p', '--model', CLAUDE_MODEL, '--output-format', 'json', '--json-schema', json.dumps(schema),
+         '--allowedTools', 'Read', '--add-dir', str(add_dir), '--strict-mcp-config',
+         '--settings', '{"disableAllHooks": true}'],
+        input=prompt, capture_output=True, text=True, timeout=CLAUDE_TIMEOUT_S,
+        cwd=cwd, env=dict(os.environ, LLM_WIKI_WATCHER='1'))
+    reply = json.loads(run.stdout) if run.stdout.strip().startswith('{') else {}
+    output = reply.get('structured_output')
+    if run.returncode or reply.get('is_error') or not isinstance(output, dict):
+        detail = reply.get('result') or run.stderr or run.stdout or ''
+        raise RuntimeError(f'claude -p exited {run.returncode}: {detail[:300]}')
+    return output
 
 
 def ask_layout_claude(cli, images):
     """Sonnet's reading of a batch of Vision pages through `claude -p`: it opens each page image with its Read tool.
     Hooks are off, and LLM_WIKI_WATCHER tells the wiki's own SessionEnd hook to skip them, so these calls stay out of
     the session log the LLM wiki grows from (Laiken, 2026-10-10: seven of them had reached its queue)."""
-    parts = [PROMPT, 'Open each page image with the Read tool before answering. Reply with only a JSON array, one '
-             'object per page: {"page": "<name>", "titles": [{"line": n, "level": n}], "quotes": [n], '
-             '"figures": [{"lines": [n], "description": "..."}], "art": [n], "code": [[n]], "drop_cap": {"line": n, "word": "..."} '
-             'or null}.']
+    parts = [PROMPT, 'Open each page image with the Read tool before answering.']
     for image in images:
         parts += [f'Page "{image.stem}": image {image.resolve()}',
                   '\n'.join(f'{i}: {line}' for i, line in enumerate(page_lines(image)))]
-    run = subprocess.run(
-        [cli, '-p', '--model', CLAUDE_MODEL, '--output-format', 'json', '--allowedTools', 'Read',
-         '--add-dir', str(images[0].parent.resolve()), '--strict-mcp-config',
-         '--settings', '{"disableAllHooks": true}'],
-        input='\n\n'.join(parts), capture_output=True, text=True, timeout=CLAUDE_TIMEOUT_S,
-        cwd=images[0].parent, env=dict(os.environ, LLM_WIKI_WATCHER='1'))
-    reply = json.loads(run.stdout) if run.stdout.strip().startswith('{') else {}
-    if run.returncode or reply.get('is_error') or 'result' not in reply:
-        raise RuntimeError(f'claude -p exited {run.returncode}: {(reply.get("result") or run.stderr or run.stdout)[:300]}')
-    stems = {image.stem for image in images}
-    return {page.pop('page'): dict(page, model=CLAUDE) for page in json_array(reply['result'])
-            if isinstance(page, dict) and page.get('page') in stems}
+    value = ask_claude(cli, '\n\n'.join(parts), LAYOUT_SCHEMA, cwd=images[0].parent,
+                       add_dir=images[0].parent.resolve())
+    return laid_out(value, {image.stem for image in images}, model=CLAUDE)
 
 
 def mark_layout(folder, client, images, cli=None):
@@ -331,17 +373,11 @@ def mark_layout(folder, client, images, cli=None):
         with claude_slots:
             if claude_failed.is_set():
                 return {}, None
-            for attempt in range(CLAUDE_TRIES):
-                try:
-                    return ask_layout_claude(cli, batch), None
-                except BadReply as e:
-                    # One reply Sonnet wrote badly fails this batch only; Sonnet goes on with the rest.
-                    error = e
-                except Exception as e:
-                    claude_failed.set()
-                    error = e
-                    break
-            return {}, RuntimeError(f'Gemini: {str((gemini_error or ["no API key"])[0])[:300]}; Sonnet: {error}')
+            try:
+                return ask_layout_claude(cli, batch), None
+            except Exception as e:
+                claude_failed.set()
+                return {}, RuntimeError(f'Gemini: {str((gemini_error or ["no API key"])[0])[:300]}; Sonnet: {e}')
 
     first_error = None
     with ThreadPoolExecutor(WORKERS) as pool:
