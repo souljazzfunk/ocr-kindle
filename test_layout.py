@@ -102,8 +102,9 @@ def test_layout_is_asked_once_per_page_in_batches(tmp_path, monkeypatch):
     def generate_content(model, contents, config):
         stems = [part.split('"')[1] for part in contents if isinstance(part, str) and part.startswith('Page "')]
         asked.append(stems)
+        assert config.response_schema is layout.SCHEMA
         answer = [{'page': s, 'titles': [{'line': 0, 'level': 2}], 'quotes': [], 'figures': [], 'art': []} for s in stems]
-        return SimpleNamespace(text=json.dumps(answer))
+        return SimpleNamespace(text=json.dumps({'pages': answer}))
 
     monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
     monkeypatch.setattr(layout, 'BATCH', 8)
@@ -124,8 +125,8 @@ def test_a_live_text_page_takes_its_titles_from_gemini(tmp_path, monkeypatch):
 
     def generate_content(model, contents, config):
         asked.append([part for part in contents if isinstance(part, str) and part.startswith('0: ')])
-        return SimpleNamespace(text=json.dumps([{'page': 'page_0011', 'titles': [{'line': 0, 'level': 2}], 'quotes': [],
-                                                 'figures': [], 'art': [], 'code': []}]))
+        return SimpleNamespace(text=json.dumps({'pages': [{'page': 'page_0011', 'titles': [{'line': 0, 'level': 2}],
+                                                           'quotes': [], 'figures': [], 'art': [], 'code': []}]}))
 
     monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
     client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
@@ -152,8 +153,9 @@ def test_live_text_titles_lose_the_section_mark_and_take_their_level_from_the_co
 
     def generate_content(model, contents, config):
         stems = [part.split('"')[1] for part in contents if isinstance(part, str) and part.startswith('Page "')]
-        return SimpleNamespace(text=json.dumps([{'page': s, 'quotes': [], 'figures': [], 'art': [], 'code': [], 'titles':
-            [{'line': i, 'level': 1} for i, line in enumerate(pages[s]) if line != body]} for s in stems]))
+        return SimpleNamespace(text=json.dumps({'pages': [{'page': s, 'quotes': [], 'figures': [], 'art': [], 'code': [],
+                                                           'titles': [{'line': i, 'level': 1} for i, line in enumerate(pages[s])
+                                                                      if line != body]} for s in stems]}))
 
     monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
     client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
@@ -177,7 +179,7 @@ def test_gemini_s_daily_limit_is_not_waited_out_and_stops_after_writing_what_was
         asked.append(stems)
         if len(asked) > 1:
             raise RuntimeError('429 RESOURCE_EXHAUSTED quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier')
-        return SimpleNamespace(text=json.dumps([{'page': s, 'titles': [{'line': 0, 'level': 2}]} for s in stems]))
+        return SimpleNamespace(text=json.dumps({'pages': [{'page': s, 'titles': [{'line': 0, 'level': 2}]} for s in stems]}))
 
     monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
     monkeypatch.setattr(layout.time, 'sleep', lambda s: pytest.fail('waited on a daily limit'))
@@ -277,10 +279,15 @@ def test_sonnet_lays_out_the_pages_gemini_could_not_and_the_book_goes_on(tmp_pat
     def run(command, input, **kwargs):
         calls.append(command)
         assert kwargs['env']['LLM_WIKI_WATCHER'] == '1'
+        assert 'JSON array' not in input
+        assert json.loads(command[command.index('--json-schema') + 1]) == layout.LAYOUT_SCHEMA
         stems = re.findall(r'Page "([^"]+)": image (\S+)', input)
         assert all(Path(path).exists() for _, path in stems)  # Sonnet opens the image itself
-        answer = [{'page': s, 'titles': [{'line': 0, 'level': 2}], 'quotes': [], 'figures': [], 'art': []} for s, _ in stems]
-        reply = {'type': 'result', 'is_error': False, 'result': 'Here it is:\n```json\n' + json.dumps(answer) + '\n```'}
+        pages = [{'page': s, 'titles': [{'line': 0, 'level': 2}], 'quotes': [], 'figures': [], 'art': []} for s, _ in stems]
+        # The sentence after the array is the Steve Jobs reply. The layout is structured_output, level 2, not this.
+        prose = json.dumps([{'page': s, 'titles': [{'line': 0, 'level': 1}]} for s, _ in stems])
+        reply = {'type': 'result', 'is_error': False, 'structured_output': {'pages': pages},
+                 'result': prose + '\n\nNote: on pages [1] and [2] the title is set [large].'}
         return SimpleNamespace(returncode=0, stdout=json.dumps(reply), stderr='')
 
     monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
@@ -319,21 +326,20 @@ def test_the_book_stops_when_sonnet_fails_too(tmp_path, monkeypatch):
 
 
 
-def test_a_sonnet_reply_with_words_after_its_array_or_none_at_all_fails_no_other_batch(tmp_path, monkeypatch):
-    # 2026-10-12, Steve Jobs: one reply added a sentence after the array ("Extra data"), Sonnet was given up
-    # for the whole book, 1299 pages were left, and the convert job paused until Gemini's quota came back.
+def test_the_steve_jobs_reply_is_not_read_from_the_prose_around_the_array(tmp_path, monkeypatch):
+    # 2026-10-12, Steve Jobs: result was the array plus a sentence ("Extra data"). Reading that sentence
+    # as the layout gave up Sonnet for the book. Without structured_output the call has failed.
     for n in range(1, 61):
         (tmp_path / f'page_{n:04d}.png').write_bytes(b'png')
         (tmp_path / f'page_{n:04d}.lines.json').write_text(json.dumps([[0.1, 0.1, 0.03, 'A TITLE']] + BODY))
     calls = []
 
     def run(command, input, **kwargs):
-        calls.append(1)
+        calls.append(command)
         stems = [s for s, _ in re.findall(r'Page "([^"]+)": image (\S+)', input)]
         answer = json.dumps([{'page': s, 'titles': [{'line': 0, 'level': 2}]} for s in stems])
-        result = {1: answer + '\n\nNote: on pages [1] and [2] the title is set [large].',
-                  2: 'I could not read these pages.'}.get(len(calls), answer)
-        reply = {'type': 'result', 'is_error': False, 'result': result}
+        reply = {'type': 'result', 'is_error': False,
+                 'result': answer + '\n\nNote: on pages [1] and [2] the title is set [large].'}
         return SimpleNamespace(returncode=0, stdout=json.dumps(reply), stderr='')
 
     def generate_content(model, contents, config):
@@ -343,9 +349,48 @@ def test_a_sonnet_reply_with_words_after_its_array_or_none_at_all_fails_no_other
     monkeypatch.setattr(layout.subprocess, 'run', run)
     monkeypatch.setattr(layout, 'WORKERS', 1)
     client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
-    assert mark_layout(tmp_path, client, sorted(tmp_path.glob('page_*.png')), cli='claude') == []
-    assert len(calls) == 4  # three batches, the second asked twice
-    assert len(read_layout(tmp_path)) == 60
+    with pytest.raises(layout.GeminiFailed, match='60 pages left'):
+        mark_layout(tmp_path, client, sorted(tmp_path.glob('page_*.png')), cli='claude')
+    assert len(calls) == 1 and '--json-schema' in calls[0]
+    assert read_layout(tmp_path) == {}
+
+
+# ask_layout_claude as of 4b6ab59 (PR #113). It asks for the array in prose and reads result.
+STEVE_JOBS = r'''
+def ask_layout_claude(cli, images):
+    """Sonnet's reading of a batch of Vision pages through `claude -p`."""
+    parts = [PROMPT, 'Open each page image with the Read tool before answering. Reply with only a JSON array, one '
+             'object per page: {"page": "<name>", "titles": [{"line": n, "level": n}], "quotes": [n], '
+             '"figures": [{"lines": [n], "description": "..."}], "art": [n], "code": [[n]], "drop_cap": {"line": n, "word": "..."} '
+             'or null}.']
+    for image in images:
+        parts += [f'Page "{image.stem}": image {image.resolve()}',
+                  '\n'.join(f'{i}: {line}' for i, line in enumerate(page_lines(image)))]
+    run = subprocess.run(
+        [cli, '-p', '--model', CLAUDE_MODEL, '--output-format', 'json', '--allowedTools', 'Read',
+         '--add-dir', str(images[0].parent.resolve()), '--strict-mcp-config',
+         '--settings', '{"disableAllHooks": true}'],
+        input='\n\n'.join(parts), capture_output=True, text=True, timeout=CLAUDE_TIMEOUT_S,
+        cwd=images[0].parent, env=dict(os.environ, LLM_WIKI_WATCHER='1'))
+    reply = json.loads(run.stdout) if run.stdout.strip().startswith('{') else {}
+    if run.returncode or reply.get('is_error') or 'result' not in reply:
+        raise RuntimeError(f'claude -p exited {run.returncode}: {(reply.get("result") or run.stderr or run.stdout)[:300]}')
+    stems = {image.stem for image in images}
+    return {page.pop('page'): dict(page, model=CLAUDE) for page in json_array(reply['result'])
+            if isinstance(page, dict) and page.get('page') in stems}
+'''
+
+
+def test_a_claude_call_without_json_schema_is_the_steve_jobs_reply():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('check_claude', Path(__file__).parent / 'scripts' / 'check_claude.py')
+    check = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(check)
+    found = check.problems(STEVE_JOBS, 'layout.py')
+    assert found == ['layout.py:11: ask_layout_claude calls claude -p without --json-schema; '
+                     'call ask_claude, which passes the schema']
+    assert layout.as_json(layout.SCHEMA) == layout.LAYOUT_SCHEMA
+    assert check.main() == 0
 
 # Line boxes shaped like Python Crash Course's pages (2026-10-11): body at 0.08, listings at 0.10, an indent 0.05.
 PCC = [(0.08, 0.10, 0.022, 'In Python, the hash mark (#) indicates a comment. Anything following a hash mark in your'),
@@ -398,7 +443,7 @@ def test_only_the_code_pages_of_a_code_book_laid_out_before_code_are_read_again(
     def generate_content(model, contents, config):
         stems = [part.split('"')[1] for part in contents if isinstance(part, str) and part.startswith('Page "')]
         asked.extend(stems)
-        return SimpleNamespace(text=json.dumps([{'page': s, 'titles': [], 'code': [0, 1, 2]} for s in stems]))
+        return SimpleNamespace(text=json.dumps({'pages': [{'page': s, 'titles': [], 'code': [0, 1, 2]} for s in stems]}))
 
     monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
     client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
@@ -446,8 +491,8 @@ def test_titles_read_with_a_plus_lose_it_and_a_line_the_contents_lists_becomes_a
 
     def generate_content(model, contents, config):
         stems = [part.split('"')[1] for part in contents if isinstance(part, str) and part.startswith('Page "')]
-        return SimpleNamespace(text=json.dumps([{'page': s, 'titles': [{'line': i, 'level': 2} for i in titles.get(s, [])]}
-                                                for s in stems]))
+        return SimpleNamespace(text=json.dumps({'pages': [{'page': s, 'titles': [{'line': i, 'level': 2}
+                                                                                 for i in titles.get(s, [])]} for s in stems]}))
 
     monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
     client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
@@ -480,8 +525,8 @@ def test_a_chapter_number_read_as_a_symbol_takes_the_contents_number_and_a_run_o
 
     def generate_content(model, contents, config):
         stems = [part.split('"')[1] for part in contents if isinstance(part, str) and part.startswith('Page "')]
-        return SimpleNamespace(text=json.dumps([{'page': s, 'titles': [{'line': i, 'level': 2} for i in titles.get(s, [])]}
-                                                for s in stems]))
+        return SimpleNamespace(text=json.dumps({'pages': [{'page': s, 'titles': [{'line': i, 'level': 2}
+                                                                                 for i in titles.get(s, [])]} for s in stems]}))
 
     monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
     client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
