@@ -184,6 +184,26 @@ def test_an_unreachable_extension_pauses_captures_for_every_book_and_resumes_by_
     assert state(home, 'B1') == book.Ready('convert')  # a systemic failure parks no book
 
 
+def test_a_gemini_400_waits_for_new_code(home, mac):
+    # 2026-10-12 19:09 JST, B005J3IEZQ: response_schema carried additional_properties, every layout request
+    # returned 400 INVALID_ARGUMENT, and the convert job paused. Half an hour later the same request would fail
+    # again; "400 pages left" in some other error is not this. The book stays ready, and new layout.py resumes it.
+    assert book.gemini_reset('Layout failed with 400 pages left: 503 UNAVAILABLE', NOON) == NOON + 1800
+    reason = ('Layout failed with 459 pages left: Sonnet: claude -p exited 1; Gemini: 400 INVALID_ARGUMENT '
+              'Unknown name "additional_properties"')
+    assert book.gemini_reset(reason, NOON) is None
+    mac.converts['B1'] = [['gemini']]
+    mac.errors['B1'] = reason
+    step(home, 'capture')
+    assert step(home, 'convert') == 'paused: B1'
+    assert state(home, 'B1') == book.Ready('convert')
+    pause = json.loads((home / 'kindle' / 'pause.convert.json').read_text())
+    assert pause['until'] is None and pause['checks'] == ['gemini'] and pause['waits_on'] == 'convert'
+    assert step(home, 'convert', now=NOON + 1800).startswith('paused:')
+    edit(home, 'layout.py')
+    assert step(home, 'convert') == 'converted: B1'
+
+
 def test_a_gemini_quota_failure_waits_for_the_reset_and_converts_the_same_pages_with_no_new_capture(home, mac):
     mac.converts['B1'] = [['gemini']]
     mac.errors['B1'] = 'Gemini layout failed with 10 pages left: 429 PerDay'

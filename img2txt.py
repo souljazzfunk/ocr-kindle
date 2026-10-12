@@ -442,8 +442,8 @@ def main():
     parser.add_argument('--title', help='Output file name without extension (default: folder name)')
     parser.add_argument('--model', help=f'Comma-separated models tried in order, Gemini names or "vision" (default: GEMINI_MODEL in config.env or {DEFAULT_MODELS})')
     parser.add_argument('--force', action='store_true', help='Re-OCR pages that already have text')
-    parser.add_argument('--layout', choices=['gemini', 'sonnet'], default='gemini',
-                        help='Who reads the page structure: Gemini, falling back to Sonnet (claude -p) when it fails, or Sonnet only')
+    parser.add_argument('--layout', choices=['gemini', 'sonnet'], default=None,
+                        help='Use only Gemini or only Sonnet. Default: LAYOUT_PROVIDERS in config.env, Sonnet first')
     args = parser.parse_args()
     config = load_config()
     locks.keep(locks.book_lock(args.folder))
@@ -497,7 +497,7 @@ def main():
 
     # Pages read just now, and pages never laid out, take Gemini's layout; the rest keep their text and its proofreading.
     # So do the pages of a code book laid out before code was asked for (layout.code_rereads).
-    from layout import GeminiFailed, claude_cli, code_rereads, mark_layout, read_layout
+    from layout import GeminiFailed, claude_cli, code_rereads, mark_layout, provider_order, read_layout
     sources = read_sources(args.folder)
     done = read_layout(args.folder)
     again = code_rereads(args.folder, done)
@@ -506,10 +506,18 @@ def main():
     cli = claude_cli()
     if args.layout == 'sonnet' and not cli:
         sys.exit('--layout sonnet needs the Claude Code CLI (claude) on PATH or in ~/.local/bin')
-    if vision and (client or cli):
+    order = provider_order(config, cli, None if args.layout == 'sonnet' else client, args.layout)
+    if vision and order:
         try:
-            left = mark_layout(args.folder, None if args.layout == 'sonnet' else client, vision, cli)
+            left = mark_layout(args.folder, None if args.layout == 'sonnet' else client, vision, cli,
+                               config=config, limit=args.layout)
         except GeminiFailed as e:
+            print(e, flush=True)
+            (args.folder / GEMINI_ERROR).write_text(str(e), encoding='utf-8')
+            sys.exit(GEMINI_FAILED_EXIT)
+        except RuntimeError as e:
+            if not str(e).startswith(('CLAUDE_MODEL', 'Unknown layout', 'OpenAI')):
+                raise
             print(e, flush=True)
             (args.folder / GEMINI_ERROR).write_text(str(e), encoding='utf-8')
             sys.exit(GEMINI_FAILED_EXIT)
@@ -517,7 +525,7 @@ def main():
         print(f'Layout read on {len(vision) - len(left)} of {len(vision)} Vision and Live Text pages'
               + (f'; {len(left)} left, run again to retry' if left else ''), flush=True)
     elif vision:
-        print(f'GEMINI_API_KEY is not set in {CONFIG_PATH} and claude is not installed: {len(vision)} Vision pages keep titles guessed from layout')
+        print(f'No layout provider is available: {len(vision)} Vision pages keep titles guessed from layout')
     # Live Text pages already laid out are written again from layout.json, with no request: a new livetext_markdown
     # (section marks, contents pages) then reaches books converted before it.
     kept = [img for img in images if sources.get(img.stem) == LIVETEXT and img.stem in done and img not in vision]

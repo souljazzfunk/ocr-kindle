@@ -72,11 +72,27 @@ BOOK, SYSTEMIC = 'book', 'systemic'
 
 
 def gemini_reset(reason, now):
-    """Gemini's daily quota resets at midnight Pacific time; any other Gemini failure is tried again in half an hour."""
-    if not any(mark in (reason or '') for mark in ('429', 'RESOURCE_EXHAUSTED', 'PerDay', 'quota')):
-        return now + 1800
-    pacific = datetime.fromtimestamp(now, ZoneInfo('America/Los_Angeles'))
-    return (pacific.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).timestamp()
+    """When a layout failure is tried again. The reason names the earliest reset as `Resets at <unix>` when every
+    provider is out. INVALID_ARGUMENT with no such time is the request (B005J3IEZQ: additional_properties), which
+    the same code sends again, so the job waits for new convert code. A quota with no explicit time waits for
+    midnight Pacific. Anything else is tried again in half an hour."""
+    text = reason or ''
+    mark = 'Resets at '
+    if mark in text:
+        digits = ''
+        for ch in text[text.index(mark) + len(mark):]:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        if digits:
+            return int(digits)
+    if 'INVALID_ARGUMENT' in text:
+        return None
+    if any(mark in text for mark in ('429', 'RESOURCE_EXHAUSTED', 'PerDay', 'quota')):
+        pacific = datetime.fromtimestamp(now, ZoneInfo('America/Los_Angeles'))
+        return (pacific.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).timestamp()
+    return now + 1800
 
 
 @dataclass(frozen=True)

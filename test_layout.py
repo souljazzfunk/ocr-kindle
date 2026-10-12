@@ -15,6 +15,12 @@ BODY = [(0.023, 0.30 + i * 0.038, 0.027, f'Body text of the section, a full line
         for i in range(6)]
 
 
+@pytest.fixture(autouse=True)
+def layout_provider_state(tmp_path, monkeypatch):
+    monkeypatch.setattr(layout, 'PROVIDER_STATE', tmp_path / 'layout-providers.json')
+    monkeypatch.setattr(layout, 'ollama_ready', lambda config=None: False)
+
+
 def page(*lines):
     return sorted(lines, key=lambda line: line[1])
 
@@ -204,7 +210,7 @@ def test_any_failed_gemini_request_stops_the_book_without_sending_the_rest(tmp_p
     monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
     monkeypatch.setattr(layout, 'WORKERS', 1)
     client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
-    with pytest.raises(layout.GeminiFailed, match='60 pages left: 403 PERMISSION_DENIED'):
+    with pytest.raises(layout.GeminiFailed, match='60 pages left:.*403 PERMISSION_DENIED'):
         mark_layout(tmp_path, client, sorted(tmp_path.glob('page_*.png')))
     assert len(asked) == 1  # three batches, one request
 
@@ -265,13 +271,16 @@ def test_heading_noise_is_made_plain_text(tmp_path):
     assert apply(pages, findings)['page_0001'] == 'about the rates and slopes, people!\n\n## WHY WRITE\n\n' + body
 
 
-def test_sonnet_lays_out_the_pages_gemini_could_not_and_the_book_goes_on(tmp_path, monkeypatch):
-    # 2026-10-10: Gemini's 500 requests a day ran out mid-list and the list waited for the next day.
+def test_sonnet_is_asked_before_gemini_and_lays_the_book_out(tmp_path, monkeypatch):
+    # Sonnet is asked first. Gemini's client would refuse, and is not called while Sonnet answers.
     for n in range(1, 31):
         (tmp_path / f'page_{n:04d}.png').write_bytes(b'png')
         (tmp_path / f'page_{n:04d}.lines.json').write_text(json.dumps([[0.1, 0.1, 0.03, 'A TITLE']] + BODY))
 
+    gemini = []
+
     def generate_content(model, contents, config):
+        gemini.append(1)
         raise RuntimeError('429 RESOURCE_EXHAUSTED quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier')
 
     calls = []
@@ -299,7 +308,8 @@ def test_sonnet_lays_out_the_pages_gemini_could_not_and_the_book_goes_on(tmp_pat
     assert len(calls) == 2 and calls[0][:4] == ['claude', '-p', '--model', 'sonnet']
     assert '{"disableAllHooks": true}' in calls[0]  # the LLM wiki logs no session for these calls
     saved = read_layout(tmp_path)
-    assert len(saved) == 30 and all(page['model'] == 'claude' for page in saved.values())
+    assert len(saved) == 30 and all(page['provider'] == 'claude' and page['model'] == 'sonnet' for page in saved.values())
+    assert gemini == []
     assert (tmp_path / 'page_0030.txt').read_text().startswith('## A TITLE')
 
 
@@ -320,10 +330,210 @@ def test_the_book_stops_when_sonnet_fails_too(tmp_path, monkeypatch):
     monkeypatch.setattr(layout.subprocess, 'run', run)
     monkeypatch.setattr(layout, 'WORKERS', 1)
     client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
-    with pytest.raises(layout.GeminiFailed, match='60 pages left: Gemini: 429.*Sonnet: .*usage limit.*midnight Pacific'):
-        mark_layout(tmp_path, client, sorted(tmp_path.glob('page_*.png')), cli='claude')
+    now = 1_000_000
+    with pytest.raises(layout.GeminiFailed, match='60 pages left: Sonnet: .*usage limit.*Gemini: 429.*midnight Pacific') as caught:
+        mark_layout(tmp_path, client, sorted(tmp_path.glob('page_*.png')), cli='claude', now=now)
     assert len(calls) == 1  # three batches, one call to each
+    import book
+    reason = str(caught.value)
+    assert book.gemini_reset(reason, now) == int(reason.split('Resets at ')[1].split('.')[0])
 
+
+
+def test_sonnet_is_asked_first_and_a_spent_one_gives_way_to_the_next(tmp_path, monkeypatch):
+    # Sonnet is out, so Gemini reads the page and the book is not failed. Mistral is not asked: it has no key.
+    (tmp_path / 'page_0001.png').write_bytes(b'png')
+    (tmp_path / 'page_0001.lines.json').write_text(json.dumps([[0.1, 0.1, 0.03, 'A TITLE']] + BODY))
+    seen = []
+
+    def run(command, input, **kwargs):
+        seen.append(command[command.index('--model') + 1])
+        return SimpleNamespace(returncode=1, stdout='', stderr='Claude usage limit reached')
+
+    def generate_content(model, contents, config):
+        seen.append(model)
+        stems = [part.split('"')[1] for part in contents if isinstance(part, str) and part.startswith('Page "')]
+        pages = [{'page': stem, 'titles': [{'line': 0, 'level': 2}], 'quotes': [], 'figures': [], 'art': [], 'code': []}
+                 for stem in stems]
+        return SimpleNamespace(text=json.dumps({'pages': pages}))
+
+    monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
+    monkeypatch.setattr(layout.subprocess, 'run', run)
+    monkeypatch.setattr(layout, 'http_json', lambda *args, **kwargs: pytest.fail('a provider with no key was called'))
+    client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    assert mark_layout(tmp_path, client, [tmp_path / 'page_0001.png'], cli='claude') == []
+    assert seen == ['sonnet', layout.MODEL]
+    assert read_layout(tmp_path)['page_0001']['model'] == layout.MODEL
+
+
+def test_a_later_provider_reads_the_page_when_sonnet_and_gemini_are_both_out(tmp_path, monkeypatch):
+    (tmp_path / 'page_0001.png').write_bytes(b'png')
+    (tmp_path / 'page_0001.lines.json').write_text(json.dumps([[0.1, 0.1, 0.03, 'A TITLE']] + BODY))
+
+    def run(command, input, **kwargs):
+        return SimpleNamespace(returncode=1, stdout='', stderr='Claude usage limit reached')
+
+    def generate_content(model, contents, config):
+        raise RuntimeError('429 RESOURCE_EXHAUSTED quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier')
+
+    def http_json(url, body, headers, timeout=180):
+        assert url == layout.MISTRAL_URL
+        assert body['response_format']['json_schema']['schema'] == layout.LAYOUT_SCHEMA
+        page = {'page': 'page_0001', 'titles': [{'line': 0, 'level': 2}], 'quotes': [], 'figures': [], 'art': [], 'code': []}
+        return {'model': 'mistral-small-latest', 'choices': [{'message': {'content': json.dumps({'pages': [page]})}}]}
+
+    monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
+    monkeypatch.setattr(layout.subprocess, 'run', run)
+    monkeypatch.setattr(layout, 'http_json', http_json)
+    client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    config = {'MISTRAL_API_KEY': 'key'}
+    assert mark_layout(tmp_path, client, [tmp_path / 'page_0001.png'], cli='claude', config=config) == []
+    saved = read_layout(tmp_path)['page_0001']
+    assert saved['provider'] == 'mistral' and saved['model'] == 'mistral-small-latest'
+    assert (tmp_path / 'page_0001.txt').read_text().startswith('## A TITLE')
+
+
+def test_an_exhausted_provider_stays_out_until_its_reset(tmp_path, monkeypatch):
+    (tmp_path / 'page_0001.png').write_bytes(b'png')
+    (tmp_path / 'page_0001.lines.json').write_text(json.dumps([[0.1, 0.1, 0.03, 'A TITLE']] + BODY))
+    calls = []
+
+    def run(command, input, **kwargs):
+        calls.append('claude')
+        return SimpleNamespace(returncode=1, stdout='', stderr='Claude usage limit reached')
+
+    def generate_content(model, contents, config):
+        calls.append('gemini')
+        return SimpleNamespace(text=json.dumps({'pages': [{'page': 'page_0001', 'titles': [{'line': 0, 'level': 2}],
+                                                          'quotes': [], 'figures': [], 'art': [], 'code': []}]}))
+
+    monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
+    monkeypatch.setattr(layout.subprocess, 'run', run)
+    client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    image = tmp_path / 'page_0001.png'
+    assert mark_layout(tmp_path, client, [image], cli='claude', now=1000) == []
+    assert calls == ['claude', 'gemini']
+    (tmp_path / layout.LAYOUT).unlink()
+    calls.clear()
+    assert mark_layout(tmp_path, client, [image], cli='claude', now=1000) == []
+    assert calls == ['gemini']
+    (tmp_path / layout.LAYOUT).unlink()
+    calls.clear()
+    assert mark_layout(tmp_path, client, [image], cli='claude', now=1000 + layout.CLAUDE_RESET_S) == []
+    assert calls[0] == 'claude'
+
+
+def test_a_missing_openrouter_model_moves_on_to_the_next_provider(tmp_path, monkeypatch):
+    # qwen/qwen3.8-27b:free left OpenRouter's list. A 404, or a model that cannot take an image, is that
+    # provider being out: the next free model is tried, then the next provider. The convert job is not paused.
+    assert layout.failure_kind('404 No endpoints found for qwen/qwen3.8-27b:free') == 'unavailable'
+    assert layout.failure_kind('400 image input not supported') == 'unavailable'
+    assert layout.openrouter_models({}) == list(layout.OPENROUTER_MODELS)
+    asked = []
+    fallback_fails = {'on': False}
+
+    def http_json(url, body, headers, timeout=180):
+        model = body.get('model')
+        asked.append(model)
+        if '11434' in url:
+            page = {'page': 'page_0001', 'titles': [{'line': 0, 'level': 2}], 'quotes': [], 'figures': [], 'art': [], 'code': []}
+            return {'model': model, 'message': {'content': json.dumps({'pages': [page]})}}
+        if model == layout.OPENROUTER_MODELS[0]:
+            raise RuntimeError('404 No endpoints found')
+        if fallback_fails['on']:
+            raise RuntimeError('400 {"error":{"message":"image input not supported"}}')
+        page = {'page': 'page_0001', 'titles': [{'line': 0, 'level': 2}], 'quotes': [], 'figures': [], 'art': [], 'code': []}
+        return {'model': model, 'choices': [{'message': {'content': json.dumps({'pages': [page]})}}]}
+
+    def book(folder):
+        folder.mkdir()
+        (folder / 'page_0001.png').write_bytes(b'png')
+        (folder / 'page_0001.lines.json').write_text(json.dumps([[0.1, 0.1, 0.03, 'A TITLE']] + BODY))
+
+    monkeypatch.setattr(layout, 'http_json', http_json)
+    monkeypatch.setattr(layout, 'ollama_ready', lambda config=None: True)
+    config = {'OPENROUTER_API_KEY': 'key', 'LAYOUT_PROVIDERS': 'openrouter,ollama'}
+    one = tmp_path / 'one'
+    book(one)
+    assert mark_layout(one, None, [one / 'page_0001.png'], config=config) == []
+    assert asked == list(layout.OPENROUTER_MODELS)
+    assert read_layout(one)['page_0001']['model'] == layout.OPENROUTER_MODELS[1]
+    asked.clear()
+    fallback_fails['on'] = True
+    two = tmp_path / 'two'
+    book(two)
+    assert mark_layout(two, None, [two / 'page_0001.png'], config=config) == []
+    assert asked == [*layout.OPENROUTER_MODELS, layout.OLLAMA_MODEL]
+    assert read_layout(two)['page_0001']['provider'] == 'ollama'
+
+
+def test_each_provider_schema_is_rejected_offline_when_the_shape_is_wrong():
+    # The rendered request is acceptable. The shape each API refuses is the one that would have been sent
+    # by reusing another provider's rendering: Gemini's additionalProperties, a top-level array, GLM's
+    # json_schema, a paid OpenRouter model, and Ollama's free-text "json" mode.
+    for name in layout.PROVIDERS:
+        assert layout.provider_rejected(name) == [], name
+    assert layout.provider_rejected('gemini', layout.LAYOUT_SCHEMA)
+    assert layout.provider_rejected('claude', layout.for_gemini(layout.LAYOUT_SCHEMA))
+    assert layout.provider_rejected('claude', {'type': 'array'})
+    assert layout.provider_rejected('mistral', {'response_format': {'type': 'json_object'}})
+    assert layout.provider_rejected('glm', {'response_format': {'type': 'json_schema'}, 'messages': []})
+    paid = {'model': 'openai/gpt-4o', 'response_format': {'type': 'json_schema', 'json_schema': {'schema': layout.LAYOUT_SCHEMA}}}
+    assert layout.provider_rejected('openrouter', paid)
+    assert layout.provider_rejected('ollama', {'format': 'json'})
+    with pytest.raises(RuntimeError, match='OpenAI'):
+        layout.provider_order({'LAYOUT_PROVIDERS': 'openai,claude'}, cli='claude', client=object(), ollama=False)
+
+
+def test_the_claude_model_comes_from_config_and_is_named_on_the_page(tmp_path, monkeypatch):
+    (tmp_path / 'page_0001.png').write_bytes(b'png')
+    (tmp_path / 'page_0001.lines.json').write_text(json.dumps(BODY))
+    with pytest.raises(RuntimeError, match='sonnet or haiku'):
+        mark_layout(tmp_path, None, [tmp_path / 'page_0001.png'], cli='claude', config={'CLAUDE_MODEL': 'opus'})
+
+    def run(command, input, **kwargs):
+        assert command[command.index('--model') + 1] == 'haiku'
+        page = {'page': 'page_0001', 'titles': [], 'quotes': [], 'figures': [], 'art': [], 'code': []}
+        reply = {'type': 'result', 'is_error': False, 'structured_output': {'pages': [page]}}
+        return SimpleNamespace(returncode=0, stdout=json.dumps(reply), stderr='')
+
+    monkeypatch.setattr(layout.subprocess, 'run', run)
+    assert mark_layout(tmp_path, None, [tmp_path / 'page_0001.png'], cli='claude', config={'CLAUDE_MODEL': 'haiku'}) == []
+    saved = read_layout(tmp_path)['page_0001']
+    assert (saved['provider'], saved['model']) == ('claude', 'haiku')
+    from check_book import check_folder
+    (tmp_path / 'ocr_sources.tsv').write_text('page_0001\tvision\n')
+    text = (tmp_path / 'page_0001.txt').read_text(encoding='utf-8')
+    assert not text.lstrip().startswith('#')
+    (tmp_path / 'Book.md').write_text(text, encoding='utf-8')
+    checks = {item.name: item for item in check_folder(tmp_path, 'Book')}
+    assert checks['layout'].ok and not checks['headings'].ok
+
+
+def test_compare_reports_titles_quotes_figures_and_code(tmp_path, monkeypatch, capsys):
+    (tmp_path / 'page_0001.png').write_bytes(b'png')
+
+    def ask(name, model, images):
+        stem = images[0].stem
+        if model == 'haiku':
+            return {stem: {'titles': [{'line': 0, 'level': 1}], 'quotes': [1], 'figures': [], 'code': []}}
+        return {stem: {'titles': [{'line': 0, 'level': 2}], 'quotes': [],
+                       'figures': [{'lines': [2], 'description': 'chart'}], 'code': [[3, 4]]}}
+
+    report = layout.compare(tmp_path, 'sonnet', 'haiku', 1, ask=ask)
+    assert report.splitlines()[0] == 'claude:sonnet vs claude:haiku'
+    assert 'page_0001: titles, quotes, figures, code' in report
+    assert '0 same; titles 1; quotes 1; figures 1; code 1' in report
+    assert not (tmp_path / 'layout.json').exists()
+
+    def fake(folder, a, b, n, *, ask, config=None):
+        assert (a, b, n) == ('sonnet', 'haiku', 2)
+        return report
+
+    monkeypatch.setattr(layout, 'compare', fake)
+    layout.main([str(tmp_path), '--a', 'sonnet', '--b', 'haiku', '-n', '2'])
+    assert 'titles' in capsys.readouterr().out
+    assert not (tmp_path / 'layout.json').exists()
 
 
 def test_the_steve_jobs_reply_is_not_read_from_the_prose_around_the_array(tmp_path, monkeypatch):
@@ -389,8 +599,40 @@ def test_a_claude_call_without_json_schema_is_the_steve_jobs_reply():
     found = check.problems(STEVE_JOBS, 'layout.py')
     assert found == ['layout.py:11: ask_layout_claude calls claude -p without --json-schema; '
                      'call ask_claude, which passes the schema']
-    assert layout.as_json(layout.SCHEMA) == layout.LAYOUT_SCHEMA
+    assert layout.as_json(layout.SCHEMA) == layout.for_gemini(layout.LAYOUT_SCHEMA)
     assert check.main() == 0
+
+
+# gemini_schema as merged in 2282ee7. It copied additionalProperties onto Gemini's Schema, and the Developer
+# API answered 400 Unknown name "additional_properties" (B005J3IEZQ).
+_GEMINI_SCHEMA_2282EE7 = r'''
+def gemini_schema(schema):
+    kwargs = {'type': _GEMINI_TYPES[schema['type']]}
+    if 'properties' in schema:
+        kwargs['properties'] = {key: gemini_schema(value) for key, value in schema['properties'].items()}
+    if 'items' in schema:
+        kwargs['items'] = gemini_schema(schema['items'])
+    if 'required' in schema:
+        kwargs['required'] = list(schema['required'])
+    if 'additionalProperties' in schema:
+        kwargs['additional_properties'] = schema['additionalProperties']
+    return types.Schema(**kwargs)
+'''
+
+
+def test_the_schema_merged_in_2282ee7_is_rejected_by_gemini():
+    namespace = {'_GEMINI_TYPES': layout._GEMINI_TYPES, 'types': layout.types}
+    exec(_GEMINI_SCHEMA_2282EE7, namespace)
+    found = layout.gemini_rejected(namespace['gemini_schema'](layout.LAYOUT_SCHEMA))
+    assert [line.split(': ', 1)[0] for line in found] == [
+        'response_schema',
+        'response_schema.properties.pages.items',
+        'response_schema.properties.pages.items.properties.titles.items',
+        'response_schema.properties.pages.items.properties.figures.items',
+        'response_schema.properties.pages.items.properties.drop_cap']
+    assert 'omit it in gemini_schema' in found[0]
+    assert layout.gemini_rejected(layout.SCHEMA) == []
+    assert layout.LAYOUT_SCHEMA['additionalProperties'] is False
 
 # Line boxes shaped like Python Crash Course's pages (2026-10-11): body at 0.08, listings at 0.10, an indent 0.05.
 PCC = [(0.08, 0.10, 0.022, 'In Python, the hash mark (#) indicates a comment. Anything following a hash mark in your'),

@@ -4,15 +4,20 @@ Give Vision's pages the structure Vision cannot see: titles, pull quotes, figure
 Vision reads the words well, but a title, a pull quote, a sidebar label and a line in a box look alike in its line
 boxes, and their place and size vary from book to book (AI for Educators sets its section titles in dark bands at the
 body margin and its pull quotes centred in grey boxes). So img2txt.py keeps Vision's line boxes per page
-(`<page>.lines.json`), and a Gemini model that sees the page image names, by line number, what each special line is.
+(`<page>.lines.json`), and a model that sees the page image names, by line number, what each special line is.
 It answers with line numbers and a few words, never the book's text, so RECITATION cannot refuse it, and twenty pages
-go in one request. The answers are kept in layout.json, so a re-run asks only for pages not yet read.
+go in one request. The answers are kept in layout.json, with the provider and the model that read each page, so a
+re-run asks only for pages not yet read.
 
-When Gemini fails (its free tier ran out mid-list on 2026-10-10), Sonnet answers the same question through the
-Claude Code CLI on the Mac (`claude -p`), on Laiken's Claude plan, so the list does not wait a day for the quota.
-Both are given LAYOUT_SCHEMA. Sonnet's answer is the CLI's structured_output, not prose around a JSON array.
+Providers are tried in order (Sonnet first, then Gemini, Mistral, GLM-4.6V-Flash, an OpenRouter :free vision model,
+then local Ollama). One that is out of quota, rate-limited, unauthorized or unreachable is remembered until its reset
+and the next one reads the pages. The book is not parked while a later provider remains. Every provider is given
+LAYOUT_SCHEMA, rendered for that API. OpenAI's free tokens are not used: they share the pages, and the books are
+copyrighted.
 """
 
+import base64
+import hashlib
 import json
 import os
 import re
@@ -20,8 +25,13 @@ import shutil
 import subprocess
 import threading
 import time
+import urllib.error
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
+from pathlib import Path
 from statistics import median
+from zoneinfo import ZoneInfo
 
 from google.genai import types
 
@@ -31,18 +41,37 @@ from img2txt import (BODY_LINE_CHARS, DECORATIVE_DIGITS, HEADING_NUMBER, LINES, 
 LAYOUT = 'layout.json'
 MODEL = 'gemini-3.5-flash-lite'
 BATCH = 20  # pages per request; the free tier allows 500 requests a day, which 8 a request used up on 2026-10-10
-TRIES = 5
-RATE_WAIT_S = 30  # the free tier allows 15 requests a minute
 DAILY_LIMIT = 'PerDay'  # in a 429 for the day's requests, which waiting minutes does not end
+PROVIDERS = ('claude', 'gemini', 'mistral', 'glm', 'openrouter', 'ollama')
+CLAUDE_MODELS = ('sonnet', 'haiku')
+MISTRAL_MODEL = 'mistral-small-latest'
+GLM_MODEL = 'glm-4.6v-flash'
+# Free vision models on OpenRouter as of 2026-10-12. The first is tried; a 404 or a model that
+# cannot take an image tries the next. qwen/qwen3.8-27b:free is no longer listed.
+OPENROUTER_MODELS = ('google/gemma-4-31b-it:free', 'google/gemma-4-26b-a4b-it:free')
+OLLAMA_MODEL = 'qwen2.5vl:7b'  # about 6 GB; a 16 GB M1 holds it. An 8 GB Mac should set qwen2.5vl:3b.
+OLLAMA_BATCH = 4
+MISTRAL_URL = 'https://api.mistral.ai/v1/chat/completions'
+GLM_URL = 'https://api.z.ai/api/paas/v4/chat/completions'
+OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
+OLLAMA_HOST = 'http://127.0.0.1:11434'
+# Remembered across books. A provider that is out stays out until the time below, so the next book does not spend
+# the request that finds the same limit.
+PROVIDER_STATE = os.path.join(os.path.expanduser('~/Downloads/kindle'), 'layout-providers.json')
+CLAUDE_RESET_S = 5 * 3600  # Claude Code's session limit, when the reply does not name an earlier time
+RATE_RESET_S = 60
+OTHER_RESET_S = 1800
 
 
 class GeminiFailed(RuntimeError):
-    """A layout request failed after its retries. The rest of the book's requests are not sent: on 2026-10-10 every
-    request failed for ten minutes before anyone noticed, because the run went on and only the verdict was watched."""
+    """Every layout provider still in the list failed. The pages already read stay in layout.json. On 2026-10-10
+    every request failed for ten minutes before anyone noticed, because the run went on and only the verdict was watched."""
 CLAUDE_MODEL = 'sonnet'
 CLAUDE_WORKERS = 3
 CLAUDE_TIMEOUT_S = 900
-CLAUDE = 'claude'  # the model name kept in layout.json for the pages Claude laid out
+CHAT_TIMEOUT_S = 180
+OLLAMA_TIMEOUT_S = 600
+CLAUDE = 'claude'
 LINE_PITCH = 1.6  # line pitch at most this many line heights
 MIN_FIGURE_LINES = 3
 CAPS_MIN_LETTERS = 3
@@ -92,8 +121,9 @@ printed line, top to bottom. Describe the page's structure by line number.
 
 Give every page; leave a list empty when nothing on the page belongs in it."""
 
-# One schema for a batch of pages. Gemini takes it as response_schema; Sonnet takes the same value as
-# `--json-schema`. Claude Code refuses a top-level array, so the pages sit under `pages`.
+# One schema for a batch of pages. Claude takes it as --json-schema (additionalProperties included).
+# Claude Code refuses a top-level array, so the pages sit under `pages`. Gemini gets for_gemini(): the
+# Developer API rejects additionalProperties with 400 Unknown name (B005J3IEZQ, 2026-10-12, 2282ee7).
 _INT = {'type': 'integer'}
 _LINE_NUMBERS = {'type': 'array', 'items': _INT}
 
@@ -117,8 +147,18 @@ _GEMINI_TYPES = {'integer': types.Type.INTEGER, 'string': types.Type.STRING, 'ar
                  'object': types.Type.OBJECT, 'boolean': types.Type.BOOLEAN, 'number': types.Type.NUMBER}
 
 
+def for_gemini(schema):
+    """LAYOUT_SCHEMA as Gemini's response_schema can carry it. additionalProperties is Claude's key."""
+    if isinstance(schema, list):
+        return [for_gemini(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    return {key: for_gemini(value) for key, value in schema.items() if key != 'additionalProperties'}
+
+
 def gemini_schema(schema):
-    """Gemini's Schema for a JSON Schema. LAYOUT_SCHEMA is the one both models are given."""
+    """Gemini's Schema for a JSON Schema. additionalProperties is not copied: the API rejects it."""
+    schema = for_gemini(schema)
     kwargs = {'type': _GEMINI_TYPES[schema['type']]}
     if 'properties' in schema:
         kwargs['properties'] = {key: gemini_schema(value) for key, value in schema['properties'].items()}
@@ -126,9 +166,24 @@ def gemini_schema(schema):
         kwargs['items'] = gemini_schema(schema['items'])
     if 'required' in schema:
         kwargs['required'] = list(schema['required'])
-    if 'additionalProperties' in schema:
-        kwargs['additional_properties'] = schema['additionalProperties']
     return types.Schema(**kwargs)
+
+
+def gemini_rejected(schema, path='response_schema'):
+    """Where a Gemini Schema payload carries additional_properties. The SDK model has the field; the Developer
+    API answers 400 Unknown name. The message names gemini_schema, which omits it."""
+    data = schema.model_dump(exclude_none=True) if isinstance(schema, types.Schema) else schema
+    found = []
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if key in ('additional_properties', 'additionalProperties'):
+                found.append(f'{path}: additional_properties is sent to Gemini, which returns 400 Unknown name; '
+                             f'omit it in gemini_schema (LAYOUT_SCHEMA keeps additionalProperties for Claude)')
+            found.extend(gemini_rejected(value, f'{path}.{key}'))
+    elif isinstance(data, list):
+        for i, item in enumerate(data):
+            found.extend(gemini_rejected(item, f'{path}[{i}]'))
+    return found
 
 
 def as_json(schema):
@@ -281,10 +336,10 @@ def ask_layout(client, images):
     response = client.models.generate_content(model=MODEL, contents=parts, config=types.GenerateContentConfig(
         temperature=0, response_mime_type='application/json', response_schema=SCHEMA,
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)))
-    return laid_out(json.loads(response.text), {image.stem for image in images})
+    return laid_out(json.loads(response.text), {image.stem for image in images}, model=MODEL, provider='gemini')
 
 
-def laid_out(value, stems, model=None):
+def laid_out(value, stems, model=None, provider=None):
     """{stem: layout} for the pages of a schema answer that belong to this batch."""
     out = {}
     for page in value['pages']:
@@ -292,6 +347,8 @@ def laid_out(value, stems, model=None):
         if stem not in stems:
             continue
         page.pop('page')
+        if provider:
+            page['provider'] = provider
         if model:
             page['model'] = model
         out[stem] = page
@@ -305,11 +362,330 @@ def claude_cli():
          if os.access(p, os.X_OK)), None)
 
 
-def ask_claude(cli, prompt, schema, *, cwd, add_dir):
+def claude_model(config):
+    """`CLAUDE_MODEL` in config.env. Sonnet is the default; Haiku is the other model the CLI is asked for."""
+    name = (config or {}).get('CLAUDE_MODEL') or CLAUDE_MODEL
+    if name not in CLAUDE_MODELS:
+        raise RuntimeError(f'CLAUDE_MODEL must be sonnet or haiku, not {name}')
+    return name
+
+
+def model_of(name, config):
+    config = config or {}
+    if name == 'claude':
+        return claude_model(config)
+    if name == 'gemini':
+        return MODEL
+    if name == 'mistral':
+        return config.get('MISTRAL_MODEL') or MISTRAL_MODEL
+    if name == 'glm':
+        return config.get('GLM_MODEL') or GLM_MODEL
+    if name == 'openrouter':
+        return openrouter_models(config)[0]
+    if name == 'ollama':
+        return config.get('OLLAMA_MODEL') or OLLAMA_MODEL
+    raise RuntimeError(f'Unknown layout provider {name}')
+
+
+def provider_order(config, cli, client, limit=None, ollama=None):
+    """Providers that can be asked, in the configured order. Sonnet is first unless config.env says otherwise.
+    A provider with no key is skipped. Ollama is skipped when nothing is listening, so a Mac without it does not
+    pause the job. OpenAI is refused: its free tokens share the pages."""
+    config = config or {}
+    raw = config.get('LAYOUT_PROVIDERS') or ','.join(PROVIDERS)
+    names = [part.strip() for part in raw.split(',') if part.strip()]
+    if any(name == 'openai' or name.startswith('openai/') for name in names):
+        raise RuntimeError('OpenAI is not a layout provider: its free tokens share the pages, and the books are copyrighted')
+    unknown = [name for name in names if name not in PROVIDERS]
+    if unknown:
+        raise RuntimeError(f'Unknown layout provider {unknown[0]}')
+    if limit == 'sonnet':
+        names = ['claude']
+    elif limit == 'gemini':
+        names = ['gemini']
+    ready = ollama_ready(config) if ollama is None else ollama
+    order = []
+    for name in names:
+        if name == 'claude' and not cli:
+            continue
+        if name == 'gemini' and not client:
+            continue
+        if name == 'mistral' and not config.get('MISTRAL_API_KEY'):
+            continue
+        if name == 'glm' and not config.get('ZAI_API_KEY'):
+            continue
+        if name == 'openrouter' and not config.get('OPENROUTER_API_KEY'):
+            continue
+        if name == 'openrouter':
+            models = openrouter_models(config)
+            if not models or not all(free_model(model) for model in models):
+                print(f'OPENROUTER_MODEL {config.get("OPENROUTER_MODEL")} is not a :free model; skipping', flush=True)
+                continue
+        if name == 'ollama' and not ready:
+            continue
+        order.append(name)
+    return order
+
+
+def openrouter_models(config):
+    """Comma-separated `OPENROUTER_MODEL`, or the default list. The first model that is still listed is used."""
+    raw = (config or {}).get('OPENROUTER_MODEL') or ','.join(OPENROUTER_MODELS)
+    return [part.strip() for part in raw.split(',') if part.strip()]
+
+
+def free_model(model):
+    return model == 'openrouter/free' or model.endswith(':free')
+
+
+def model_missing(error):
+    """A model id OpenRouter no longer lists (404), or a model that cannot see the page image.
+    That provider is out; the next model in the list, then the next provider, reads the pages."""
+    text = str(error)
+    return text.startswith('404') or 'image input not supported' in text.lower()
+
+
+def ollama_ready(config):
+    host = ((config or {}).get('OLLAMA_HOST') or OLLAMA_HOST).rstrip('/')
+    try:
+        with urllib.request.urlopen(host + '/api/tags', timeout=1) as res:
+            return res.status == 200
+    except Exception:
+        return False
+
+
+def closed_objects(schema, path='$'):
+    """Objects without additionalProperties: false. Claude's --json-schema and Mistral's strict json_schema reject them.
+    A top-level array is the shape Claude Code refuses, which is why pages sit under `pages`."""
+    found = []
+    if isinstance(schema, dict):
+        if path == '$' and schema.get('type') != 'object':
+            found.append(f'{path}: the root must be an object; Claude rejects a top-level array')
+        if schema.get('type') == 'object' and schema.get('additionalProperties') is not False:
+            found.append(f'{path}: additionalProperties must be false; Claude and Mistral strict mode reject an open object')
+        for key, value in schema.items():
+            found += closed_objects(value, f'{path}.{key}')
+    elif isinstance(schema, list):
+        for i, value in enumerate(schema):
+            found += closed_objects(value, f'{path}[{i}]')
+    return found
+
+
+def request_schema(provider, config=None):
+    """The schema-bearing part of a request, with no page bytes. Offline checks read this."""
+    config = config or {}
+    model = model_of(provider, config) if provider != 'claude' else CLAUDE_MODEL
+    if provider == 'gemini':
+        return SCHEMA
+    if provider == 'claude':
+        return LAYOUT_SCHEMA
+    if provider == 'glm':
+        return chat_body('glm', [], config, model)
+    if provider == 'ollama':
+        return ollama_body([], config, model)
+    if provider in ('mistral', 'openrouter'):
+        return chat_body(provider, [], config, model)
+    raise RuntimeError(f'Unknown layout provider {provider}')
+
+
+def provider_rejected(provider, payload=None, config=None):
+    """What this provider's API refuses in the rendered request. Empty means the request may be sent.
+    Gemini's check is gemini_rejected. The others name the shape their API documents."""
+    payload = request_schema(provider, config) if payload is None else payload
+    if provider == 'gemini':
+        return gemini_rejected(payload)
+    if provider == 'claude':
+        return closed_objects(payload)
+    if provider == 'mistral':
+        return mistral_rejected(payload)
+    if provider == 'glm':
+        return glm_rejected(payload)
+    if provider == 'openrouter':
+        return openrouter_rejected(payload)
+    if provider == 'ollama':
+        return ollama_rejected(payload)
+    return [f'Unknown layout provider {provider}']
+
+
+def mistral_rejected(body):
+    fmt = (body or {}).get('response_format') or {}
+    schema = (fmt.get('json_schema') or {}).get('schema')
+    if fmt.get('type') != 'json_schema' or not isinstance(schema, dict):
+        return ['Mistral takes response_format type json_schema with LAYOUT_SCHEMA under json_schema.schema']
+    return [f'Mistral strict: {item}' for item in closed_objects(schema)]
+
+
+def glm_rejected(body):
+    """GLM's documented response_format is text or json_object. json_schema is not in that enum, so the schema
+    is carried in the prompt and the body asks for a JSON object."""
+    fmt = (body or {}).get('response_format') or {}
+    if fmt.get('type') != 'json_object' or set(fmt) - {'type'}:
+        return ['GLM accepts response_format type json_object only; do not send json_schema']
+    texts = []
+    for message in (body or {}).get('messages') or []:
+        content = message.get('content')
+        if isinstance(content, str):
+            texts.append(content)
+        elif isinstance(content, list):
+            texts += [part.get('text', '') for part in content if isinstance(part, dict)]
+    blob = '\n'.join(texts)
+    if '"titles"' not in blob or '"pages"' not in blob:
+        return ['GLM is json_object, so the prompt must carry LAYOUT_SCHEMA']
+    return []
+
+
+def openrouter_rejected(body):
+    model = (body or {}).get('model') or ''
+    if not free_model(model):
+        return [f'OpenRouter model {model} is not a :free model; paid models are not used for these pages']
+    fmt = (body or {}).get('response_format') or {}
+    schema = (fmt.get('json_schema') or {}).get('schema')
+    if fmt.get('type') != 'json_schema' or not isinstance(schema, dict):
+        return ['OpenRouter takes response_format type json_schema with LAYOUT_SCHEMA']
+    return [f'OpenRouter schema: {item}' for item in closed_objects(schema)]
+
+
+def ollama_rejected(body):
+    """Ollama's format takes the schema itself. The string "json" is JSON mode, which is free text and the way the
+    Steve Jobs reply gained a sentence after the array."""
+    fmt = (body or {}).get('format')
+    if not isinstance(fmt, dict) or fmt.get('type') != 'object':
+        return ['Ollama format must be LAYOUT_SCHEMA, not the string "json"']
+    return []
+
+
+def numbered_lines(image):
+    return '\n'.join(f'{i}: {line}' for i, line in enumerate(page_lines(image)))
+
+
+def data_url(image):
+    return 'data:image/png;base64,' + base64.b64encode(image.read_bytes()).decode()
+
+
+def chat_parts(images, schema_text=None, image_url='object'):
+    text = PROMPT
+    if schema_text:
+        text += '\n\nReply as JSON matching this schema:\n' + schema_text
+    parts = [{'type': 'text', 'text': text}]
+    for image in images:
+        parts.append({'type': 'text', 'text': f'Page "{image.stem}":\n{numbered_lines(image)}'})
+        url = data_url(image)
+        parts.append({'type': 'image_url', 'image_url': url if image_url == 'string' else {'url': url}})
+    return parts
+
+
+def chat_body(provider, images, config, model):
+    if provider == 'glm':
+        parts = chat_parts(images, json.dumps(LAYOUT_SCHEMA), image_url='object')
+        fmt = {'type': 'json_object'}
+    elif provider == 'mistral':
+        parts = chat_parts(images, image_url='string')
+        fmt = {'type': 'json_schema', 'json_schema': {'name': 'layout', 'strict': True, 'schema': LAYOUT_SCHEMA}}
+    else:
+        parts = chat_parts(images, image_url='object')
+        fmt = {'type': 'json_schema', 'json_schema': {'name': 'layout', 'strict': True, 'schema': LAYOUT_SCHEMA}}
+    return {'model': model, 'temperature': 0, 'messages': [{'role': 'user', 'content': parts}], 'response_format': fmt}
+
+
+def ollama_body(images, config, model):
+    return {'model': model, 'stream': False, 'format': LAYOUT_SCHEMA, 'options': {'temperature': 0},
+            'messages': [{'role': 'user', 'content': PROMPT + '\n\n' + '\n\n'.join(
+                f'Page "{image.stem}":\n{numbered_lines(image)}' for image in images),
+                'images': [base64.b64encode(image.read_bytes()).decode() for image in images]}]}
+
+
+def endpoint(provider, config):
+    config = config or {}
+    if provider == 'mistral':
+        return MISTRAL_URL, {'Authorization': f'Bearer {config.get("MISTRAL_API_KEY", "")}', 'Content-Type': 'application/json'}
+    if provider == 'glm':
+        return GLM_URL, {'Authorization': f'Bearer {config.get("ZAI_API_KEY", "")}', 'Content-Type': 'application/json'}
+    if provider == 'openrouter':
+        return OPENROUTER_URL, {'Authorization': f'Bearer {config.get("OPENROUTER_API_KEY", "")}',
+                                'Content-Type': 'application/json'}
+    host = (config.get('OLLAMA_HOST') or OLLAMA_HOST).rstrip('/')
+    return host + '/api/chat', {'Content-Type': 'application/json'}
+
+
+def http_json(url, body, headers, timeout=CHAT_TIMEOUT_S):
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as res:
+            return json.loads(res.read().decode())
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode(errors='replace')[:500]
+        raise RuntimeError(f'{e.code} {detail}') from None
+    except urllib.error.URLError as e:
+        raise RuntimeError(f'unavailable: {e.reason}') from None
+
+
+def chat_content(reply):
+    if 'message' in reply and 'choices' not in reply:
+        return (reply.get('message') or {}).get('content') or '', reply.get('model')
+    choice = (reply.get('choices') or [{}])[0]
+    content = (choice.get('message') or {}).get('content') or ''
+    if isinstance(content, list):
+        content = ''.join(part.get('text', '') for part in content if isinstance(part, dict))
+    return content, reply.get('model')
+
+
+def parse_layout(content, stems, model, provider):
+    try:
+        value = json.loads(content)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f'not JSON: {e}') from None
+    if not isinstance(value, dict) or 'pages' not in value:
+        raise RuntimeError('the reply has no pages')
+    return laid_out(value, stems, model=model, provider=provider)
+
+
+def ask_chat(provider, images, config, model):
+    url, headers = endpoint(provider, config)
+    reply = http_json(url, chat_body(provider, images, config, model), headers)
+    content, used = chat_content(reply)
+    if not content:
+        raise RuntimeError(f'{provider} returned nothing')
+    return parse_layout(content, {image.stem for image in images}, used or model, provider)
+
+
+def ask_openrouter(images, config, skip):
+    """Try each free vision model. A missing model, or one that cannot take an image, is skipped; a quota
+    error stops the provider so the next one in the list is asked."""
+    models = [model for model in openrouter_models(config) if model not in skip]
+    if not models:
+        raise RuntimeError('404 no OpenRouter vision model left')
+    last = None
+    for model in models:
+        try:
+            return ask_chat('openrouter', images, config, model)
+        except Exception as e:
+            last = e
+            if not model_missing(e):
+                raise
+            skip.add(model)
+            print(f'{model} is out: {e}', flush=True)
+    raise last
+
+
+def ask_ollama(images, config, model):
+    merged = {}
+    url, headers = endpoint('ollama', config)
+    for start in range(0, len(images), OLLAMA_BATCH):
+        batch = images[start:start + OLLAMA_BATCH]
+        reply = http_json(url, ollama_body(batch, config, model), headers, timeout=OLLAMA_TIMEOUT_S)
+        content, used = chat_content(reply)
+        if not content:
+            raise RuntimeError('ollama returned nothing')
+        merged.update(parse_layout(content, {image.stem for image in batch}, used or model, 'ollama'))
+    return merged
+
+
+def ask_claude(cli, prompt, schema, *, cwd, add_dir, model):
     """The only `claude -p`. `--json-schema` puts the value in `structured_output`. `result` is the model's prose:
     on 2026-10-12 (Steve Jobs) a sentence after the array was read as the layout, and the book stopped."""
+    if model not in CLAUDE_MODELS:
+        raise RuntimeError(f'CLAUDE_MODEL must be sonnet or haiku, not {model}')
     run = subprocess.run(
-        [cli, '-p', '--model', CLAUDE_MODEL, '--output-format', 'json', '--json-schema', json.dumps(schema),
+        [cli, '-p', '--model', model, '--output-format', 'json', '--json-schema', json.dumps(schema),
          '--allowedTools', 'Read', '--add-dir', str(add_dir), '--strict-mcp-config',
          '--settings', '{"disableAllHooks": true}'],
         input=prompt, capture_output=True, text=True, timeout=CLAUDE_TIMEOUT_S,
@@ -322,71 +698,213 @@ def ask_claude(cli, prompt, schema, *, cwd, add_dir):
     return output
 
 
-def ask_layout_claude(cli, images):
-    """Sonnet's reading of a batch of Vision pages through `claude -p`: it opens each page image with its Read tool.
+def ask_layout_claude(cli, images, model=None):
+    """Sonnet or Haiku's reading of a batch through `claude -p`: it opens each page image with its Read tool.
     Hooks are off, and LLM_WIKI_WATCHER tells the wiki's own SessionEnd hook to skip them, so these calls stay out of
     the session log the LLM wiki grows from (Laiken, 2026-10-10: seven of them had reached its queue)."""
+    model = model or CLAUDE_MODEL
     parts = [PROMPT, 'Open each page image with the Read tool before answering.']
     for image in images:
-        parts += [f'Page "{image.stem}": image {image.resolve()}',
-                  '\n'.join(f'{i}: {line}' for i, line in enumerate(page_lines(image)))]
+        parts += [f'Page "{image.stem}": image {image.resolve()}', numbered_lines(image)]
     value = ask_claude(cli, '\n\n'.join(parts), LAYOUT_SCHEMA, cwd=images[0].parent,
-                       add_dir=images[0].parent.resolve())
-    return laid_out(value, {image.stem for image in images}, model=CLAUDE)
+                       add_dir=images[0].parent.resolve(), model=model)
+    return laid_out(value, {image.stem for image in images}, model=model, provider='claude')
 
 
-def mark_layout(folder, client, images, cli=None):
-    """Ask Gemini for the layout of the pages in images not read yet, and rewrite every page in images from it.
-    Once a Gemini request fails, the rest go to Sonnet through cli (`claude -p`); with no client, all of them do.
+def display(name, model):
+    if name == 'claude':
+        return 'Haiku' if model == 'haiku' else 'Sonnet'
+    if name == 'gemini':
+        return 'Gemini'
+    return name
 
-    Returns the pages still without a layout (a failed request; running img2txt.py again asks again).
+
+def failure_kind(error):
+    text = str(error)
+    low = text.lower()
+    # A deleted model or one that cannot see images is this provider being out, not a schema bug. A schema
+    # bug pauses until the converter changes; that would stop the list on a 404.
+    if model_missing(error):
+        return 'unavailable'
+    if 'INVALID_ARGUMENT' in text or 'additional_properties' in low:
+        return 'schema'
+    if any(mark in text for mark in ('401', '403', 'PERMISSION_DENIED')) or 'invalid api key' in low or 'unauthorized' in low:
+        return 'auth'
+    if 'perday' in low or 'per day' in low or DAILY_LIMIT.lower() in low or 'usage limit' in low:
+        return 'quota'
+    if any(mark in low for mark in ('429', 'resource_exhausted', 'rate limit', 'rate_limit', 'too many requests')):
+        return 'rate'
+    if any(mark in low for mark in ('unavailable', 'connection refused', 'timed out', 'timeout', 'model not found', '502', '503', '504')):
+        return 'unavailable'
+    return 'other'
+
+
+def block_until(name, kind, now):
+    """When this provider may be asked again. A schema 400 is the request we send, so it waits for new code, not a clock."""
+    if kind == 'schema':
+        return None
+    if kind == 'rate':
+        return now + RATE_RESET_S
+    if kind == 'quota' and name == 'gemini':
+        pacific = datetime.fromtimestamp(now, ZoneInfo('America/Los_Angeles'))
+        return (pacific.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).timestamp()
+    if kind == 'quota' and name == 'claude':
+        return now + CLAUDE_RESET_S
+    if kind == 'quota':
+        utc = datetime.fromtimestamp(now, ZoneInfo('UTC'))
+        return (utc.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).timestamp()
+    return now + OTHER_RESET_S
+
+
+def converter_version():
+    return hashlib.sha256(open(__file__, 'rb').read()).hexdigest()[:12]
+
+
+def key_hash(config, name):
+    secret = {'mistral': 'MISTRAL_API_KEY', 'glm': 'ZAI_API_KEY', 'openrouter': 'OPENROUTER_API_KEY',
+              'gemini': 'GEMINI_API_KEY'}.get(name)
+    return hashlib.sha256(((config or {}).get(secret, '') if secret else '').encode()).hexdigest()[:12]
+
+
+def load_blocks(path, now, config, converter):
+    if not path or not os.path.exists(path):
+        return {}
+    try:
+        data = json.loads(open(path, encoding='utf-8').read())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    kept = {}
+    for name, rec in data.items() if isinstance(data, dict) else []:
+        if not isinstance(rec, dict):
+            continue
+        if rec.get('kind') == 'schema' and rec.get('converter') != converter:
+            continue
+        if rec.get('kind') == 'auth' and rec.get('key') != key_hash(config, name):
+            continue
+        until = rec.get('until')
+        if until is not None and until <= now:
+            continue
+        kept[name] = rec
+    return kept
+
+
+def save_blocks(path, blocks):
+    if not path:
+        return
+    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as fh:
+        json.dump(blocks, fh)
+
+
+class Roster:
+    """Which providers are out for this run and for later books, and the errors to report when none remain."""
+
+    def __init__(self, order, blocks, now, config, path, converter):
+        self.order = list(order)
+        self.blocks = blocks
+        self.now = now
+        self.config = config
+        self.path = path
+        self.converter = converter
+        self.lock = threading.Lock()
+        self.errors = []
+
+    def first_open(self):
+        with self.lock:
+            return next((name for name in self.order if name not in self.blocks), None)
+
+    def open(self, name):
+        with self.lock:
+            return name not in self.blocks
+
+    def block(self, name, model, error):
+        kind = failure_kind(error)
+        rec = {'kind': kind, 'until': block_until(name, kind, self.now), 'reason': str(error)[:300],
+               'converter': self.converter, 'key': key_hash(self.config, name)}
+        with self.lock:
+            if name not in self.blocks:
+                self.blocks[name] = rec
+                self.errors.append((display(name, model), str(error)))
+            save_blocks(self.path, self.blocks)
+        print(f'{display(name, model)} is out ({kind}): {error}', flush=True)
+
+    def message(self, left):
+        body = '; '.join(f'{label}: {text[:220]}' for label, text in self.errors) or 'no layout provider is configured'
+        times = [rec['until'] for rec in self.blocks.values() if rec.get('until')]
+        extra = ''
+        if any(DAILY_LIMIT in text for _, text in self.errors):
+            extra += " Today's requests are used up; they come back at midnight Pacific (16:00 or 17:00 JST)."
+        if times:
+            extra += f' Resets at {int(min(times))}.'
+        elif any(rec.get('kind') == 'schema' for rec in self.blocks.values()) and 'INVALID_ARGUMENT' not in body:
+            extra += ' INVALID_ARGUMENT'
+        return f'Layout failed with {left} pages left: {body}.{extra}'
+
+
+def call_provider(name, images, model, client, cli, config, skip=None):
+    if name == 'claude':
+        return ask_layout_claude(cli, images, model)
+    if name == 'gemini':
+        return ask_layout(client, images)
+    if name == 'ollama':
+        return ask_ollama(images, config, model)
+    if name == 'openrouter':
+        return ask_openrouter(images, config, skip if skip is not None else set())
+    return ask_chat(name, images, config, model)
+
+
+def mark_layout(folder, client, images, cli=None, config=None, limit=None, now=None, state_path=None):
+    """Read the layout of the pages in images not read yet, and rewrite every page in images from it.
+
+    Providers run in order. One that fails is not asked for the rest of the book; the next one is. Returns the
+    pages still without a layout when every provider that was asked succeeded for the pages it was given. When
+    every provider is out, raises GeminiFailed and the convert job waits for the earliest reset.
     """
+    config = {} if config is None else config
+    now = time.time() if now is None else now
     layout = read_layout(folder)
     again = code_rereads(folder, layout)
     todo = [image for image in images if (image.stem not in layout or image.stem in again)
             and (image.with_suffix(LINES).exists() or image.with_suffix('.txt').exists())]
     batches = [todo[i:i + BATCH] for i in range(0, len(todo), BATCH)]
-
-    failed = threading.Event()  # Gemini failed: send it nothing more
-    claude_failed = threading.Event()
-    claude_slots = threading.Semaphore(CLAUDE_WORKERS)
-    gemini_error = []
-    if not client:
-        failed.set()
+    order = provider_order(config, cli, client, limit) if todo else []
+    if 'claude' in order:
+        claude_model(config)
+    path = PROVIDER_STATE if state_path is None else state_path
+    roster = Roster(order, load_blocks(path, now, config, converter_version()), now, config, path, converter_version())
+    slots = {'claude': threading.Semaphore(CLAUDE_WORKERS), 'glm': threading.Semaphore(1)}
+    skip = set()  # OpenRouter models already answered 404 or that they cannot take an image
 
     def ask(batch):
-        for attempt in range(TRIES):
-            if failed.is_set():
-                break
+        while True:
+            name = roster.first_open()
+            if name is None:
+                return {}, True
+            sem = slots.get(name)
+            if sem:
+                sem.acquire()
             try:
-                return ask_layout(client, batch), None
+                if not roster.open(name):
+                    continue
+                model = model_of(name, config)
+                return call_provider(name, batch, model, client, cli, config, skip), False
             except Exception as e:
-                if '429' not in str(e) or DAILY_LIMIT in str(e) or attempt + 1 == TRIES:
-                    if not failed.is_set():
-                        print(f'GEMINI ERROR [layout]: {e}' + ('; Sonnet lays out the rest' if cli else ''), flush=True)
-                        gemini_error.append(e)
-                    failed.set()
-                    break
-                time.sleep(RATE_WAIT_S)
-        if not cli or claude_failed.is_set():
-            return {}, (gemini_error or [None])[0]
-        with claude_slots:
-            if claude_failed.is_set():
-                return {}, None
-            try:
-                return ask_layout_claude(cli, batch), None
-            except Exception as e:
-                claude_failed.set()
-                return {}, RuntimeError(f'Gemini: {str((gemini_error or ["no API key"])[0])[:300]}; Sonnet: {e}')
+                roster.block(name, model_of(name, config), e)
+            finally:
+                if sem:
+                    sem.release()
 
-    first_error = None
+    failed = False
+    if todo and not order:
+        failed = True
     with ThreadPoolExecutor(WORKERS) as pool:
         for done, (pages, error) in enumerate(pool.map(ask, batches), 1):
             if error:
-                print(f'GEMINI ERROR [layout {done}/{len(batches)}]: {error}', flush=True)
-                first_error = first_error or error
-            elif any(page.get('model') == CLAUDE for page in pages.values()):
-                print(f'[layout {done}/{len(batches)}] {len(pages)} pages by Sonnet', flush=True)
+                print(f'layout [{done}/{len(batches)}]: {roster.message(0)}', flush=True)
+                failed = True
+            elif pages:
+                model = next(iter(pages.values())).get('model')
+                print(f'[layout {done}/{len(batches)}] {len(pages)} pages by {model}', flush=True)
             layout.update((stem, dict(page, code=code_groups(page.get('code')))) for stem, page in pages.items())
             (folder / LAYOUT).write_text(json.dumps(layout, ensure_ascii=False, indent=0), encoding='utf-8')
     every = page_images(folder)
@@ -407,12 +925,102 @@ def mark_layout(folder, client, images, cli=None):
             text = livetext_markdown(page_lines(image), layout[image.stem], chapters, image.stem in contents, mark, spelled)
             image.with_suffix('.txt').write_text(text or ' ', encoding='utf-8')
     left = [image for image in images if image.stem not in layout]
-    if first_error:
-        # The pages laid out so far are written above; the rest wait for the cause to be gone.
-        when = (' Today\'s requests are used up; they come back at midnight Pacific (16:00 or 17:00 JST).'
-                if DAILY_LIMIT in str(first_error) else '')
-        raise GeminiFailed(f'Layout failed with {len(left)} pages left: {str(first_error)[:300]}.{when}')
+    if failed:
+        raise GeminiFailed(roster.message(len(left)))
     return left
+
+
+def signature(page, key):
+    if key == 'titles':
+        return tuple(sorted((item.get('line'), item.get('level')) for item in page.get('titles') or [] if isinstance(item, dict)))
+    if key == 'quotes':
+        return tuple(sorted(i for i in page.get('quotes') or [] if isinstance(i, int)))
+    if key == 'figures':
+        return tuple(sorted((tuple(sorted(item.get('lines') or [])), (item.get('description') or '').strip())
+                            for item in page.get('figures') or [] if isinstance(item, dict)))
+    return tuple(sorted(tuple(run) for run in page.get('code') or []))
+
+
+def layout_report(left_name, right_name, left, right):
+    """Where two readings of the same pages differ, in the fields the layout is for."""
+    lines = [f'{left_name} vs {right_name}']
+    counts = {key: 0 for key in ('same', 'titles', 'quotes', 'figures', 'code', 'missing')}
+    for stem in sorted(set(left) | set(right)):
+        a, b = left.get(stem), right.get(stem)
+        if not a or not b:
+            counts['missing'] += 1
+            lines.append(f'{stem}: missing from {left_name if not a else right_name}')
+            continue
+        diffs = [key for key in ('titles', 'quotes', 'figures', 'code') if signature(a, key) != signature(b, key)]
+        if not diffs:
+            counts['same'] += 1
+            continue
+        for key in diffs:
+            counts[key] += 1
+        lines.append(f'{stem}: {", ".join(diffs)}')
+        for key in diffs:
+            lines.append(f'  {key} {left_name}: {signature(a, key)}')
+            lines.append(f'  {key} {right_name}: {signature(b, key)}')
+    lines.append(f'{counts["same"]} same; titles {counts["titles"]}; quotes {counts["quotes"]}; '
+                 f'figures {counts["figures"]}; code {counts["code"]}')
+    return '\n'.join(lines)
+
+
+def parse_spec(spec, config):
+    """`sonnet` and `haiku` are the Claude CLI with that model. Anything else is a provider name, or `provider:model`."""
+    spec = spec.strip()
+    if spec in CLAUDE_MODELS:
+        return 'claude', spec
+    if spec == 'claude':
+        return 'claude', claude_model(config)
+    if ':' in spec:
+        name, model = spec.split(':', 1)
+        if name == 'claude' and model not in CLAUDE_MODELS:
+            raise RuntimeError(f'CLAUDE_MODEL must be sonnet or haiku, not {model}')
+        if name not in PROVIDERS:
+            raise RuntimeError(f'Unknown layout provider {name}')
+        return name, model
+    if spec not in PROVIDERS:
+        raise RuntimeError(f'Unknown layout provider {spec}')
+    return spec, model_of(spec, config)
+
+
+def compare(folder, spec_a, spec_b, n, *, ask, config=None):
+    """Lay out the first n pages twice and report title, quote, figure and code differences. Writes nothing."""
+    config = {} if config is None else config
+    images = page_images(folder)[:n]
+    if not images:
+        raise RuntimeError(f'No page images in {folder}')
+    name_a, model_a = parse_spec(spec_a, config)
+    name_b, model_b = parse_spec(spec_b, config)
+    return layout_report(f'{name_a}:{model_a}', f'{name_b}:{model_b}',
+                         ask(name_a, model_a, images), ask(name_b, model_b, images))
+
+
+def main(argv=None):
+    import argparse
+    from img2txt import load_config
+    from google import genai
+
+    parser = argparse.ArgumentParser(description='Lay out the same pages with two providers and report differences')
+    parser.add_argument('folder', type=Path)
+    parser.add_argument('--a', required=True, help='sonnet, haiku, or a provider (gemini, mistral, glm, openrouter, ollama)')
+    parser.add_argument('--b', required=True)
+    parser.add_argument('-n', type=int, default=8)
+    args = parser.parse_args(argv)
+    config = load_config()
+    key = config.get('GEMINI_API_KEY')
+    client = genai.Client(api_key=key) if key else None
+    cli = claude_cli()
+
+    def ask(name, model, images):
+        return call_provider(name, images, model, client, cli, config)
+
+    print(compare(args.folder, args.a, args.b, args.n, ask=ask, config=config))
+
+
+if __name__ == '__main__':
+    main()
 
 
 def page_markdown(boxes, page, chapters=()):
