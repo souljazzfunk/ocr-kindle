@@ -83,6 +83,8 @@ def publish(library, listed, book, ready, current, args):
     slow = seconds is not None and seconds > capture_book.BUDGETS['book']
     book.succeed('publish', {'drive': str(copied) if copied else None, 'version': current['publish'],
                              'seconds': seconds, 'slow': slow}, upstream=converted['at'])
+    capture_book.publish_report(book.asin, book.title, read_json(converted['report']), book.record('publish'),
+                                args.config)
     return f'published slowly ({seconds // 60} min)' if slow else 'published'
 
 

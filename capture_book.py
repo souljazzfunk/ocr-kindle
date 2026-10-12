@@ -138,6 +138,26 @@ def publish(folder, title, config=None):
     return Path(shutil.copy2(book, drive))
 
 
+def publish_report(asin, title, report, published, config):
+    """Copy a published book's report and its publish record to KINDLE_REPORTS_FOLDER (default Kindle_reports beside
+    GOOGLE_DRIVE_FOLDER) as <ASIN>.json, so the cloud reads results from Drive instead of asking a Mac session: on
+    2026-10-12 one book took six such requests. Returns where, or None. Never raises: the book is already on Drive."""
+    drive = config.get('GOOGLE_DRIVE_FOLDER')
+    folder = Path(config['KINDLE_REPORTS_FOLDER']) if config.get('KINDLE_REPORTS_FOLDER') else \
+        Path(drive).parent / 'Kindle_reports' if drive else None
+    if folder is None or not folder.parent.is_dir():
+        return None
+    target = folder / f'{asin}.json'
+    try:
+        folder.mkdir(exist_ok=True)
+        target.write_text(json.dumps({'asin': asin, 'title': title, 'publish': published, 'report': report},
+                                     ensure_ascii=False, indent=1), encoding='utf-8')
+    except OSError as e:
+        print(f'Report of {asin} not copied to {folder}: {type(e).__name__}: {e}', flush=True)
+        return None
+    return target
+
+
 def start_wiki_ingest(data, watch=WIKI_WATCH, spawn=subprocess.Popen):
     """Start the wiki's watcher for a book that passed, detached, so the note is written while the next book captures
     instead of at the watcher's next hourly run. The watcher queues a rerun when one is already going."""

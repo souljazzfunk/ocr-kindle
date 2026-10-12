@@ -285,3 +285,18 @@ def test_a_book_s_time_from_its_first_capture_to_drive_is_recorded_once_and_a_sl
     assert step(home, 'capture', now=NOON + 90200) == 'captured: B2'
     step(home, 'convert', now=NOON + 90300)
     assert step(home, 'convert', now=NOON + 90400) == 'published: B2'
+
+
+def test_a_published_book_s_report_and_time_are_copied_to_drive_for_the_cloud_to_read(home, mac):
+    # 2026-10-12: each result of 英語教育幻想 was read by asking a Mac session, six times for one book.
+    drive = home / 'Drive' / 'Kindle_md'
+    drive.mkdir(parents=True)
+    config = {'GOOGLE_DRIVE_FOLDER': str(drive)}
+    step(home, 'capture', now=NOON, config=config)
+    step(home, 'convert', now=NOON + 300, config=config)
+    assert step(home, 'convert', now=NOON + 600, config=config) == 'published: B1'
+    copied = json.loads((home / 'Drive' / 'Kindle_reports' / 'B1.json').read_text())
+    assert (copied['asin'], copied['title'], copied['publish']['seconds'], copied['publish']['slow']) == \
+        ('B1', 'One', 600, False)
+    assert copied['report']['blocking_failures'] == []
+    assert capture_book.publish_report('B1', 'One', {}, {}, {'GOOGLE_DRIVE_FOLDER': str(home / 'gone' / 'md')}) is None
