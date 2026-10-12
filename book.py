@@ -101,6 +101,9 @@ RULES = {
     'start_position': Rule(BOOK, recapture=True, blame='capture'),
     'end_position': Rule(BOOK, recapture=True, blame='capture'),
     'capture_stall': Rule(BOOK, recapture=True),
+    # The capture stopped where the extension could not page on: the same code stops at the same place, so the book waits
+    # for new capture code. 英語教育幻想 (2026-10-12) stopped at 2320 paging back.
+    'capture_stop': Rule(BOOK, blame='capture'),
     'kindle_app_only': Rule(BOOK, breaker=False, final=True),
     'app_folder': Rule(BOOK, breaker=False, final=True),
     'app_open': Rule(BOOK, breaker=False, final=True),
@@ -121,7 +124,8 @@ def classify(checks):
     rules = [RULES.get(check, BOOK_FAULT) for check in checks] or [BOOK_FAULT]
     systemic = next((rule for rule in rules if rule.kind == SYSTEMIC), None)
     return systemic or Rule(BOOK, recapture=all(r.recapture for r in rules), breaker=any(r.breaker for r in rules),
-                            final=all(r.final for r in rules), waits_on=next((r.waits_on for r in rules if r.waits_on), None))
+                            final=all(r.final for r in rules), waits_on=next((r.waits_on for r in rules if r.waits_on), None),
+                            blame=next((r.blame for r in rules if r.blame), None))
 
 
 def source_digest(root, sources):
@@ -222,9 +226,11 @@ class Book:
         for stage in STAGES:
             failure = self.failure(stage.name)
             rule = classify((failure or {}).get('checks', []))
-            if failure and failure.get('upstream') == upstream and (
-                    rule.final or failure.get('version') == current[rule.waits_on or stage.name]):
-                return Ready('capture', recapture=True) if failure.get('retry') else Parked(stage.name, failure)
+            if failure and failure.get('upstream') == upstream:
+                if rule.final or failure.get('version') == current[rule.waits_on or rule.blame or stage.name]:
+                    return Ready('capture', recapture=True) if failure.get('retry') else Parked(stage.name, failure)
+                if rule.blame == 'capture' and stage.name != 'capture':
+                    return Ready('capture', recapture=True)  # new capture code: the pages are what failed
             record = self.record(stage.name)
             if (not record or record.get('upstream') != upstream
                     or (stage.redo_when_stale and record.get('version') != current[stage.name])):
@@ -371,7 +377,7 @@ def record_failure(library, books, book, stage, checks, error, upstream=None, at
         return 'paused'
     retry = rule.recapture and attempt <= RECAPTURES
     previous = library.last_outcome(stage, books, skip=book.asin) if rule.breaker else None
-    version = current[rule.waits_on or stage]
+    version = current[rule.waits_on or rule.blame or stage]
     book.fail(stage, {'checks': list(checks), 'error': error, 'attempt': attempt, 'retry': retry,
                       'version': version}, upstream)
     if previous and previous[1] == 'failure' and previous[2].get('version') == version:
