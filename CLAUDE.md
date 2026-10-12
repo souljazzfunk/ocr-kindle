@@ -63,7 +63,7 @@
 | 縦書きの日本語は Live Text で読む。Vision が 1 行も返さないページを空で通さない | `img2txt.py`、`test_check_book.py::test_a_page_vision_finds_no_lines_on_is_read_by_live_text`（F068） |
 | Vision が短く読んだページは Live Text と比べ、多く読めたほうを使う | `img2txt.py` の `vision_transcribe`、`test_check_book.py::test_a_vertical_page_vision_reads_only_a_few_pieces_of_is_read_by_live_text`、`test_check_book.py::test_a_full_english_page_is_not_sent_to_live_text`（F073） |
 | 日本語の本の英語のページ（引用・参考文献）を、外国語のページとして消さない | `proofread.py` の `foreign_page`、`test_proofread.py::test_english_pages_of_a_japanese_book_are_kept`（F074） |
-| 記号だけの段落（傍点を読んだ読点やバックスラッシュ）は消し、切れた文をつなぐ | `proofread.py` の `emphasis_dots`、`test_proofread.py::test_emphasis_dots_read_as_commas_on_their_own_lines_are_removed_and_the_sentence_joined`（F106） |
+| 記号だけの段落（傍点を読んだ読点やバックスラッシュ）は消し、切れた文をつなぐ | `proofread.py` の `emphasis_dots`、`test_proofread.py::test_emphasis_dots_read_as_commas_on_their_own_lines_are_removed_and_the_sentence_joined`（F106 F109） |
 | 同じ位置で同じ文のページは、離れていても重複として消す | `proofread.py` の `duplicate_page`、`test_proofread.py::test_a_screen_saved_twice_at_one_position_is_a_duplicate`（F077） |
 | Live Text の見出しから節の印を外し、目次の項目は見出しにせず、目次で階層を揃える | `layout.py` の `section_mark`・`livetext_contents`、`test_layout.py::test_live_text_titles_lose_the_section_mark_and_take_their_level_from_the_contents`（F078） |
 | 節の印は、読み違えた字（十・＋・+）の仲間ごと見出しから外す | `layout.py` の `SECTION_MARKS`、`test_layout.py::test_titles_read_with_a_plus_lose_it_and_a_line_the_contents_lists_becomes_a_chapter`（F080） |
