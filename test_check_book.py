@@ -410,3 +410,16 @@ def test_the_live_text_tool_builds_on_a_mac(tmp_path):
     source = tmp_path / 'livetext.swift'
     source.write_text(img2txt.LIVETEXT_SOURCE.read_text())
     assert img2txt.livetext_binary(source) == tmp_path / 'livetext' and (tmp_path / 'livetext').exists()
+
+
+def test_a_chapter_the_contents_lists_without_a_heading_is_caught(tmp_path):
+    # 2026-10-12: 英語教育幻想 passed every check with 幻想5 and 幻想6 left as paragraphs.
+    contents = '# 目次\n\n幻想5 それぞれの国の文化や言語には独特さがある\n\n幻想6 英語ができれば世界中だれとでも意思疎通できる'
+    chapter5 = '# 幻想5 それぞれの国の文化や言語には独特さがある\n\nここからは私見です。'
+    chapter6 = '幻想6 英語ができれば世界中だれとでも意思疎通できる\n\nここからは私見です。'
+    md = '\n\n'.join([contents, chapter5, chapter6])
+    folder = book(tmp_path, [contents, chapter5, chapter6], sources='livetext', md=md, name='英語教育幻想')
+    check = by_name(check_folder(folder))['contents_chapters']
+    assert not check.ok and check.blocking and check.detail == '1 contents entries without a heading: "幻想英語ができれば世界中だれとでも意思疎通できる"'
+    (folder / '英語教育幻想.md').write_text(md.replace('\n\n幻想6 英語', '\n\n# 幻想6 英語'))
+    assert by_name(check_folder(folder))['contents_chapters'].ok

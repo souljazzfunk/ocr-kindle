@@ -393,3 +393,38 @@ def test_prose_does_not_look_like_code():
             'from die import Die', 'def greet_user(username):', 'print ("Hi")', '# Say hello to everyone.',
             'for magician in magicians:']
     assert all(layout.CODE_LINE.match(line) for line in code)
+
+
+def test_titles_read_with_a_plus_lose_it_and_a_line_the_contents_lists_becomes_a_chapter(tmp_path, monkeypatch):
+    # 2026-10-12: 英語教育幻想 came out with 29 titles starting 「＋」 or 「+」 (its 「†」 again), and Gemini left
+    # 幻想5 and 幻想6 as paragraphs, one of them cut short; the contents had read 幻想6 and 幻想7 as one line.
+    pages = {'page_0001': ['目次', '幻想5 それぞれの国の文化や言語には独特さがある',
+                           '幻想6 英語ができれば世界中だれとでも意思疎通できる幻想7 英語力は社会的・経済的成功をもたらす']}
+    body = 'ここからは私見です。この文書で英語の位置が語られます。'
+    titles = {}
+    for n in range(2, 22):
+        mark = '十＋+'[n % 3]
+        lines = [f'{mark}見出し{n}', body]
+        if n == 2:
+            lines = ['幻想5それぞれの国の文化や言語には独特さがあ'] + lines
+        if n == 3:
+            lines = ['幻想6 英語ができれば世界中だれとでも意思疎通できる', '幻想6の冒頭で紹介した資料によると、英語は不可欠です。'] + lines
+        pages[f'page_{n:04d}'] = lines
+        titles[f'page_{n:04d}'] = [lines.index(f'{mark}見出し{n}')]
+    for stem, lines in pages.items():
+        (tmp_path / f'{stem}.png').write_bytes(b'png')
+        (tmp_path / f'{stem}.txt').write_text('\n'.join(lines), encoding='utf-8')
+
+    def generate_content(model, contents, config):
+        stems = [part.split('"')[1] for part in contents if isinstance(part, str) and part.startswith('Page "')]
+        return SimpleNamespace(text=json.dumps([{'page': s, 'titles': [{'line': i, 'level': 2} for i in titles.get(s, [])]}
+                                                for s in stems]))
+
+    monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
+    client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    assert mark_layout(tmp_path, client, sorted(tmp_path.glob('page_*.png'))) == []
+    read = lambda stem: (tmp_path / f'{stem}.txt').read_text(encoding='utf-8')
+    assert read('page_0002') == f'# 幻想5それぞれの国の文化や言語には独特さがあ\n\n## 見出し2\n\n{body}'
+    assert read('page_0003') == (f'# 幻想6 英語ができれば世界中だれとでも意思疎通できる\n\n'
+                                 f'幻想6の冒頭で紹介した資料によると、英語は不可欠です。\n\n## 見出し3\n\n{body}')
+    assert read('page_0004') == f'## 見出し4\n\n{body}'
