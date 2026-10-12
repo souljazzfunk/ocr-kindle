@@ -61,6 +61,7 @@
 | 節の印は、読み違えた字（十・＋・+）の仲間ごと見出しから外す | `layout.py` の `SECTION_MARKS`、`test_layout.py::test_titles_read_with_a_plus_lose_it_and_a_line_the_contents_lists_becomes_a_chapter`（F080） |
 | 目次に載った短い行は、Gemini が段落にしても章の見出しにする | `layout.py` の `listed`、`test_layout.py::test_titles_read_with_a_plus_lose_it_and_a_line_the_contents_lists_becomes_a_chapter`（F081） |
 | 目次に載った章が 1 つでも見出しになっていなければ、本を落とす | `check_book.py` の `contents_chapters`、`test_check_book.py::test_a_chapter_the_contents_lists_without_a_heading_is_caught`（F082） |
+| 章の見出しの番号は目次の番号に揃え、段落とつながった見出しは段落に戻す | `layout.py` の `contents_spelling`、`test_layout.py::test_a_chapter_number_read_as_a_symbol_takes_the_contents_number_and_a_run_on_title_stays_a_paragraph`（F084） |
 | 変換し直すとき、配置済みの Live Text のページも新しいコードで書き直す | `img2txt.py`、`test_img2txt.py::test_live_text_pages_laid_out_before_are_written_again_without_a_request`（F079） |
 | Live Text のページも見出しを Gemini に読ませる。段落のままにしない | `layout.py` の `livetext_markdown`、`test_layout.py::test_a_live_text_page_takes_its_titles_from_gemini`（F075） |
 | Gemini が 1 回でも失敗したら、残りのページは Sonnet に回す | `layout.py`、`test_layout.py::test_any_failed_gemini_request_stops_the_book_without_sending_the_rest`、`test_layout.py::test_sonnet_lays_out_the_pages_gemini_could_not_and_the_book_goes_on`（F028） |

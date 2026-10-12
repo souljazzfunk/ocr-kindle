@@ -428,3 +428,35 @@ def test_titles_read_with_a_plus_lose_it_and_a_line_the_contents_lists_becomes_a
     assert read('page_0003') == (f'# 幻想6 英語ができれば世界中だれとでも意思疎通できる\n\n'
                                  f'幻想6の冒頭で紹介した資料によると、英語は不可欠です。\n\n## 見出し3\n\n{body}')
     assert read('page_0004') == f'## 見出し4\n\n{body}'
+
+
+def test_a_chapter_number_read_as_a_symbol_takes_the_contents_number_and_a_run_on_title_stays_a_paragraph(tmp_path, monkeypatch):
+    # 2026-10-12: 英語教育幻想's 「幻想8」 came out as 「# 幻想∞…」, and 「†海外の日本語教育事情も関係している」 ran into
+    # the next paragraph and became one heading of 120 characters.
+    pages = {'page_0001': ['目次', '幻想8 英語学習は幼少期からできるだけ早く始めた方がよい']}
+    body = 'ここからは私見です。この文書で英語の位置が語られます。'
+    run_on = '＋海外の日本語教育事情も関係しているこれまで見てきたように、海外で仕事をする際、使用する言語は必ずしも英語でないことがわかりました。'
+    titles = {}
+    for n in range(2, 10):
+        lines = [f'十見出し{n}', body]
+        if n == 2:
+            lines = ['幻想∞英語学習は幼少期からできるだけ早く始めた方がよい'] + lines
+        if n == 3:
+            lines = lines + [run_on]
+        pages[f'page_{n:04d}'] = lines
+        titles[f'page_{n:04d}'] = [i for i, line in enumerate(lines) if line != body]
+    for stem, lines in pages.items():
+        (tmp_path / f'{stem}.png').write_bytes(b'png')
+        (tmp_path / f'{stem}.txt').write_text('\n'.join(lines), encoding='utf-8')
+
+    def generate_content(model, contents, config):
+        stems = [part.split('"')[1] for part in contents if isinstance(part, str) and part.startswith('Page "')]
+        return SimpleNamespace(text=json.dumps([{'page': s, 'titles': [{'line': i, 'level': 2} for i in titles.get(s, [])]}
+                                                for s in stems]))
+
+    monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
+    client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    assert mark_layout(tmp_path, client, sorted(tmp_path.glob('page_*.png'))) == []
+    read = lambda stem: (tmp_path / f'{stem}.txt').read_text(encoding='utf-8')
+    assert read('page_0002') == f'# 幻想8英語学習は幼少期からできるだけ早く始めた方がよい\n\n## 見出し2\n\n{body}'
+    assert read('page_0003') == f'## 見出し3\n\n{body}\n\n{run_on[1:]}'
