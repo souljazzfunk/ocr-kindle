@@ -440,6 +440,22 @@ def section_number(book):
                 yield Finding('section_number', stem, m.group(), f'{marks} {m.group(2)}\n\n{m.group(3)}', at=m.start())
 
 
+# A section number over its title in a Japanese book, which nobody marked: 代替医療解剖 (2026-10-12) "3\n\n真実はこの両者の
+# どこか中間にあるのかも？\n\n<body>". A title holds no 。, so a number over a sentence is left alone.
+NUMBERED_TITLE = re.compile(r'(?m)^([1-9]|1\d|20)\n\n([^\n#>!\-|。]{2,40})\n\n(?=[^\n#])')
+
+
+def numbered_title(book):
+    if len(CJK.findall(book.corpus)) <= len(LATIN.findall(book.corpus)):
+        return
+    levels = [len(m.group(1)) for m in re.finditer(r'(?m)^(#+) ', book.corpus)]
+    marks = '#' * min(min(levels, default=1) + 1, 3)
+    for stem, text in book.pages.items():
+        for m in NUMBERED_TITLE.finditer(text):
+            if CJK.search(m.group(2)):
+                yield Finding('numbered_title', stem, m.group(), f'{marks} {m.group(1)} {m.group(2)}\n\n', at=m.start())
+
+
 def decorative_digit(book):
     for stem, text in book.pages.items():
         for m in DECORATIVE_REF.finditer(text):
@@ -448,7 +464,7 @@ def decorative_digit(book):
 
 
 DETECTORS = [duplicate_page, seam_overlap, foreign_page, hyphen_break, dash_as_hyphen, homoglyph, odd_case, stray_symbol,
-             emphasis_dots, split_sentence, repl_prompt, section_number, decorative_digit, l_for_i, digits_for_ll, binary_art, stray_colon,
+             emphasis_dots, split_sentence, repl_prompt, section_number, numbered_title, decorative_digit, l_for_i, digits_for_ll, binary_art, stray_colon,
              heading_noise]
 
 
