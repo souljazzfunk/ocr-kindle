@@ -72,3 +72,4 @@ def test_gemini_waits_for_its_daily_reset_at_midnight_pacific_and_other_errors_h
     late = datetime(2026, 10, 11, 23, 30, tzinfo=pacific).timestamp()
     assert book.gemini_reset('429 RESOURCE_EXHAUSTED PerDay', late) == datetime(2026, 10, 12, tzinfo=pacific).timestamp()
     assert book.gemini_reset('connection reset', late) == late + 1800
+    assert book.gemini_reset('Layout failed. Resets at 123. 429 PerDay', late) == 123

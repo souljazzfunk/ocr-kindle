@@ -13,7 +13,7 @@ The Kindle for Mac app is not part of this flow. `kindle2img.applescript` (last 
 ```bash
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt
-cp config.env.example config.env   # then set GEMINI_API_KEY
+cp config.env.example config.env   # then set GEMINI_API_KEY, and any layout keys below
 ```
 
 Load the extension once. Open `chrome://extensions`, turn on Developer mode, choose **Load unpacked**, and select the `extension/` folder. From version 2.0 on, the extension reloads itself whenever the channel reports a newer version in this checkout, so it needs loading by hand only once.
@@ -31,6 +31,31 @@ venv/bin/python img2txt.py ~/Downloads/<book title>
 Given a ZIP from extension 1.x, the script first extracts it into `~/Downloads/<book title>/`. It prints how many pages already have text and how many it will OCR, runs 4 OCR requests in parallel, and writes `<book title>.md` into that folder. OCR tries the models in `GEMINI_MODEL` in order (default `gemini-3.8-flash`, then `gemini-3.5-flash-lite` once the free tier's 20 daily requests run out, then `vision`). `vision` is the macOS Vision framework, running locally with no quota. It catches the pages Gemini refuses with `RECITATION`, which happens on many pages of well-known books. Vision reads the words but gives no structure. So `img2txt.py` keeps each page's Vision line boxes (`page_NNNN.lines.json`), and `layout.py` sends the page image with its numbered lines to `gemini-3.5-flash-lite`, eight pages a request. Gemini answers with line numbers only: which lines are titles (and their level), pull quotes, text inside a picture, decoration, program code and its output, and the first word of a paragraph that starts with a drop cap. It never repeats the book's text, so `RECITATION` does not refuse it, and the answers are kept in `layout.json`, so a re-run asks only for pages not yet read. The page is then rebuilt: titles become `#`/`##`, pull quotes `>`, list bullets `-`, a chart or infographic one `![description]()` note, code a fenced block with one printed line per line and its indentation taken from the left edges, and decoration goes. In a programming book (20 or more lines such as `>>>`, `$ `, `def`, `import`), pages laid out before Gemini was asked for code and holding such lines are read once more, and the `code_blocks` check fails while more than a quarter of its code lines stand outside a block. Proofreading leaves code blocks alone. The book's own contents page decides which titles are chapters (`#`), because Gemini's levels drift between requests. A line in capitals that starts where most of the book's titles in capitals start is a title too, when Gemini missed it. The lines beside a drop cap are read again with the cap left out, because Vision can misread them. A page whose last line is short is not joined to the next page. Without `GEMINI_API_KEY`, Vision pages keep titles guessed from the page layout alone (a line set apart from the body, in a larger type or centred), and `check_book.py` fails the `layout` check until Gemini has read every page. It reads horizontal text only, so vertical Japanese needs Gemini. If `GOOGLE_DRIVE_FOLDER` is set, `capture_book.py` copies the file there after its checks and fixes; `img2txt.py` and `proofread.py` on their own write only into the book's folder, so a trial run never replaces the book on Drive.
 
 If any page fails (quota, network), the script exits with an error and keeps the pages that succeeded. Run the same command again on the folder to retry only the missing pages. `--force` re-OCRs everything, `--model` picks another Gemini model, and `--title` sets the output name.
+
+## Layout providers
+
+Page structure is read by the first provider in `LAYOUT_PROVIDERS` that is still available. The default order is Sonnet (`claude -p`), Gemini, Mistral, Z.ai GLM-4.6V-Flash, an OpenRouter `:free` vision model, then local Ollama. A provider with no key in `config.env` is skipped. One that hits a quota, a rate limit, a rejected key, or is down, is remembered in `~/Downloads/kindle/layout-providers.json` until its reset, and the next one reads the remaining pages. While a later provider remains, that provider reads the pages. The convert job pauses only when every configured provider is out, until the earliest reset. `layout.json` records `provider` and `model` on each page. The same checks run whichever model read the page.
+
+`CLAUDE_MODEL` is `sonnet` or `haiku` (default `sonnet`). Compare the two on the first pages of a captured book. This writes nothing:
+
+```bash
+venv/bin/python layout.py ~/Downloads/kindle/<ASIN>/pages --a sonnet --b haiku -n 8
+```
+
+The report lists pages whose titles (line and level), quotes, figures or code differ.
+
+Keys and the local model:
+
+- **Mistral** — a key from [console.mistral.ai](https://console.mistral.ai/). In the workspace settings, turn off training on your data before the first book. The pages are copyrighted.
+- **Z.ai** — a key from [z.ai](https://z.ai/). The model is GLM-4.6V-Flash, free, one request at a time.
+- **OpenRouter** — a key from [openrouter.ai/keys](https://openrouter.ai/keys). Only a `:free` model is sent (default `qwen/qwen3.8-27b:free`, about 50 requests a day). The code refuses OpenAI, whose free tokens share the pages.
+- **Ollama** — already on the Mac. A 16 GB M1 holds the 7B model; an 8 GB Mac should set `OLLAMA_MODEL=qwen2.5vl:3b`.
+
+```bash
+ollama pull qwen2.5vl:7b
+```
+
+OCR is unchanged: Gemini models, then local Vision. Layout is the step that rotates, because that is the step with one shared schema.
 
 ## One command per book
 

@@ -83,10 +83,13 @@
 | 変換し直すとき、配置済みの Live Text のページも新しいコードで書き直す | `img2txt.py`、`test_img2txt.py::test_live_text_pages_laid_out_before_are_written_again_without_a_request`（F079） |
 | Live Text のページは毎回 Live Text 自身の読みから組み直す。前の出力から組み直さない | `img2txt.py` の `LIVE`・`restore_live`、`test_layout.py::test_a_second_layout_starts_from_live_text_s_reading_not_from_the_first_layout_s_output`（F088） |
 | Live Text のページも見出しを Gemini に読ませる。段落のままにしない | `layout.py` の `livetext_markdown`、`test_layout.py::test_a_live_text_page_takes_its_titles_from_gemini`（F075） |
-| Gemini が 1 回でも失敗したら、残りのページは Sonnet に回す | `layout.py`、`test_layout.py::test_any_failed_gemini_request_stops_the_book_without_sending_the_rest`、`test_layout.py::test_sonnet_lays_out_the_pages_gemini_could_not_and_the_book_goes_on`（F028） |
+| 配置は Sonnet から順に試し、後ろが残るうちは本を止めない | `layout.py` の `provider_order`、`test_layout.py::test_sonnet_is_asked_first_and_a_spent_one_gives_way_to_the_next`、`test_layout.py::test_any_failed_gemini_request_stops_the_book_without_sending_the_rest`（F028） |
+| 尽きた提供者だけをリセットまで休ませ、全部尽きたときだけ仕事を止める | `book.py` の `gemini_reset`、`test_layout.py::test_an_exhausted_provider_stays_out_until_its_reset`、`test_kc_run.py::test_a_gemini_quota_failure_waits_for_the_reset_and_converts_the_same_pages_with_no_new_capture`（F028） |
 | Sonnet には Gemini と同じスキーマを --json-schema で渡す。自由文の JSON は読まない | `scripts/check_claude.py`、`layout.py` の `ask_claude`・`LAYOUT_SCHEMA`、`test_layout.py::test_a_claude_call_without_json_schema_is_the_steve_jobs_reply`（F121） |
-| Gemini のスキーマに API が拒むキーを載せない。400 は変換コードが変わるまで待つ | `layout.py` の `gemini_schema`・`gemini_rejected`、`book.py` の `gemini_reset`、`test_layout.py::test_the_schema_merged_in_2282ee7_is_rejected_by_gemini`、`test_kc_run.py::test_a_gemini_400_waits_for_new_code`（F122） |
-| Sonnet も落ちたら、本を失敗にせず、変換の仕事を Gemini の枠が戻るまで止める | `book.py` の `RULES`、`test_kc_run.py::test_a_gemini_quota_failure_waits_for_the_reset_and_converts_the_same_pages_with_no_new_capture`（F028） |
+| 各提供者のスキーマは LAYOUT_SCHEMA から描き、拒む形は通信せずに落とす | `layout.py` の `provider_rejected`、`test_layout.py::test_each_provider_schema_is_rejected_offline_when_the_shape_is_wrong`、`test_layout.py::test_the_schema_merged_in_2282ee7_is_rejected_by_gemini`（F122） |
+| スキーマの 400 は変換コードが変わるまで待つ | `book.py` の `gemini_reset`、`test_kc_run.py::test_a_gemini_400_waits_for_new_code`（F122） |
+| claude のモデルは config.env（既定 sonnet、haiku も）。ページにモデル名を残す | `layout.py`、`test_layout.py::test_the_claude_model_comes_from_config_and_is_named_on_the_page`（F028） |
+| 同じページを二つのモデルで配置し、見出し・引用・図・コードの違いを出す | `layout.py` の `compare`、`test_layout.py::test_compare_reports_titles_quotes_figures_and_code`（F028） |
 | ルール表の各行は決まりを確かめるテストを名前で挙げ、テストと共に CI で回す | `scripts/rules.py`、`.github/workflows/ci.yml`、`test_rules.py::test_a_named_test_that_does_not_exist_fails`（F071 F072） |
 
 ## 取り込みの手順
