@@ -218,13 +218,18 @@ def test_a_gemini_quota_failure_waits_for_the_reset_and_converts_the_same_pages_
                                                     ('convert', 'B1', home / 'kindle' / 'B1' / 'pages')]
 
 
-def test_a_new_converter_converts_done_books_again_from_their_pages_and_new_extension_code_recaptures_none(home, mac):
+def test_a_passed_book_stays_done_when_the_converter_changes_and_a_capture_is_not_redone(home, mac):
+    # A change to the converter used to make every passed book Ready again. B1 has passed; it stays done, and the
+    # capture it already has is not taken again when the extension changes either.
     step(home, 'capture'), step(home, 'convert'), step(home, 'convert')
     assert state(home, 'B1') == book.Done()
     edit(home, 'img2txt.py')
-    assert state(home, 'B1') == book.Ready('convert')
-    assert step(home, 'convert') == 'converted: B1' and step(home, 'convert') == 'published: B1'
-    assert mac.log.count(('publish', 'One')) == 2
+    edit(home, 'layout.py')
+    edit(home, 'check_book.py')
+    edit(home, 'proofread.py')
+    assert state(home, 'B1') == book.Done()
+    assert step(home, 'convert') == 'nothing to do'
+    assert mac.log.count(('publish', 'One')) == 1
     edit(home, 'channel.py')
     assert state(home, 'B1') == book.Done()
     assert step(home, 'capture') == 'captured: B2'
@@ -312,7 +317,12 @@ def test_a_book_s_time_from_its_first_capture_to_drive_is_recorded_once_and_a_sl
     assert step(home, 'convert', now=NOON + 4000) == 'published slowly (66 min): B1'
     published = book.Library(home / 'kindle').book('B1').record('publish')
     assert published['seconds'] == 4000 and published['slow']
+    # A converter change does not publish the book again. A new capture does, and the time stays the first one.
     edit(home, 'layout.py')
+    assert state(home, 'B1') == book.Done()
+    one = book.Library(home / 'kindle').book('B1')
+    captured = one.record('capture')
+    one.succeed('capture', {**captured, 'attempt': 2})
     assert step(home, 'convert', now=NOON + 90000) == 'converted: B1'
     assert step(home, 'convert', now=NOON + 90100) == 'published slowly (66 min): B1'
     assert step(home, 'capture', now=NOON + 90200) == 'captured: B2'
@@ -363,9 +373,13 @@ def test_the_capture_job_stays_at_most_two_new_books_ahead_of_the_convert_job(ho
 def test_a_new_book_is_converted_before_published_books_are_converted_again(home, mac):
     # 2026-10-12: after #107 changed the converter, the convert job converted and published again Japan Travel Planner,
     # For 91 Days in Sri Lanka, Zero to Sold and others (07:44-07:45Z) before How to Write a Lot, a new book (07:47Z).
+    # A converter change no longer reconverts a published book. A new capture of one still waits behind a new book.
     step(home, 'capture'), step(home, 'convert'), step(home, 'convert')
     assert state(home, 'B1') == book.Done()
     edit(home, 'proofread.py')
+    assert state(home, 'B1') == book.Done()
+    one = book.Library(home / 'kindle').book('B1')
+    one.succeed('capture', {**one.record('capture'), 'attempt': 2})
     assert step(home, 'capture') == 'captured: B2'
     assert [step(home, 'convert') for _ in range(4)] == ['converted: B2', 'published: B2', 'converted: B1', 'published: B1']
 
@@ -387,6 +401,32 @@ def test_each_convert_step_leaves_every_book_s_state_on_drive_for_the_cloud_to_r
     assert step(home, 'convert', config=config) == 'converted: B2'
     books = json.loads((home / 'Drive' / 'Kindle_reports' / '_books.json').read_text())
     assert books['books'][1]['state'] == 'ready to publish'
+
+
+def test_a_parked_check_and_its_pause_rerun_only_when_that_check_s_code_changes(home, mac):
+    # Two contents_chapters failures pause the convert job ("waiting for new convert code"). A change to some other
+    # check's code leaves them parked. A change to the contents check's code releases the pause and converts them,
+    # while a book parked on headings stays parked, and a book that already passed stays done.
+    step(home, 'capture'), step(home, 'convert'), step(home, 'convert')
+    assert state(home, 'B1') == book.Done()
+    mac.converts.update({'B2': [['headings']], 'B3': [['contents_chapters']], 'B4': [['contents_chapters']]})
+    assert [step(home, 'capture') for _ in range(3)] == ['captured: B2', 'captured: B3', 'waiting for the convert job']
+    assert step(home, 'convert') == 'parked: B2'
+    assert step(home, 'capture') == 'captured: B4'
+    assert step(home, 'convert') == 'parked: B3'
+    assert step(home, 'convert') == 'paused: B4'
+    assert step(home, 'convert') == 'paused: contents_chapters failed on B3 and B4 in a row; waiting for new convert code'
+    edit(home, 'proofread.py')
+    assert state(home, 'B1') == book.Done()
+    assert state(home, 'B2').failure['checks'] == ['headings']
+    assert step(home, 'convert') == 'paused: contents_chapters failed on B3 and B4 in a row; waiting for new convert code'
+    edit(home, 'layout.py')
+    assert state(home, 'B1') == book.Done()
+    assert state(home, 'B2').failure['checks'] == ['headings']
+    assert step(home, 'convert') == 'converted: B3'
+    assert step(home, 'convert') == 'published: B3'
+    assert step(home, 'convert') == 'converted: B4'
+    assert state(home, 'B2').failure['checks'] == ['headings']
 
 
 def test_a_book_published_again_under_a_new_title_leaves_one_copy_on_drive(tmp_path):

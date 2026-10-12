@@ -160,7 +160,7 @@ def _step(job, root, lists, downloads, model, checkout, sleep, now, config):
     if job == 'capture' and waiting >= AHEAD:
         sleep(IDLE_S)
         return 'waiting for the convert job'
-    # A book never published goes before one published already and converted again under new code: after #107 the
+    # A book never published goes before one published already that is ready again (a new capture). After #107 the
     # convert job redid published books for minutes while How to Write a Lot waited (2026-10-12).
     for book, state in sorted(states, key=lambda bs: bool(bs[0].record('publish'))):
         if isinstance(state, Ready) and state.stage in JOBS[job]:

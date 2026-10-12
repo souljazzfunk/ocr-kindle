@@ -8,12 +8,16 @@
     <root>/pause.<job>.json             a job paused for every book (a systemic failure), with when it resumes
     <root>/cases/<id>/                  the evidence of a parked book or a paused job, for replay (cases.py)
 
-Book.state() is Ready(stage), Parked(failure) or Done. A stage's version is the sha256 of its own source files, so a
-fix to the converter makes every book Ready for conversion again, and a book parked on a check is retried once the
-code of the stage that failed it changes. Each stage writes its record or its failure, never both: the other is
+Book.state() is Ready(stage), Parked(failure) or Done. A stage's version is the sha256 of its own source files.
+A book that passed a stage stays passed when that code changes: passing it again would redo every published book
+whenever the converter changes. A book parked on a check is tried again only when the functions that decide that
+check change (TOUCH). The failure records their digest as its version, with touch set. A failure from before a check
+named its own code has no touch flag and holds the stage version; it is tried once more when that stage's code
+changes, and the new failure names the check. Each stage writes its record or its failure, never both: the other is
 removed first, so a crash in between leaves the stage Ready, not wrong.
 """
 
+import ast
 import hashlib
 import json
 import os
@@ -36,16 +40,13 @@ class Stage:
     name: str
     job: str  # the kc_run.py job (one launchd job each) that runs it
     sources: tuple  # files and folders under the checkout whose content is the stage's version
-    # An output made by other code is made again. Not for capture: a good capture stays good when the extension
-    # changes, and paging through every book again would take the browser for days.
-    redo_when_stale: bool
 
 
 CONVERTER = ('img2txt.py', 'layout.py', 'check_book.py', 'proofread.py')
 STAGES = (
-    Stage('capture', 'capture', ('channel.py', 'extension'), redo_when_stale=False),
-    Stage('convert', 'convert', CONVERTER, redo_when_stale=True),
-    Stage('publish', 'convert', CONVERTER, redo_when_stale=True),
+    Stage('capture', 'capture', ('channel.py', 'extension')),
+    Stage('convert', 'convert', CONVERTER),
+    Stage('publish', 'convert', CONVERTER),
 )
 STAGE = {stage.name: stage for stage in STAGES}
 JOBS = {job: tuple(s.name for s in STAGES if s.job == job) for job in dict.fromkeys(s.job for s in STAGES)}
@@ -133,6 +134,39 @@ RULES = {
 }
 BOOK_FAULT = Rule(BOOK)
 
+# The functions whose body decides a check. A parked book or a paused job is tried again only when one of them
+# changes. A name the checkout does not define stands for the whole file (function_source), so a stub checkout
+# still notices an edit of that file. None means the whole file even when it defines other functions.
+TOUCH = {
+    'headings': (('check_book.py', 'check_folder'),),
+    'heading_noise': (('check_book.py', 'check_folder'), ('proofread.py', 'find_all')),
+    'decorative_digits': (('check_book.py', 'check_folder'),),
+    'chapter_titles': (('check_book.py', 'check_folder'),),
+    'contents_chapters': (
+        ('check_book.py', 'contents_unheaded'),
+        ('layout.py', 'contents_for_check'),
+        ('layout.py', 'contents_covered'),
+        ('layout.py', 'contents_key'),
+        ('layout.py', '_tiles'),
+        ('layout.py', 'livetext_contents'),
+        ('layout.py', 'contents_entries'),
+        ('layout.py', 'split_contents'),
+        ('layout.py', 'listed'),
+        ('layout.py', 'comparable'),
+        ('layout.py', 'page_lines'),
+    ),
+    'code_blocks': (('check_book.py', 'check_folder'), ('layout.py', 'code_pages')),
+    'proofread': (('proofread.py', None),),
+    'layout': (('layout.py', 'mark_layout'), ('check_book.py', 'check_folder')),
+    'gemini': (
+        ('layout.py', 'mark_layout'),
+        ('layout.py', 'gemini_schema'),
+        ('layout.py', 'converter_version'),
+        ('layout.py', 'failure_kind'),
+        ('layout.py', 'block_until'),
+    ),
+}
+
 
 def classify(checks):
     """One rule for a failure that names several checks: systemic if any is, else the book's, retried as a recapture
@@ -156,10 +190,75 @@ def source_digest(root, sources):
     return digest.hexdigest()[:12]
 
 
+def function_source(root, file, name):
+    """The source of name in file, or the whole file when name is None or this checkout does not define it."""
+    path = Path(root) / file
+    if not path.is_file():
+        return b''
+    raw = path.read_bytes()
+    if name is None:
+        return raw
+    try:
+        tree = ast.parse(raw)
+    except SyntaxError:
+        return raw
+    text = raw.decode('utf-8')
+    chunks = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            segment = ast.get_source_segment(text, node)
+            if segment:
+                chunks.append(segment)
+    return '\n'.join(chunks).encode() if chunks else raw
+
+
+def function_digest(root, owners):
+    digest = hashlib.sha256()
+    for file, name in owners:
+        digest.update(file.encode() + b'\0' + (name or '').encode() + b'\0')
+        digest.update(function_source(root, file, name) + b'\0')
+    return digest.hexdigest()[:12]
+
+
 def versions(root=HERE):
-    """Each stage's version, and 'code': every module of the checkout."""
+    """Each stage's version, 'code' (every module), and 'touch': each check's own functions."""
     return {**{stage.name: source_digest(root, stage.sources) for stage in STAGES},
-            'code': source_digest(root, sorted(p.name for p in Path(root).glob('*.py')))}
+            'code': source_digest(root, sorted(p.name for p in Path(root).glob('*.py'))),
+            'touch': {check: function_digest(root, owners) for check, owners in TOUCH.items()}}
+
+
+def touch_of(current, checks, stage):
+    """The digest a retry of these checks waits on: the blamed stage, every module, or the checks' own functions."""
+    rule = classify(list(checks))
+    if rule.waits_on == 'code':
+        return current.get('code')
+    if rule.blame:
+        return current.get(rule.blame)
+    touches = current.get('touch') or {}
+    found = []
+    for check in checks:
+        if check not in touches:
+            return current.get(stage)
+        found.append(touches[check])
+    if len(found) == 1:
+        return found[0]
+    if not found:
+        return current.get(stage)
+    return hashlib.sha256('\0'.join(sorted(found)).encode()).hexdigest()[:12]
+
+
+def same_block(record, current, stage):
+    """Whether record was made by the code that still decides its checks.
+
+    touch means version is the digest of those checks' functions. Without it, version is the stage's, from a
+    failure recorded before a check named its own code."""
+    stored = record.get('version')
+    checks = record.get('checks') or []
+    if record.get('touch'):
+        return stored == touch_of(current, checks, stage)
+    rule = classify(checks)
+    waited = record.get('waits_on') or rule.waits_on or rule.blame or stage
+    return stored is not None and stored == current.get(waited)
 
 
 def now_id():
@@ -243,13 +342,12 @@ class Book:
             failure = self.failure(stage.name)
             rule = classify((failure or {}).get('checks', []))
             if failure and failure.get('upstream') == upstream:
-                if rule.final or failure.get('version') == current[rule.waits_on or rule.blame or stage.name]:
+                if rule.final or same_block(failure, current, stage.name):
                     return Ready('capture', recapture=True) if failure.get('retry') else Parked(stage.name, failure)
                 if rule.blame == 'capture' and stage.name != 'capture':
                     return Ready('capture', recapture=True)  # new capture code: the pages are what failed
             record = self.record(stage.name)
-            if (not record or record.get('upstream') != upstream
-                    or (stage.redo_when_stale and record.get('version') != current[stage.name])):
+            if not record or record.get('upstream') != upstream:
                 return Ready(stage.name)
             upstream = record['at']
         return Done()
@@ -346,7 +444,7 @@ class Library:
             return None
         now = time.time() if now is None else now
         due = pause.get('until') is not None and now >= pause['until']
-        new_code = pause.get('version') is not None and pause['version'] != current.get(pause.get('waits_on'))
+        new_code = pause.get('version') is not None and not same_block(pause, current, pause.get('stage') or job)
         elsewhere = any(STAGE[rule.blame].job != job for rule in (RULES.get(c, BOOK_FAULT) for c in pause.get('checks', []))
                         if rule.blame)
         if due or new_code or elsewhere:
@@ -390,15 +488,15 @@ def record_failure(library, books, book, stage, checks, error, upstream=None, at
     job = STAGE[stage].job
     if rule.kind == SYSTEMIC:
         library.set_pause(job, {'stage': stage, 'checks': list(checks), 'reason': error, 'book': book.asin,
-                                'waits_on': stage, 'version': current[stage],
+                                'waits_on': stage, 'version': touch_of(current, checks, stage), 'touch': True,
                                 'until': rule.resume(error, now) if rule.resume else None})
         leave_case(library, book, stage, checks, error, attempt, SYSTEMIC, current, now, config)
         return 'paused'
     retry = rule.recapture and attempt <= RECAPTURES
     previous = library.last_outcome(stage, books, skip=book.asin) if rule.breaker else None
-    version = current[rule.waits_on or rule.blame or stage]
+    version = touch_of(current, checks, stage)
     book.fail(stage, {'checks': list(checks), 'error': error, 'attempt': attempt, 'retry': retry,
-                      'version': version}, upstream)
+                      'version': version, 'touch': True}, upstream)
     if previous and previous[1] == 'failure' and previous[2].get('version') == version:
         repeated = sorted(c for c in set(checks) & set(previous[2].get('checks', [])) if RULES.get(c, BOOK_FAULT).breaker)
         if repeated:
@@ -407,7 +505,7 @@ def record_failure(library, books, book, stage, checks, error, upstream=None, at
             waits_on = first.waits_on or blamed
             library.set_pause(STAGE[blamed].job, {
                 'stage': blamed, 'checks': repeated, 'book': book.asin, 'waits_on': waits_on,
-                'version': current[waits_on], 'until': None,
+                'version': touch_of(current, repeated, blamed), 'touch': True, 'until': None,
                 'reason': f'{", ".join(repeated)} failed on {previous[3]} and {book.asin} in a row; waiting for new '
                           f'{"" if waits_on == "code" else blamed + " "}code'})
             leave_case(library, book, stage, checks, error, attempt, SYSTEMIC, current, now, config)
