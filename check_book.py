@@ -14,7 +14,7 @@ import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from img2txt import SOURCES, TEXT_LAYER, VISION, page_images, read_sources
+from img2txt import LIVETEXT, SOURCES, TEXT_LAYER, VISION, page_images, read_sources
 from layout import CODE_LINE, code_pages, code_rereads, read_layout
 from proofread import CODE_BLOCK, DECORATIVE_REF, Book, find_all, load_pages
 
@@ -132,8 +132,8 @@ def check_folder(folder, title=None):
     # and the pages of a programming book read before Gemini was asked for code.
     laid = read_layout(folder)
     again = code_rereads(folder, laid)
-    unread = [img.stem for img in images if sources.get(img.stem) == VISION and (img.stem not in laid or img.stem in again)]
-    checks.append(Check('layout', not unread, f'{len(unread)} Vision pages without a layout from Gemini'
+    unread = [img.stem for img in images if sources.get(img.stem) in (VISION, LIVETEXT) and (img.stem not in laid or img.stem in again)]
+    checks.append(Check('layout', not unread, f'{len(unread)} Vision and Live Text pages without a layout from Gemini'
                         + (f' ({len(again)} to read again for code)' if again else '')
                         + (f', e.g. {unread[0]}' if unread else ''),
                         fix=['img2txt.py', str(folder), '--model', VISION] + (['--title', title] if title else [])

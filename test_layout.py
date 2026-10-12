@@ -116,6 +116,28 @@ def test_layout_is_asked_once_per_page_in_batches(tmp_path, monkeypatch):
 
 
 
+def test_a_live_text_page_takes_its_titles_from_gemini(tmp_path, monkeypatch):
+    # 2026-10-12: 英語教育幻想 came out with 0 headings; its Live Text pages had no layout, so 「十日米同盟」 stayed a paragraph.
+    (tmp_path / 'page_0011.png').write_bytes(b'png')
+    (tmp_path / 'page_0011.txt').write_text('十日米同盟\nここからは私見です。この文書で英語の位置が語られます。\n', encoding='utf-8')
+    asked = []
+
+    def generate_content(model, contents, config):
+        asked.append([part for part in contents if isinstance(part, str) and part.startswith('0: ')])
+        return SimpleNamespace(text=json.dumps([{'page': 'page_0011', 'titles': [{'line': 0, 'level': 2}], 'quotes': [],
+                                                 'figures': [], 'art': [], 'code': []}]))
+
+    monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
+    client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    images = [tmp_path / 'page_0011.png']
+    assert mark_layout(tmp_path, client, images) == []
+    assert asked == [['0: 十日米同盟\n1: ここからは私見です。この文書で英語の位置が語られます。']]
+    assert (tmp_path / 'page_0011.txt').read_text(encoding='utf-8') == '## 十日米同盟\n\nここからは私見です。この文書で英語の位置が語られます。'
+    (tmp_path / 'layout.json').unlink()
+    assert mark_layout(tmp_path, client, images) == []  # laid out again, the marks are not doubled
+    assert (tmp_path / 'page_0011.txt').read_text(encoding='utf-8').startswith('## 十日米同盟\n\n')
+
+
 def test_gemini_s_daily_limit_is_not_waited_out_and_stops_after_writing_what_was_laid_out(tmp_path, monkeypatch):
     # 2026-10-10: the free tier's 500 requests a day ran out mid-list, and every later page failed its layout.
     for n in range(1, 31):

@@ -365,6 +365,30 @@ def test_a_page_vision_finds_no_lines_on_is_read_by_live_text(tmp_path):
                                      read_livetext=lambda image: 'unused')[1] == 'vision'
 
 
+def test_a_vertical_page_vision_reads_only_a_few_pieces_of_is_read_by_live_text(tmp_path):
+    # 2026-10-12: on 英語教育幻想's page 863 Vision read one 「ジ」, on page 2 only the English quote above the vertical
+    # body; both pages went out as those few characters, and the proofreader then blanked the English one.
+    import img2txt
+    page = tmp_path / 'page_0011.png'
+    page.write_bytes(b'')
+    body = '†日米同盟\n\nここからは私見です。この文書で英語の位置がどう語られているかを見ていきます。' * 3
+    assert img2txt.vision_transcribe(page, read_lines=lambda image: [(0.5, 0.4, 0.02, 'ジ')],
+                                     read_livetext=lambda image: body) == (body, 'livetext')
+    quote = 'The English language is a tool for communication with the world.'
+    assert img2txt.vision_transcribe(page, read_lines=lambda image: [(0.1, 0.1, 0.02, quote)],
+                                     read_livetext=lambda image: quote + '\n\n' + body) == (quote + '\n\n' + body, 'livetext')
+
+
+def test_a_full_english_page_is_not_sent_to_live_text(tmp_path):
+    import img2txt
+    page = tmp_path / 'page_0001.png'
+    page.write_bytes(b'')
+    line = 'The group became known as the Homebrew Computer Club, and it met in a garage in Menlo Park.'
+    boxes = [(0.1, 0.05 * k, 0.02, line) for k in range(1, 8)]
+    assert img2txt.vision_transcribe(page, read_lines=lambda image: boxes,
+                                     read_livetext=lambda image: (_ for _ in ()).throw(AssertionError('Live Text read a full page')))[1] == 'vision'
+
+
 def test_live_text_failures_carry_its_message():
     import subprocess
     import img2txt

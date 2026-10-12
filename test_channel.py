@@ -202,3 +202,17 @@ def test_a_job_goes_to_one_worker_only(served, tmp_path):
     assert other['job'] is None and again['job'] == job
     event(served, job, type='refused', reason='stop')
     thread.join(5)
+
+
+def test_the_screen_where_a_capture_stopped_is_kept_beside_the_trace(served, tmp_path):
+    # 2026-10-12: 英語教育幻想 stopped paging back at 784 of 2566 and nothing recorded what the reader showed there.
+    folder = tmp_path / 'Downloads' / 'Stuck'
+    thread, out = in_background(lambda: served.capture('B0', 'read.amazon.com', folder))
+    job = take(served)
+    page(served, job, 0, b'png', '784/2566')
+    probe = {'turns': [{'label': 'Previous page', 'present': True, 'disabled': True, 'shown': True}]}
+    assert event(served, job, type='probe', label='stopped', probe=probe) == 200
+    event(served, job, type='done', start='', stopped='could not page back past page 784 of 2566 by button or key',
+          extension_version='2.0', positions={'0': '784/2566'})
+    thread.join(5)
+    assert json.loads((folder / 'dom-probe-stopped.json').read_text()) == probe

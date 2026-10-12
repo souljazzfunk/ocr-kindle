@@ -1,6 +1,7 @@
 // Runs in every reader tab, but acts only in a tab the worker opened for a job. It observes the page, asks policy.js
 // what to do, does it, and sends every page and event to the worker, which posts them to the channel.
 const PAGE_WAIT_MS = 3000;
+const KEY_WAIT_MS = 10000; // a turn by key is tried where the button stopped working; give the reader time to load
 const FIRST_PAGE_WAIT_MS = 60000;
 const JOB_ASKS = 10; // the worker stores the tab's job right after the window opens; the page may ask before that
 const LIBRARY_SETTLE_MS = 3000;
@@ -49,6 +50,13 @@ function press(label) {
   }
 }
 
+function pressKey(key) {
+  const target = document.activeElement || document.body;
+  for (const type of ['keydown', 'keyup']) {
+    target.dispatchEvent(new KeyboardEvent(type, { key, code: key, bubbles: true, cancelable: true, view: window }));
+  }
+}
+
 async function pngOf(img) {
   if (img.tagName === 'CANVAS') return img.toDataURL('image/png');
   await img.decode();
@@ -73,8 +81,8 @@ async function observe() {
     signedOut: signedOut(document), key: surfaceKey(img), png };
 }
 
-async function waitForTurn(prevKey) {
-  for (let t = 0; t < PAGE_WAIT_MS; t += 300) {
+async function waitForTurn(prevKey, ms = PAGE_WAIT_MS) {
+  for (let t = 0; t < ms; t += 300) {
     if (surfaceKey(pageImage()) !== prevKey) return;
     await sleep(300);
   }
@@ -110,6 +118,10 @@ async function capture(job) {
     } else if (action === 'wait') {
       await sleep(1000);
       seen = await observe();
+    } else if (action === 'turn:prev-key') {
+      pressKey('ArrowLeft');
+      await waitForTurn(seen.key, KEY_WAIT_MS);
+      seen = await observe();
     } else if (action.startsWith('turn:')) {
       press(action === 'turn:prev' ? 'Previous page' : 'Next page');
       await waitForTurn(seen.key);
@@ -117,6 +129,11 @@ async function capture(job) {
     } else {
       const reason = action.slice(action.indexOf(':') + 1);
       const failed = action.startsWith('fail:');
+      if (failed) {
+        let probe;
+        try { probe = probePage(document); } catch (e) { probe = { error: String(e) }; }
+        await event({ type: 'probe', label: 'stopped', probe }); // the screen where it stopped, for the fix
+      }
       // A capture that saved pages always hands them over; why it ended early goes to capture.json's stopped.
       if (failed && !Object.keys(positions).length) return event({ type: 'refused', reason });
       return event({ type: 'done', start: state.start, stopped: failed ? reason : '', positions,

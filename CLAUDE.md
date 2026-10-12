@@ -23,6 +23,7 @@
 | アプリの読み終わり画面は、最後の画像ごと捨てて Escape で閉じる | `capture_app.py` の `end_sheet_shown`、`test_capture_app.py::test_the_end_of_book_sheet_is_closed_and_its_image_dropped_after_a_capture`（F059） |
 | アプリのライブラリに戻るのは Close Book ボタンだけ。File > Close や Cmd+W は使わない | `capture_app.py`、`test_capture_app.py::test_a_reader_left_open_is_closed_with_its_close_book_button_never_file_close`（F059） |
 | 本は 1 ページ目から最後まで取り込む。開いた位置からそのまま取り込まない | `extension/policy.js`、`extension/policy.test.js::opened mid-book: pages back to page 1 saving each screen, then forward past them to the end`、`test_check_book.py::test_a_capture_that_began_mid_book_is_caught`（F007） |
+| 前のページのボタンで戻れなくなったら矢印キーで戻り、止まった画面を記録する | `extension/policy.js`、`extension/policy.test.js::a reader stuck on Previous page pages back by the left arrow key`、`test_channel.py::test_the_screen_where_a_capture_stopped_is_kept_beside_the_trace`（F076） |
 | ページめくりは際限なく続けない。上限はページ数に合わせ、向きごとに数える | `extension/policy.js`、`extension/policy.test.js::turns past three per page stop the capture, each direction counted on its own`（F017 F019 F027） |
 | 止まった取り込みを 1 時間待たない。数分で理由を残して終える | `channel.py`、`test_channel.py::test_a_capture_with_no_page_and_no_event_for_the_stall_time_is_stalled`（F032 F039） |
 | ページは画像でも canvas でも取り込み、画像がまだない画面は待ってから判断する | `extension/content.js` の `pageImage`、`extension/policy.js`、`extension/policy.test.js::a screen whose image is not there yet is observed again before the capture fails`（F067） |
@@ -51,6 +52,9 @@
 | Vision のページの構造を、位置と大きさだけで当て推量しない | `layout.py`、`test_layout.py::test_titles_quotes_lists_and_art_take_their_place`（F016 F024） |
 | 同じ読み直しを修正として繰り返さない | `layout.py`、`test_layout.py::test_layout_is_asked_once_per_page_in_batches`（F021 F024） |
 | 縦書きの日本語は Live Text で読む。Vision が 1 行も返さないページを空で通さない | `img2txt.py`、`test_check_book.py::test_a_page_vision_finds_no_lines_on_is_read_by_live_text`（F068） |
+| Vision が短く読んだページは Live Text と比べ、多く読めたほうを使う | `img2txt.py` の `vision_transcribe`、`test_check_book.py::test_a_vertical_page_vision_reads_only_a_few_pieces_of_is_read_by_live_text`、`test_check_book.py::test_a_full_english_page_is_not_sent_to_live_text`（F073） |
+| 日本語の本の英語のページ（引用・参考文献）を、外国語のページとして消さない | `proofread.py` の `foreign_page`、`test_proofread.py::test_english_pages_of_a_japanese_book_are_kept`（F074） |
+| Live Text のページも見出しを Gemini に読ませる。段落のままにしない | `layout.py` の `livetext_markdown`、`test_layout.py::test_a_live_text_page_takes_its_titles_from_gemini`（F075） |
 | Gemini が 1 回でも失敗したら、残りのページは Sonnet に回す | `layout.py`、`test_layout.py::test_any_failed_gemini_request_stops_the_book_without_sending_the_rest`、`test_layout.py::test_sonnet_lays_out_the_pages_gemini_could_not_and_the_book_goes_on`（F028） |
 | Sonnet も落ちたら、本を失敗にせず、変換の仕事を Gemini の枠が戻るまで止める | `book.py` の `RULES`、`test_kc_run.py::test_a_gemini_quota_failure_waits_for_the_reset_and_converts_the_same_pages_with_no_new_capture`（F028） |
 | ルール表の各行は決まりを確かめるテストを名前で挙げ、テストと共に CI で回す | `scripts/rules.py`、`.github/workflows/ci.yml`、`test_rules.py::test_a_named_test_that_does_not_exist_fails`（F071 F072） |

@@ -49,8 +49,18 @@ test('an end the footer does not confirm is still the end; check_book.py judges 
 
 test('a reader that will not go back to page 1 fails the capture where it stuck', () => {
   const c = screen('c', 3, 4);
-  assert.deepStrictEqual(replay([c, c, c, c]).actions, ['save', 'turn:prev', 'turn:prev', 'turn:prev',
-    'fail:could not page back past page 3 of 4']);
+  assert.deepStrictEqual(replay([c, c, c, c, c, c, c]).actions, ['save', 'turn:prev', 'turn:prev', 'turn:prev',
+    'turn:prev-key', 'turn:prev-key', 'turn:prev-key', 'fail:could not page back past page 3 of 4 by button or key']);
+});
+
+test('a reader stuck on Previous page pages back by the left arrow key', () => {
+  // 2026-10-12: 英語教育幻想 stuck at 784 of 2566 with the button.
+  const c = screen('c', 3, 4), b = screen('b', 2, 4), a = screen('a', 1, 4), d = screen('d', 4, 4);
+  const { actions, state } = replay([c, c, c, c, b, a, a, a, a, c, d, d, d, d]);
+  assert.deepStrictEqual(actions.slice(0, 9), ['save', 'turn:prev', 'turn:prev', 'turn:prev', 'turn:prev-key', 'save',
+    'turn:prev-key', 'save', 'turn:prev-key']);
+  assert.strictEqual(actions.at(-1), 'done:page 4 of 4');
+  assert.strictEqual(state.start, 'opened at 3/4; 2 earlier screens saved back to page 1 (the last ones by the left arrow key)');
 });
 
 test('a reader flipping between screens it already showed on one page is stuck after 30 turns', () => {

@@ -66,7 +66,10 @@ GEMINI_ERROR = 'gemini_error.txt'  # why, for capture_book.py
 TEXT_LAYER = 'textlayer'
 PICTURE = 'picture'  # a page Vision found no words on, in a book it reads
 NO_TEXT = 'no text found'
-LIVETEXT = 'livetext'  # a page Vision found no lines on, read by Live Text (tools/livetext.swift)
+LIVETEXT = 'livetext'  # a page Live Text (tools/livetext.swift) read more of than Vision
+LIVETEXT_CHECK = 400  # Vision text shorter than this, or with any Japanese, is checked against Live Text
+LIVETEXT_MARGIN = 1.2
+CJK = re.compile('[\u3040-\u30ff\u4e00-\u9fff]')
 LIVETEXT_SOURCE = Path(__file__).resolve().parent / 'tools' / 'livetext.swift'
 PICTURE_SHARE = 0.5  # below half the book: photos in a book Vision reads (For 91 Days in Oviedo: 49 of 265)
 LINES = '.lines.json'  # Vision's line boxes for a page, for layout.py
@@ -199,16 +202,27 @@ def livetext(image, run=subprocess.run, binary=None):
 
 
 def vision_transcribe(image, read_lines=None, read_livetext=None):
-    """(text, reader): Vision's lines with headings, or Live Text's transcript when Vision finds no lines, which it
-    does on vertical Japanese. Live Text gives no line boxes, so those pages get no layout from layout.py."""
+    """(text, reader): Vision's lines with headings, or Live Text's transcript when it reads more of the page.
+
+    Vision returns no lines on vertical Japanese, or only the few horizontal pieces on such a page: on 英語教育幻想
+    (2026-10-12) it read one 「ジ」 of a full vertical page, and an English quote of 6 lines above vertical body text.
+    So Live Text also reads every page whose Vision text is short or Japanese, and wins when it reads clearly more.
+    Live Text gives no line boxes, so its pages get no layout from layout.py."""
     boxes = (read_lines or vision_lines)(image)
+    text = vision_markdown(vision_headings(boxes)) if boxes else ''
+    live = ''
+    if (sys.platform == 'darwin' or read_livetext) and (len(text) < LIVETEXT_CHECK or CJK.search(text)):
+        live = (read_livetext or livetext)(image)
+    if live and (not boxes or chars(live) > LIVETEXT_MARGIN * chars(text) + 10):
+        return live, LIVETEXT
     if not boxes:
-        text = (read_livetext or livetext)(image) if sys.platform == 'darwin' or read_livetext else ''
-        if not text:
-            raise RuntimeError(NO_TEXT)  # an empty result must not mark the page done
-        return text, LIVETEXT
+        raise RuntimeError(NO_TEXT)  # an empty result must not mark the page done
     image.with_suffix(LINES).write_text(json.dumps(boxes, ensure_ascii=False), encoding='utf-8')
-    return vision_markdown(vision_headings(boxes)), VISION
+    return text, VISION
+
+
+def chars(text):
+    return len(re.sub(r'\s', '', text))
 
 
 def vision_headings(lines):
@@ -467,7 +481,7 @@ def main():
     sources = read_sources(args.folder)
     done = read_layout(args.folder)
     again = code_rereads(args.folder, done)
-    vision = [img for img in images if sources.get(img.stem) == VISION
+    vision = [img for img in images if sources.get(img.stem) in (VISION, LIVETEXT)
               and (img.stem in read_now or img.stem not in done or img.stem in again)]
     cli = claude_cli()
     if args.layout == 'sonnet' and not cli:
@@ -480,7 +494,7 @@ def main():
             (args.folder / GEMINI_ERROR).write_text(str(e), encoding='utf-8')
             sys.exit(GEMINI_FAILED_EXIT)
         (args.folder / GEMINI_ERROR).unlink(missing_ok=True)
-        print(f'Layout read on {len(vision) - len(left)} of {len(vision)} Vision pages'
+        print(f'Layout read on {len(vision) - len(left)} of {len(vision)} Vision and Live Text pages'
               + (f'; {len(left)} left, run again to retry' if left else ''), flush=True)
     elif vision:
         print(f'GEMINI_API_KEY is not set in {CONFIG_PATH} and claude is not installed: {len(vision)} Vision pages keep titles guessed from layout')

@@ -228,6 +228,9 @@ class Channel:
                 job.title = event.get('title') or ''
                 if event.get('probe') is not None:
                     (job.folder / 'dom-probe.json').write_text(json.dumps(event['probe'], indent=1), encoding='utf-8')
+            elif kind == 'probe':
+                label = re.sub(r'[^a-z-]', '', str(event.get('label') or 'probe'))
+                (job.folder / f'dom-probe-{label}.json').write_text(json.dumps(event.get('probe'), indent=1), encoding='utf-8')
             elif kind == 'done':
                 stopped = finish_folder(job.folder, job.pages, event)
                 job.outcome = CaptureResult('done', stopped, job.title, len(job.pages))

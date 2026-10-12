@@ -3,7 +3,7 @@
     <root>/cases/<YYYYmmddTHHMMSS>-<ASIN>-<stage>/
         case.json     asin, title, domain, stage, kind (book | systemic), checks, error, attempt, versions, commit,
                       files (what was copied) and skipped (page images left out to stay under MAX_BYTES)
-        trace.jsonl, dom-probe.json, capture.json, positions.json, report.json   when the book's pages folder has them
+        trace.jsonl, dom-probe.json, dom-probe-stopped.json, capture.json, positions.json, report.json   when the book's pages folder has them
         page_NNNN.png at most 3: the page a failed check names, then the first and the last; a named page's .txt too
 
 publish_case copies a case to KINDLE_CASES_FOLDER (default Kindle_cases beside GOOGLE_DRIVE_FOLDER), which Drive syncs.
@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-EVIDENCE = ('trace.jsonl', 'dom-probe.json', 'capture.json', 'positions.json', 'report.json')
+EVIDENCE = ('trace.jsonl', 'dom-probe.json', 'dom-probe-stopped.json', 'capture.json', 'positions.json', 'report.json')
 MAX_PAGES = 3
 MAX_BYTES = 5_000_000
 PAGE = re.compile(r'page_\d{4}')
