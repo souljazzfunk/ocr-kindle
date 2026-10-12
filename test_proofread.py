@@ -24,6 +24,25 @@ def test_english_pages_of_a_japanese_book_are_kept():
     assert fixes(pages) == []
 
 
+def test_emphasis_dots_read_as_commas_on_their_own_lines_are_removed_and_the_sentence_joined():
+    # 2026-10-12: Laiken found 英語教育幻想's 傍点 read by Live Text as "、" and "、、" paragraphs that cut sentences.
+    page = ('## 受信モードと発信モード\n\nコミュニケーションの四技能を異なる観点から組み直すこと\n\n、\n\n'
+            'もできます。「聞く・読む」は情報を受けとる受信モードであ\n\n、、\n\nるのに対して、「話す・書く」は発信モードです。'
+            '\n\n、、、\n\n次の段落です。')
+    book = Book(Path('/nonexistent'), {'page_0001': page})
+    found = find_all(book)
+    assert [f.kind for f in found] == ['emphasis_dots'] * 3
+    assert apply(book.pages, found)['page_0001'] == (
+        '## 受信モードと発信モード\n\nコミュニケーションの四技能を異なる観点から組み直すこともできます。'
+        '「聞く・読む」は情報を受けとる受信モードであるのに対して、「話す・書く」は発信モードです。\n\n次の段落です。')
+    # A run of them with a backslash, and a full stop among them (考える練習: "じゃな\n\n、。\n\nサッカー").
+    pages = {'page_0001': '中長期的な視点に立てば、\n\n、、、\n\n、\n\n\\\n\n日米同盟の深化です。',
+             'page_0002': 'すっとぼけてるじゃな\n\n、。\n\nサッカーも同じで'}
+    book = Book(Path('/nonexistent'), pages)
+    assert apply(book.pages, find_all(book)) == {'page_0001': '中長期的な視点に立てば、日米同盟の深化です。',
+                                                 'page_0002': 'すっとぼけてるじゃな。\n\nサッカーも同じで'}
+
+
 def test_a_screen_saved_twice_at_one_position_is_a_duplicate(tmp_path):
     # 2026-10-12: 英語教育幻想's page_0020 and page_0111 were both 129/2566 with the same text, a hundred pages apart.
     text = 'グローバル化が進むにつれて、世界語としての英語の持つ役割が増していきます。' * 3

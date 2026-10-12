@@ -30,8 +30,9 @@ HEADING = re.compile(r'(?m)^(#+) (.*)$')
 MISSED_CHAPTER = re.compile(r'(?m)^(?:[1-9]|1\d|20|[Z&])\n\n(?![#\d])(?![^\n]*,\s*\d+(?:[-–]\d+)?\s*\n)[^\n]{1,80}\n\n'
                             r'[^#\n]{%d,}' % 100)
 # Proofread kinds whose fix is safe without a look at samples; the others are reported for a human.
-AUTO_KINDS = ('duplicate_page', 'foreign_page', 'seam_overlap', 'dash_as_hyphen', 'stray_symbol', 'homoglyph',
-              'decorative_digit', 'repl_prompt', 'section_number', 'l_for_i', 'digits_for_ll', 'binary_art', 'stray_colon')
+AUTO_KINDS = ('duplicate_page', 'foreign_page', 'seam_overlap', 'dash_as_hyphen', 'stray_symbol', 'emphasis_dots',
+              'homoglyph', 'decorative_digit', 'repl_prompt', 'section_number', 'l_for_i', 'digits_for_ll', 'binary_art',
+              'stray_colon')
 REVIEW_KINDS = ('hyphen_break', 'odd_case')
 LOOSE_CODE = 0.25  # share of a programming book's code lines that may stand outside code blocks
 
