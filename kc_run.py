@@ -48,6 +48,7 @@ def failed_checks(data):
 
 def capture(library, listed, book, ready, current, args):
     attempt = book.attempt() + 1 if ready.recapture else 1
+    book.start(args.now)
     folder = book.folder / 'pages'
     title, failure = capture_book.capture(book.asin, book.title, book.domain, folder, recapture=ready.recapture)
     if failure:
@@ -75,9 +76,14 @@ def publish(library, listed, book, ready, current, args):
     converted = book.record('convert')
     copied = capture_book.publish(book.pages, book.title or book.asin)
     capture_book.start_wiki_ingest(read_json(converted['report']))
-    book.succeed('publish', {'drive': str(copied) if copied else None, 'version': current['publish']},
-                 upstream=converted['at'])
-    return 'published'
+    # From the first capture to Drive, counted once: 英語教育幻想 took 66.7 minutes over six captures (2026-10-12).
+    # A book published again after a converter change keeps the time of its first publish.
+    before, started = book.record('publish') or {}, read_json(book.folder / 'start.json') or {}
+    seconds = before.get('seconds', round(args.now - started['at']) if 'at' in started else None)
+    slow = seconds is not None and seconds > capture_book.BUDGETS['book']
+    book.succeed('publish', {'drive': str(copied) if copied else None, 'version': current['publish'],
+                             'seconds': seconds, 'slow': slow}, upstream=converted['at'])
+    return f'published slowly ({seconds // 60} min)' if slow else 'published'
 
 
 STEPS = {'capture': capture, 'convert': convert, 'publish': publish}

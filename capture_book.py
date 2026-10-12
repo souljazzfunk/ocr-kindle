@@ -46,7 +46,8 @@ GEMINI_CHECK = 'gemini'
 # 2026-10-12: the redesign was planned and shipped without timing a single step, so nobody could say it got faster.
 # About twice 英語教育幻想's pace on extension 2.3: 0.37 to 0.47 s a screen, OCR 0.39 s and the checks 0.23 s a page.
 # The Kindle app turned 1.26 to 1.29 s a screen, so it would fail this budget.
-BUDGETS = {'reach': 60, 'capture_per_screen': 1.0, 'ocr_per_page': 1.0, 'checks_per_page': 0.5}
+# book: seconds from a book's first capture to Drive, retries included (kc_run.publish).
+BUDGETS = {'reach': 60, 'capture_per_screen': 1.0, 'ocr_per_page': 1.0, 'checks_per_page': 0.5, 'book': 20 * 60}
 PYTHON = sys.executable
 HERE = Path(__file__).resolve().parent
 # The LLM wiki's watcher (llm-wiki/scripts/watch.sh). It takes only books whose report.json passed.

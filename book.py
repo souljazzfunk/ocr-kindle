@@ -1,6 +1,7 @@
 """A book is a folder, and its state is derived from the files in it. Nothing else keeps progress.
 
     <root>/<ASIN>/book.json             the book: asin, title, domain (from books.tsv or a library scan)
+    <root>/<ASIN>/start.json            when its first capture began
     <root>/<ASIN>/stage.<stage>.json    a stage's output: the stage version that made it, when, and its input
     <root>/<ASIN>/failure.<stage>.json  a stage that failed on this book: the checks, the version, and whether to retry
     <root>/<ASIN>/pages/                the capture (page images, capture.json) and what the converter writes beside it
@@ -203,6 +204,13 @@ class Book:
         record = {**data, 'upstream': upstream, 'at': now_id()}
         write_json(self.folder / f'failure.{stage}.json', record)
         return record
+
+    def start(self, now):
+        """When the book's first capture began, written once by the capture job: a book's time is counted from it."""
+        path = self.folder / 'start.json'
+        if not path.exists():
+            write_json(path, {'at': now})
+        return read_json(path)['at']
 
     def attempt(self):
         """How many captures of this book its records count (0 before the first)."""
