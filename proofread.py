@@ -243,6 +243,23 @@ def stray_symbol(book):
             yield Finding('stray_symbol', stem, text[start:m.end()], text[start:m.start()], at=start)
 
 
+# 傍点 (emphasis dots beside vertical Japanese) that Live Text reads as paragraphs of commas or backslashes, cutting
+# the sentence they mark: 英語教育幻想 (2026-10-12) "組み直すこと\n\n、\n\nもできます" and "、、、\n\n、\n\n\\\n\n".
+DOTS = r'[、。﹅・\\＼]+'
+EMPHASIS_DOTS = re.compile(rf'\n\n(?:{DOTS}\n\n)*{DOTS}(\n\n|$)')
+SENTENCE_END = '。！？」』）'
+
+
+def emphasis_dots(book):
+    """Paragraphs of nothing but commas, dots and backslashes: removed, and the sentence they cut joined again. A full
+    stop among them ends the sentence before them ("じゃな\n\n、。\n\nサッカー" in 考える練習)."""
+    for stem, text in book.pages.items():
+        for m in EMPHASIS_DOTS.finditer(text):
+            ended = m.start() == 0 or text[m.start() - 1] in SENTENCE_END or not m.group(1)
+            after = m.group(1) if ended else '。\n\n' if '。' in m.group() else ''
+            yield Finding('emphasis_dots', stem, m.group(), after, at=m.start())
+
+
 def repl_prompt(book):
     """Put back the ">>> " of a Python prompt, in a book with Python sessions, in code blocks too: they keep what Vision
     read, and ">> > spam = int(spam)" is still a broken prompt there."""
@@ -368,7 +385,8 @@ def decorative_digit(book):
 
 
 DETECTORS = [duplicate_page, seam_overlap, foreign_page, hyphen_break, dash_as_hyphen, homoglyph, odd_case, stray_symbol,
-             repl_prompt, section_number, decorative_digit, l_for_i, digits_for_ll, binary_art, stray_colon, heading_noise]
+             emphasis_dots, repl_prompt, section_number, decorative_digit, l_for_i, digits_for_ll, binary_art, stray_colon,
+             heading_noise]
 
 
 def cross_read(folder, pages, sources):
