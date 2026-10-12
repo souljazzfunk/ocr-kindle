@@ -2,6 +2,7 @@
 // what to do, does it, and sends every page and event to the worker, which posts them to the channel.
 const PAGE_WAIT_MS = 3000;
 const KEY_WAIT_MS = 10000; // a turn by key is tried where the button stopped working; give the reader time to load
+const ARROW_KEYS = { 'turn:prev-key': 'ArrowLeft', 'turn:prev-key-right': 'ArrowRight', 'turn:next-key': 'ArrowRight', 'turn:next-key-left': 'ArrowLeft' };
 const FIRST_PAGE_WAIT_MS = 60000;
 const JOB_ASKS = 10; // the worker stores the tab's job right after the window opens; the page may ask before that
 const LIBRARY_SETTLE_MS = 3000;
@@ -118,8 +119,8 @@ async function capture(job) {
     } else if (action === 'wait') {
       await sleep(1000);
       seen = await observe();
-    } else if (action === 'turn:prev-key' || action === 'turn:prev-key-right') {
-      pressKey(action === 'turn:prev-key' ? 'ArrowLeft' : 'ArrowRight');
+    } else if (action in ARROW_KEYS) {
+      pressKey(ARROW_KEYS[action]);
       await waitForTurn(seen.key, KEY_WAIT_MS);
       seen = await observe();
     } else if (action.startsWith('turn:')) {

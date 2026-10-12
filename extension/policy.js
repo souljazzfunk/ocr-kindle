@@ -6,7 +6,8 @@
 // observation: { position: {n, m} | null, sha: string | null, appOnly: bool, signedOut: bool }
 // action: 'save' (state.n is the screen's number; call again with the same observation), 'wait' (observe again after a
 // second), 'turn:prev', 'turn:prev-key' (the left arrow key instead of the button), 'turn:prev-key-right' (the right
-// arrow key, for a book read right to left), 'turn:next',
+// arrow key, for a book read right to left), 'turn:next', 'turn:next-key' (the right arrow key), 'turn:next-key-left'
+// (the left arrow key, for a book read right to left),
 // 'done:<proof>' or 'fail:<reason>'.
 
 const NEXT_ATTEMPTS = 3; // Cloud Reader occasionally ignores a turn, so an edge is 3 turns that leave the image unchanged
@@ -26,7 +27,7 @@ const APP_ONLY_REASON = 'kindle app required: Cloud Reader cannot open this book
 
 function initialState() {
   return { phase: 'back', saved: {}, low: 1, high: 0, n: null, last: null, pending: false, tries: 0, turns: 0, limit: 0,
-    page: null, same: 0, waits: 0, keyed: false, opened: '', openedAt: null, start: '' };
+    page: null, pages: null, same: 0, waits: 0, keyed: false, opened: '', openedAt: null, start: '' };
 }
 
 const limitFor = (position) => TURNS_PER_PAGE * (position?.m || UNKNOWN_LENGTH) + EXTRA_TURNS;
@@ -34,10 +35,15 @@ const where = (position) => (position ? `${position.n}/${position.m}` : 'an unnu
 // The keys tried in turn when Previous page stops moving the reader back. In a book read right to left (vertical
 // Japanese) the left arrow key turns forward: 英語教育幻想 (2026-10-12) stuck at 2037 with the button, then the left key
 // took it forward to 2320. A turn that lands on a later page moves on to the next way of paging back.
-const BACK_WAYS = [false, 'left', 'right'];
-const nextWay = (keyed) => BACK_WAYS[BACK_WAYS.indexOf(keyed) + 1];
-const KEY_ACTIONS = { left: 'turn:prev-key', right: 'turn:prev-key-right' };
-const turn = (state) => ({ state, action: state.phase === 'back' ? (KEY_ACTIONS[state.keyed] || 'turn:prev') : 'turn:next' });
+// Forward is the mirror: 代替医療解剖 (2026-10-12) stopped at 219 of 528 when Next page stopped moving the reader.
+const WAYS = { back: [false, 'left', 'right'], fwd: [false, 'right', 'left'] };
+const nextWay = (state) => WAYS[state.phase][WAYS[state.phase].indexOf(state.keyed) + 1];
+const KEY_ACTIONS = { back: { left: 'turn:prev-key', right: 'turn:prev-key-right' },
+  fwd: { right: 'turn:next-key', left: 'turn:next-key-left' } };
+const turn = (state) => ({ state, action: KEY_ACTIONS[state.phase][state.keyed] || (state.phase === 'back' ? 'turn:prev' : 'turn:next') });
+// The last pages a footer counts can be blank or the back matter's: 英語教育幻想 ended at 2561 of 2566. Short of them,
+// a forward edge tries the keys before it ends the capture.
+const nearEnd = (position) => position.m - position.n <= Math.max(5, Math.ceil(position.m * 0.02));
 const fail = (state, reason) => ({ state, action: `fail:${reason}` });
 
 function save(state, sha) {
@@ -52,12 +58,13 @@ function edge(state, position) {
     // 英語教育幻想 (2026-10-12) opened at 2561 of 2566 and paged back to 784, where Previous page stopped moving it. Why
     // is not known yet; the left arrow key is tried before the capture fails, and dom-probe-stopped.json records the
     // reader's controls where it stuck.
-    if (position && position.n !== 1 && nextWay(state.keyed)) return turn({ ...state, keyed: nextWay(state.keyed), tries: 0 });
+    if (position && position.n !== 1 && nextWay(state)) return turn({ ...state, keyed: nextWay(state), tries: 0 });
     if (position && position.n !== 1) return fail(state, `could not page back past page ${position.n} of ${position.m} by button or key`);
     const start = `opened at ${state.opened}; ${-state.low} earlier screens saved back to ${position ? 'page 1' : 'the first screen'}`
       + (state.keyed ? ` (the last ones by the ${state.keyed} arrow key)` : '');
-    return turn({ ...state, phase: 'fwd', tries: 0, turns: 0, same: 0, start });
+    return turn({ ...state, phase: 'fwd', keyed: false, tries: 0, turns: 0, same: 0, start });
   }
+  if (position && !nearEnd(position) && nextWay(state)) return turn({ ...state, keyed: nextWay(state), tries: 0 });
   const proof = position
     ? (position.n === position.m ? `page ${position.m} of ${position.m}` : `turns stopped at page ${position.n} of ${position.m}`)
     : 'turns stopped on an unnumbered screen';
@@ -71,7 +78,7 @@ function nextAction(state, observation) {
   if (!sha && (state.last === null || state.waits >= IMAGE_WAITS)) return fail(state, `no page image${state.waits ? ` after ${state.waits} s` : ''}`);
   if (!sha) return { state: { ...state, waits: state.waits + 1 }, action: 'wait' };
   if (state.waits) state = { ...state, waits: 0 };
-  if (state.last === null) return save({ ...state, opened: where(position), openedAt: position ? position.n : null, page: position ? position.n : null, limit: limitFor(position) }, sha);
+  if (state.last === null) return save({ ...state, opened: where(position), openedAt: position ? position.n : null, page: position ? position.n : null, pages: position ? position.m : null, limit: limitFor(position) }, sha);
   if (state.pending) return turn({ ...state, pending: false });
 
   const turns = state.turns + 1;
@@ -81,10 +88,12 @@ function nextAction(state, observation) {
   const n = position ? position.n : null;
   const same = n !== null && n === state.page && !fresh ? state.same + 1 : 0;
   if (same >= STUCK_TURNS) return fail(state, `the reader stayed on page ${n} for ${STUCK_TURNS} turns`);
-  const next = { ...state, turns, same, page: n };
-  if (state.phase === 'back' && n !== null && state.page !== null && n > state.page) {
-    if (!nextWay(state.keyed)) return fail(state, `paging back went forward from page ${state.page} to ${n} by button and both keys`);
-    return turn({ ...next, keyed: nextWay(state.keyed), tries: 0, last: sha });
+  const next = { ...state, turns, same, page: n, pages: position ? position.m : null };
+  const wrongWay = n !== null && state.page !== null && position.m === state.pages
+    && (state.phase === 'back' ? n > state.page : n < state.page);
+  if (wrongWay) {
+    if (!nextWay(state)) return fail(state, `paging ${state.phase === 'back' ? 'back went forward' : 'forward went back'} from page ${state.page} to ${n} by button and both keys`);
+    return turn({ ...next, keyed: nextWay(state), tries: 0, last: sha });
   }
 
   if (sha === state.last) {
