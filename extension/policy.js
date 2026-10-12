@@ -5,7 +5,7 @@
 //
 // observation: { position: {n, m} | null, sha: string | null, appOnly: bool, signedOut: bool }
 // action: 'save' (state.n is the screen's number; call again with the same observation), 'wait' (observe again after a
-// second), 'turn:prev', 'turn:next',
+// second), 'turn:prev', 'turn:prev-key' (the left arrow key instead of the button), 'turn:next',
 // 'done:<proof>' or 'fail:<reason>'.
 
 const NEXT_ATTEMPTS = 3; // Cloud Reader occasionally ignores a turn, so an edge is 3 turns that leave the image unchanged
@@ -25,12 +25,12 @@ const APP_ONLY_REASON = 'kindle app required: Cloud Reader cannot open this book
 
 function initialState() {
   return { phase: 'back', saved: {}, low: 1, high: 0, n: null, last: null, pending: false, tries: 0, turns: 0, limit: 0,
-    page: null, same: 0, waits: 0, opened: '', start: '' };
+    page: null, same: 0, waits: 0, keyed: false, opened: '', start: '' };
 }
 
 const limitFor = (position) => TURNS_PER_PAGE * (position?.m || UNKNOWN_LENGTH) + EXTRA_TURNS;
 const where = (position) => (position ? `${position.n}/${position.m}` : 'an unnumbered screen');
-const turn = (state) => ({ state, action: state.phase === 'back' ? 'turn:prev' : 'turn:next' });
+const turn = (state) => ({ state, action: state.phase === 'back' ? (state.keyed ? 'turn:prev-key' : 'turn:prev') : 'turn:next' });
 const fail = (state, reason) => ({ state, action: `fail:${reason}` });
 
 function save(state, sha) {
@@ -42,8 +42,13 @@ function save(state, sha) {
 
 function edge(state, position) {
   if (state.phase === 'back') {
-    if (position && position.n !== 1) return fail(state, `could not page back past page ${position.n} of ${position.m}`);
-    const start = `opened at ${state.opened}; ${-state.low} earlier screens saved back to ${position ? 'page 1' : 'the first screen'}`;
+    // 英語教育幻想 (2026-10-12) opened at 2561 of 2566 and paged back to 784, where Previous page stopped moving it. Why
+    // is not known yet; the left arrow key is tried before the capture fails, and dom-probe-stopped.json records the
+    // reader's controls where it stuck.
+    if (position && position.n !== 1 && !state.keyed) return turn({ ...state, keyed: true, tries: 0 });
+    if (position && position.n !== 1) return fail(state, `could not page back past page ${position.n} of ${position.m} by button or key`);
+    const start = `opened at ${state.opened}; ${-state.low} earlier screens saved back to ${position ? 'page 1' : 'the first screen'}`
+      + (state.keyed ? ' (the last ones by the left arrow key)' : '');
     return turn({ ...state, phase: 'fwd', tries: 0, turns: 0, same: 0, start });
   }
   const proof = position

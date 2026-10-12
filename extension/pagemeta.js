@@ -48,6 +48,13 @@ function probePage(doc) {
     controls: [...doc.querySelectorAll('button, [role="button"], [role="menuitem"], a[aria-label]')].slice(0, 80)
       .map((el) => (el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 60)).filter(Boolean),
     a11y: sample('[class*="a11y" i], [aria-live], [role="document"], [role="main"]'),
+    // Whether the page-turn buttons are there and usable, for a capture that stopped turning.
+    turns: ['Previous page', 'Next page'].map((label) => {
+      const button = doc.querySelector(`[aria-label="${label}"]`);
+      return { label, present: !!button, disabled: !!button && (button.disabled === true || button.getAttribute('aria-disabled') === 'true'),
+        shown: !!button && button.getBoundingClientRect().width > 0 };
+    }),
+    footer: (doc.body.innerText.match(/(?:位置|ページ|Location|Page)[^\n]{0,40}/g) || []).slice(0, 4),
     body: describe(doc.body, 0),
   };
 }

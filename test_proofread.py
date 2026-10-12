@@ -15,6 +15,14 @@ def fixes(pages):
     return sorted((f.kind, f.page, f.before, f.after) for f in find_all(book))
 
 
+def test_english_pages_of_a_japanese_book_are_kept():
+    # 2026-10-12: 英語教育幻想's English quotes and bibliography were blanked as foreign pages.
+    japanese = 'ここからは私見です。この文書で英語の位置がどう語られているかを見ていきます。' * 4
+    pages = {'page_0001': japanese, 'page_0002': 'Ministry of Education. https://www.mext.go.jp/ English Education Reform Plan.',
+             'page_0003': japanese}
+    assert fixes(pages) == []
+
+
 def test_page_level_errors():
     pages = {
         'page_0001': BODY + 'Brand saw Jobs as one of the purest embodiments of the cultural mix that the catalog sought.',

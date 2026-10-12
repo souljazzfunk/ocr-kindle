@@ -135,12 +135,28 @@ def sorted_boxes(image):
     return sorted(json.loads(image.with_suffix(LINES).read_text(encoding='utf-8')), key=lambda line: line[1])
 
 
+def page_lines(image):
+    """The numbered lines Gemini sees: Vision's lines, or for a Live Text page (no line boxes) its paragraphs, with
+    any heading marks from an earlier layout taken off."""
+    if image.with_suffix(LINES).exists():
+        return [line[3] for line in sorted_boxes(image)]
+    text = image.with_suffix('.txt').read_text(encoding='utf-8')
+    return [re.sub(r'^#+ ', '', line) for line in text.splitlines() if line.strip()]
+
+
+def livetext_markdown(lines, page):
+    """A Live Text page with Gemini's titles marked. 英語教育幻想 (2026-10-12) came out with no headings: its section
+    marks 「†」 read as 「十」 and the titles stayed paragraphs. Without boxes, only the titles are taken."""
+    levels = {t['line']: t['level'] for t in page.get('titles', []) if 0 <= t.get('line', -1) < len(lines)}
+    return '\n\n'.join(f'{"#" * levels[i]} {line}' if i in levels else line for i, line in enumerate(lines))
+
+
 def ask_layout(client, images):
     """Gemini's reading of a batch of Vision pages: {stem: layout} for each page it answered."""
     parts = [PROMPT]
     for image in images:
         parts += [f'Page "{image.stem}":', types.Part.from_bytes(data=image.read_bytes(), mime_type='image/png'),
-                  '\n'.join(f'{i}: {line[3]}' for i, line in enumerate(sorted_boxes(image)))]
+                  '\n'.join(f'{i}: {line}' for i, line in enumerate(page_lines(image)))]
     response = client.models.generate_content(model=MODEL, contents=parts, config=types.GenerateContentConfig(
         temperature=0, response_mime_type='application/json', response_schema=SCHEMA,
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)))
@@ -173,7 +189,7 @@ def ask_layout_claude(cli, images):
              'or null}.']
     for image in images:
         parts += [f'Page "{image.stem}": image {image.resolve()}',
-                  '\n'.join(f'{i}: {line[3]}' for i, line in enumerate(sorted_boxes(image)))]
+                  '\n'.join(f'{i}: {line}' for i, line in enumerate(page_lines(image)))]
     run = subprocess.run(
         [cli, '-p', '--model', CLAUDE_MODEL, '--output-format', 'json', '--allowedTools', 'Read',
          '--add-dir', str(images[0].parent.resolve()), '--strict-mcp-config',
@@ -197,7 +213,7 @@ def mark_layout(folder, client, images, cli=None):
     layout = read_layout(folder)
     again = code_rereads(folder, layout)
     todo = [image for image in images if (image.stem not in layout or image.stem in again)
-            and image.with_suffix(LINES).exists()]
+            and (image.with_suffix(LINES).exists() or image.with_suffix('.txt').exists())]
     batches = [todo[i:i + BATCH] for i in range(0, len(todo), BATCH)]
 
     failed = threading.Event()  # Gemini failed: send it nothing more
@@ -249,6 +265,9 @@ def mark_layout(folder, client, images, cli=None):
             page = dict(layout[image.stem], titles=layout[image.stem].get('titles', []) + styled.get(image.stem, []))
             boxes, page = reread_beside_cap(image, sorted_boxes(image), page)
             text = page_markdown(boxes, page, chapters)
+            image.with_suffix('.txt').write_text(text or ' ', encoding='utf-8')
+        elif image.stem in layout and image.with_suffix('.txt').exists():
+            text = livetext_markdown(page_lines(image), layout[image.stem])
             image.with_suffix('.txt').write_text(text or ' ', encoding='utf-8')
     left = [image for image in images if image.stem not in layout]
     if first_error:

@@ -146,10 +146,12 @@ def seam_overlap(book):
 
 
 def foreign_page(book):
+    """A Japanese page in a Latin book (a chat or a dialog in the capture), or a Kindle end screen. A Latin page in a
+    Japanese book is kept: 英語教育幻想's quotes and bibliography are English (2026-10-12, 19 pages were blanked)."""
     book_is_cjk = len(CJK.findall(book.corpus)) > len(LATIN.findall(book.corpus))
     for stem, text in book.pages.items():
         cjk, latin = len(CJK.findall(text)), len(LATIN.findall(text))
-        if cjk + latin and (cjk > latin) != book_is_cjk or sum(ui in text for ui in KINDLE_UI) >= 2:
+        if not book_is_cjk and cjk > latin or sum(ui in text for ui in KINDLE_UI) >= 2:
             yield Finding('foreign_page', stem, text, ' ')
 
 
