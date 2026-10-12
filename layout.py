@@ -24,7 +24,7 @@ from statistics import median
 
 from google.genai import types
 
-from img2txt import (BODY_LINE_CHARS, DECORATIVE_DIGITS, HEADING_NUMBER, LINES, ROW, WORKERS, page_images,
+from img2txt import (BODY_LINE_CHARS, DECORATIVE_DIGITS, HEADING_NUMBER, LINES, LIVE, ROW, WORKERS, page_images,
                      vision_markdown)
 
 LAYOUT = 'layout.json'
@@ -136,11 +136,12 @@ def sorted_boxes(image):
 
 
 def page_lines(image):
-    """The numbered lines Gemini sees: Vision's lines, or for a Live Text page (no line boxes) its paragraphs, with
-    any heading marks from an earlier layout taken off."""
+    """The numbered lines Gemini sees: Vision's lines, or for a Live Text page (no line boxes) the paragraphs of its
+    own reading; from the .txt, with any heading marks from an earlier layout taken off, when that was not kept."""
     if image.with_suffix(LINES).exists():
         return [line[3] for line in sorted_boxes(image)]
-    text = image.with_suffix('.txt').read_text(encoding='utf-8')
+    live = image.with_suffix(LIVE)
+    text = (live if live.exists() else image.with_suffix('.txt')).read_text(encoding='utf-8')
     return [re.sub(r'^#+ ', '', line) for line in text.splitlines() if line.strip()]
 
 

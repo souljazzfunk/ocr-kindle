@@ -73,6 +73,9 @@ CJK = re.compile('[\u3040-\u30ff\u4e00-\u9fff]')
 LIVETEXT_SOURCE = Path(__file__).resolve().parent / 'tools' / 'livetext.swift'
 PICTURE_SHARE = 0.5  # below half the book: photos in a book Vision reads (For 91 Days in Oviedo: 49 of 265)
 LINES = '.lines.json'  # Vision's line boxes for a page, for layout.py
+# Live Text's own reading of a page, for layout.py: the .txt is layout's output, so a second layout read from it lost
+# what the first took off (英語教育幻想, 2026-10-12: with 73 「十」 gone, its 28 「＋」 fell short of a section mark).
+LIVE = '.live.txt'
 
 OCR_PROMPT = """Transcribe the book text on this Kindle page image exactly as printed.
 
@@ -214,11 +217,28 @@ def vision_transcribe(image, read_lines=None, read_livetext=None):
     if (sys.platform == 'darwin' or read_livetext) and (len(text) < LIVETEXT_CHECK or CJK.search(text)):
         live = (read_livetext or livetext)(image)
     if live and (not boxes or chars(live) > LIVETEXT_MARGIN * chars(text) + 10):
+        image.with_suffix(LIVE).write_text(live, encoding='utf-8')
         return live, LIVETEXT
     if not boxes:
         raise RuntimeError(NO_TEXT)  # an empty result must not mark the page done
     image.with_suffix(LINES).write_text(json.dumps(boxes, ensure_ascii=False), encoding='utf-8')
     return text, VISION
+
+
+def restore_live(images, sources, read=None):
+    """Read again with Live Text the pages it read before LIVE was kept, so their layout starts from its reading. A page
+    it cannot read now keeps its layout from the .txt."""
+    restored = []
+    for image in images:
+        if sources.get(image.stem) != LIVETEXT or image.with_suffix(LIVE).exists():
+            continue
+        try:
+            image.with_suffix(LIVE).write_text((read or livetext)(image), encoding='utf-8')
+        except RuntimeError as e:
+            print(f'{image.name}: {e}; laid out from its .txt', flush=True)
+            continue
+        restored.append(image)
+    return restored
 
 
 def chars(text):
@@ -501,6 +521,8 @@ def main():
     # Live Text pages already laid out are written again from layout.json, with no request: a new livetext_markdown
     # (section marks, contents pages) then reaches books converted before it.
     kept = [img for img in images if sources.get(img.stem) == LIVETEXT and img.stem in done and img not in vision]
+    if kept and sys.platform == 'darwin' and restore_live(kept, sources):
+        print('Live Text read again on the pages laid out before its reading was kept', flush=True)
     if kept:
         mark_layout(args.folder, None, kept)
 

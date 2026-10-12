@@ -460,3 +460,40 @@ def test_a_chapter_number_read_as_a_symbol_takes_the_contents_number_and_a_run_o
     read = lambda stem: (tmp_path / f'{stem}.txt').read_text(encoding='utf-8')
     assert read('page_0002') == f'# 幻想8英語学習は幼少期からできるだけ早く始めた方がよい\n\n## 見出し2\n\n{body}'
     assert read('page_0003') == f'## 見出し3\n\n{body}\n\n{run_on[1:]}'
+
+
+def test_a_second_layout_starts_from_live_text_s_reading_not_from_the_first_layout_s_output(tmp_path):
+    # 2026-10-12: 英語教育幻想's first layout took 「十」 off 73 titles; laid out again from those .txt files, its 28
+    # 「＋」 titles were too few to count as a section mark and kept it.
+    import img2txt
+    body = 'ここからは私見です。この文書で英語の位置が語られます。'
+    layout_json = {}
+    for n in range(1, 20):
+        mark = '＋' if n <= 5 else '十'
+        stem = f'page_{n:04d}'
+        (tmp_path / f'{stem}.png').write_bytes(b'png')
+        (tmp_path / f'{stem}{img2txt.LIVE}').write_text(f'{mark}見出し{n}\n{body}', encoding='utf-8')
+        (tmp_path / f'{stem}.txt').write_text(f'## {"＋" if mark == "＋" else ""}見出し{n}\n\n{body}', encoding='utf-8')
+        layout_json[stem] = {'titles': [{'line': 0, 'level': 2}]}
+    (tmp_path / layout.LAYOUT).write_text(json.dumps(layout_json))
+    assert mark_layout(tmp_path, None, sorted(tmp_path.glob('page_*.png'))) == []
+    assert (tmp_path / 'page_0001.txt').read_text(encoding='utf-8') == f'## 見出し1\n\n{body}'
+    assert (tmp_path / 'page_0006.txt').read_text(encoding='utf-8') == f'## 見出し6\n\n{body}'
+
+
+def test_pages_live_text_read_before_its_reading_was_kept_are_read_again(tmp_path):
+    import img2txt
+    pages = [tmp_path / f'page_{n:04d}.png' for n in (1, 2, 3)]
+    for page in pages:
+        page.write_bytes(b'png')
+    (tmp_path / f'page_0002{img2txt.LIVE}').write_text('kept', encoding='utf-8')
+    sources = {'page_0001': img2txt.LIVETEXT, 'page_0002': img2txt.LIVETEXT, 'page_0003': img2txt.VISION}
+    assert img2txt.restore_live(pages, sources, read=lambda image: f'read {image.stem}') == [pages[0]]
+
+    def unreadable(image):
+        raise RuntimeError(f'livetext: cannot read {image}')
+    (tmp_path / f'page_0001{img2txt.LIVE}').rename(tmp_path / 'kept.txt')
+    assert img2txt.restore_live(pages, sources, read=unreadable) == []
+    (tmp_path / 'kept.txt').rename(tmp_path / f'page_0001{img2txt.LIVE}')
+    assert (tmp_path / f'page_0001{img2txt.LIVE}').read_text(encoding='utf-8') == 'read page_0001'
+    assert (tmp_path / f'page_0002{img2txt.LIVE}').read_text(encoding='utf-8') == 'kept'

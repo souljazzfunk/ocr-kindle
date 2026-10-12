@@ -268,3 +268,20 @@ def test_the_launchd_jobs_run_one_step_of_each_job_and_are_started_again(home):
         assert plist['KeepAlive'] is True and plist['ThrottleInterval'] == 10
         assert Path(plist['StandardOutPath']).parent.name == 'ocr-kindle'
     assert sorted(jobs) == sorted(book.JOBS)
+
+
+def test_a_book_s_time_from_its_first_capture_to_drive_is_recorded_once_and_a_slow_one_is_named(home, mac):
+    # 2026-10-12: 英語教育幻想 took 66.7 minutes from its first capture to Drive over six captures; nothing counted it.
+    mac.captures['B1'] = [['capture_stall']]
+    assert step(home, 'capture', now=NOON) == 'retry: B1'
+    assert step(home, 'capture', now=NOON + 600) == 'captured: B1'
+    assert step(home, 'convert', now=NOON + 900) == 'converted: B1'
+    assert step(home, 'convert', now=NOON + 4000) == 'published slowly (66 min): B1'
+    published = book.Library(home / 'kindle').book('B1').record('publish')
+    assert published['seconds'] == 4000 and published['slow']
+    edit(home, 'layout.py')
+    assert step(home, 'convert', now=NOON + 90000) == 'converted: B1'
+    assert step(home, 'convert', now=NOON + 90100) == 'published slowly (66 min): B1'
+    assert step(home, 'capture', now=NOON + 90200) == 'captured: B2'
+    step(home, 'convert', now=NOON + 90300)
+    assert step(home, 'convert', now=NOON + 90400) == 'published: B2'
