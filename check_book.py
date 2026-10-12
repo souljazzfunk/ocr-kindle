@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from img2txt import LIVETEXT, SOURCES, TEXT_LAYER, VISION, page_images, read_sources
-from layout import CODE_LINE, code_pages, code_rereads, listed, livetext_contents, read_layout
+from layout import CODE_LINE, code_pages, code_rereads, contents_covered, listed, livetext_contents, read_layout
 from proofread import CODE_BLOCK, DECORATIVE_REF, Book, find_all, load_pages
 
 PROBE = 'dom-probe.json'
@@ -30,7 +30,7 @@ HEADING = re.compile(r'(?m)^(#+) (.*)$')
 MISSED_CHAPTER = re.compile(r'(?m)^(?:[1-9]|1\d|20|[Z&])\n\n(?![#\d])(?![^\n]*,\s*\d+(?:[-–]\d+)?\s*\n)[^\n]{1,80}\n\n'
                             r'[^#\n]{%d,}' % 100)
 # Proofread kinds whose fix is safe without a look at samples; the others are reported for a human.
-AUTO_KINDS = ('duplicate_page', 'foreign_page', 'seam_overlap', 'dash_as_hyphen', 'stray_symbol', 'emphasis_dots',
+AUTO_KINDS = ('duplicate_page', 'foreign_page', 'seam_overlap', 'dash_as_hyphen', 'stray_symbol', 'emphasis_dots', 'split_sentence',
               'homoglyph', 'decorative_digit', 'repl_prompt', 'section_number', 'l_for_i', 'digits_for_ll', 'binary_art',
               'stray_colon')
 REVIEW_KINDS = ('hyphen_break', 'odd_case')
@@ -172,7 +172,7 @@ def check_folder(folder, title=None):
                         + (f': {shown}' if missed else ''), fix=None))
     # 英語教育幻想 (2026-10-12) passed with 幻想5 and 幻想6 left as paragraphs: every chapter its contents lists has a heading.
     titles = [title for _, title in HEADING.findall(text)]
-    unheaded = [entry for entry in livetext_contents(page_images(folder))[1] if not any(listed(t, [entry]) for t in titles)]
+    unheaded = [entry for entry in livetext_contents(page_images(folder))[1] if not contents_covered(entry, titles)]
     checks.append(Check('contents_chapters', not unheaded, f'{len(unheaded)} contents entries without a heading'
                         + (': ' + '; '.join(f'"{e[:30]}"' for e in unheaded[:5]) if unheaded else ''), fix=None))
 

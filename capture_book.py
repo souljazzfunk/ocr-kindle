@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 
 import json
@@ -138,13 +139,34 @@ def publish(folder, title, config=None):
     return Path(shutil.copy2(book, drive))
 
 
+def reports_folder(config):
+    drive = config.get('GOOGLE_DRIVE_FOLDER')
+    return Path(config['KINDLE_REPORTS_FOLDER']) if config.get('KINDLE_REPORTS_FOLDER') else \
+        Path(drive).parent / 'Kindle_reports' if drive else None
+
+
+def publish_states(rows, last_step, config):
+    """Write every listed book's state to _books.json in the reports folder, so the cloud sees the whole list. Never
+    raises: a step's work is done whether or not the list reaches Drive."""
+    folder = reports_folder(config)
+    if folder is None or not folder.parent.is_dir():
+        return None
+    try:
+        folder.mkdir(exist_ok=True)
+        (folder / '_books.json').write_text(json.dumps({'at': datetime.now().isoformat(timespec='seconds'),
+                                                        'last_step': last_step, 'books': rows},
+                                                       ensure_ascii=False, indent=1), encoding='utf-8')
+    except OSError as e:
+        print(f'Book states not copied to {folder}: {type(e).__name__}: {e}', flush=True)
+        return None
+    return folder / '_books.json'
+
+
 def publish_report(asin, title, report, published, config):
     """Copy a published book's report and its publish record to KINDLE_REPORTS_FOLDER (default Kindle_reports beside
     GOOGLE_DRIVE_FOLDER) as <ASIN>.json, so the cloud reads results from Drive instead of asking a Mac session: on
     2026-10-12 one book took six such requests. Returns where, or None. Never raises: the book is already on Drive."""
-    drive = config.get('GOOGLE_DRIVE_FOLDER')
-    folder = Path(config['KINDLE_REPORTS_FOLDER']) if config.get('KINDLE_REPORTS_FOLDER') else \
-        Path(drive).parent / 'Kindle_reports' if drive else None
+    folder = reports_folder(config)
     if folder is None or not folder.parent.is_dir():
         return None
     target = folder / f'{asin}.json'

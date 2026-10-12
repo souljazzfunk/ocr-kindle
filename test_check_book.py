@@ -445,6 +445,21 @@ def test_a_chapter_the_contents_lists_without_a_heading_is_caught(tmp_path):
     assert by_name(check_folder(folder))['contents_chapters'].ok
 
 
+def test_contents_lines_read_as_one_and_chapter_numerals_misread_still_find_their_headings(tmp_path):
+    # 2026-10-12: 代替医療解剖 and 近代中国史 were parked by contents_chapters with every heading in place: Live Text
+    # read several contents lines as one ("中国という世界黄河と黄土長江と江南", the last cut mid-title) and 第Ⅲ章 as 第山章.
+    contents = '# 目次\n\n第山章ホメオパシーの真実\n\n中国という世界黄河と黄土長江と江\n\n第i章鍼の真実\n\n人口の中国史'
+    body = ['# 第Ⅲ章 ホメオパシーの真実\n\nここからは本文です。', '## 中国という世界\n\nここからは本文です。',
+            '## 黄河と黄土\n\nここからは本文です。', '## 長江と江南\n\nここからは本文です。',
+            '# 第Ⅰ章 鍼の真実\n\nここからは本文です。', '人口の中国史\n\nここからは本文です。']
+    md = '\n\n'.join([contents, *body])
+    folder = book(tmp_path, [contents, *body], sources='livetext', md=md, name='近代中国史')
+    check = by_name(check_folder(folder))['contents_chapters']
+    assert not check.ok and check.detail == '1 contents entries without a heading: "人口の中国史"'
+    (folder / '近代中国史.md').write_text(md.replace('\n\n人口の中国史\n\nここから', '\n\n## 人口の中国史\n\nここから'))
+    assert by_name(check_folder(folder))['contents_chapters'].ok
+
+
 def test_each_step_is_timed_in_the_report_and_a_slow_one_fails_the_speed_check(tmp_path, monkeypatch):
     # 2026-10-12: the redesign shipped with no step timed, so whether a book got faster could not be answered.
     drive = tmp_path / 'Kindle_md'

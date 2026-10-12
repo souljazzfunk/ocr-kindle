@@ -27,6 +27,8 @@ SAMPLES = 6
 L_FOR_I_MIN = 3
 L_FOR_I_RATIO = 5  # the I spelling at least a fifth as common
 DUPLICATE_RATIO = 0.8
+MIN_REPEAT = (30, 120)  # words, Japanese letters: a page this long that repeats an earlier one is a duplicate
+REPEAT_SHARE = 0.5
 MIN_OVERLAP_WORDS = 8
 OVERLAP_RATIO = 0.85
 MIN_CROSS_READ_WORDS = 4
@@ -135,19 +137,39 @@ def same_text(a, b):
     return bool(x and y) and difflib.SequenceMatcher(None, x, y, autojunk=False).ratio() >= DUPLICATE_RATIO
 
 
+def shingles(text):
+    """Runs of words (letters for Japanese) that a page shares with its second reading."""
+    x = words(text)
+    if len(CJK.findall(text)) > len(LATIN.findall(text)):
+        x = list(''.join(x))
+        n = 8
+    else:
+        n = 4
+    return {tuple(x[i:i + n]) for i in range(len(x) - n + 1)} if len(x) >= MIN_REPEAT[n == 8] else set()
+
+
 def duplicate_page(book):
     """A page that repeats the one before it, or a page at the same reader position as an earlier one: 英語教育幻想
-    (2026-10-12) had 13 screens saved twice, a hundred pages apart, at the same positions."""
+    (2026-10-12) had 13 screens saved twice, a hundred pages apart, at the same positions. A long page that repeats
+    any earlier one is a duplicate too: Learn Like a Pro (2026-10-12) had its Pomodoro pages again a hundred pages
+    on, under other positions. A short page (a part title) may repeat."""
     pages = book.pages
     stems = [s for s in pages if pages[s].strip()]
     at = book.positions
-    first = {}
+    first, seen = {}, defaultdict(set)
     for i, stem in enumerate(stems):
         earlier = first.get(at.get(stem)) if at.get(stem) else None
-        if i and same_text(pages[stems[i - 1]], pages[stem]) or earlier and same_text(pages[earlier], pages[stem]):
+        own = shingles(pages[stem])
+        shared = Counter(e for sh in own for e in seen.get(sh, ()))
+        like = [e for e, n in shared.most_common(3) if n >= REPEAT_SHARE * len(own)]
+        if i and same_text(pages[stems[i - 1]], pages[stem]) or earlier and same_text(pages[earlier], pages[stem]) \
+                or any(same_text(pages[e], pages[stem]) for e in like):
             yield Finding('duplicate_page', stem, pages[stem], ' ')
-        elif at.get(stem):
+            continue
+        if at.get(stem):
             first.setdefault(at[stem], stem)
+        for sh in own:
+            seen[sh].add(stem)
 
 
 def seam_overlap(book):
@@ -265,6 +287,40 @@ def emphasis_dots(book):
             else:
                 after = '。\n\n' if '。' in m.group() else ''
             yield Finding('emphasis_dots', stem, m.group(), after, at=m.start())
+
+
+# Live Text lines that Gemini kept as paragraphs, cutting a sentence at a line end: 考える練習 (2026-10-12) "思ってしまった
+# りし\n\nます。", with 搾取's ruby between the halves ("若\n\nさくしゅ\n\nい人たち"). A contents list also has short lines
+# that start with kana, so the first half must read as prose (a comma or full stop in it) or the second be a tail.
+HIRAGANA = re.compile('[\u3041-\u309f]')
+OPEN_END = re.compile('[\u3041-\u3062\u3064-\u309f\u30a0-\u30fa\u30fc-\u30ff\u4e00-\u9fff]$')  # kana or kanji, not っ or ・
+PLAIN = re.compile(r'[#!>\-|*`\[　]')
+SPLIT = re.compile(r'(?m)^([^\n]+)\n\n(?:([\u3041-\u309f]{2,8})\n\n)?([^\n]+)$')
+# A second half that opens a sentence of its own follows a line Live Text lost ("きまし\n\nこれは"); joining would hide it.
+STARTER = re.compile('(?:しかし|だから|これは|それは|もうひとつ|そのとき|そのあと|ただ|でも|そして|それで|また|さらに|なぜ)')
+
+
+def split_sentence(book):
+    for stem, text in book.pages.items():
+        if len(CJK.findall(text)) <= len(LATIN.findall(text)):
+            continue
+        pos = 0
+        while m := SPLIT.search(text, pos):
+            a, ruby, b = m.groups()
+            pos = m.start(3)
+            if PLAIN.match(a) or PLAIN.match(b) or not OPEN_END.search(a) or not HIRAGANA.match(b):
+                continue
+            if ruby and not re.search('[\u4e00-\u9fff]$', a):
+                continue
+            if STARTER.match(b) and len(b.split('。')[0]) > 8:
+                continue
+            tail = len(b) <= 8 and (b[-1] in SENTENCE_END or HIRAGANA.fullmatch(b) and len(b) <= 3)
+            if not ('、' in a or '。' in a or tail):
+                continue
+            cut = m.start(3) - m.end(1)
+            yield Finding('split_sentence', stem, text[m.end(1):m.start(3)], '', at=m.end(1))
+            if cut:
+                pos = m.start(3)
 
 
 def repl_prompt(book):
@@ -392,7 +448,7 @@ def decorative_digit(book):
 
 
 DETECTORS = [duplicate_page, seam_overlap, foreign_page, hyphen_break, dash_as_hyphen, homoglyph, odd_case, stray_symbol,
-             emphasis_dots, repl_prompt, section_number, decorative_digit, l_for_i, digits_for_ll, binary_art, stray_colon,
+             emphasis_dots, split_sentence, repl_prompt, section_number, decorative_digit, l_for_i, digits_for_ll, binary_art, stray_colon,
              heading_noise]
 
 

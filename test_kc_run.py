@@ -348,3 +348,22 @@ def test_a_new_book_is_converted_before_published_books_are_converted_again(home
     edit(home, 'proofread.py')
     assert step(home, 'capture') == 'captured: B2'
     assert [step(home, 'convert') for _ in range(4)] == ['converted: B2', 'published: B2', 'converted: B1', 'published: B1']
+
+
+def test_each_convert_step_leaves_every_book_s_state_on_drive_for_the_cloud_to_read(home, mac):
+    # 2026-10-12: the cloud found For 91 Days in Tokyo and three other books still in their 10-11 form on Drive, with
+    # no report and no case, and could not tell whether they were queued, parked or not in the list at all.
+    drive = home / 'Drive' / 'Kindle_md'
+    drive.mkdir(parents=True)
+    config = {'GOOGLE_DRIVE_FOLDER': str(drive)}
+    mac.converts['B1'] = [['start_position', 'capture_stop']]
+    step(home, 'capture', config=config)
+    step(home, 'capture', config=config)
+    assert step(home, 'convert', config=config) == 'parked: B1'
+    books = json.loads((home / 'Drive' / 'Kindle_reports' / '_books.json').read_text())
+    assert [(b['asin'], b['title'], b['state']) for b in books['books']] == [
+        ('B1', 'One', 'parked at convert: start_position, capture_stop'), ('B2', 'Two', 'ready to convert'),
+        ('B3', 'Three', 'ready to capture'), ('B4', 'Four', 'ready to capture')]
+    assert step(home, 'convert', config=config) == 'converted: B2'
+    books = json.loads((home / 'Drive' / 'Kindle_reports' / '_books.json').read_text())
+    assert books['books'][1]['state'] == 'ready to publish'
