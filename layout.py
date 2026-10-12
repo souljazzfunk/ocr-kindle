@@ -41,6 +41,7 @@ class GeminiFailed(RuntimeError):
 CLAUDE_MODEL = 'sonnet'
 CLAUDE_WORKERS = 3
 CLAUDE_TIMEOUT_S = 900
+CLAUDE_TRIES = 2  # asks for a batch whose reply held no JSON array
 CLAUDE = 'claude'  # the model name kept in layout.json for the pages Claude laid out
 LINE_PITCH = 1.6  # line pitch at most this many line heights
 MIN_FIGURE_LINES = 3
@@ -250,12 +251,21 @@ def claude_cli():
          if os.access(p, os.X_OK)), None)
 
 
+class BadReply(ValueError):
+    """A reply that holds no JSON array: the model answered, so asking again may do."""
+
+
 def json_array(text):
-    """The JSON array in a reply that may wrap it in a code fence or a sentence."""
-    start, end = text.find('['), text.rfind(']')
-    if start < 0 or end < start:
-        raise ValueError(f'no JSON array in the reply: {text[:200]}')
-    return json.loads(text[start:end + 1])
+    """The first JSON array in a reply that may wrap it in a code fence or a sentence, or add one after it."""
+    decoder = json.JSONDecoder()
+    for start in (i for i, c in enumerate(text) if c == '['):
+        try:
+            value, _ = decoder.raw_decode(text, start)
+        except ValueError:
+            continue
+        if isinstance(value, list):
+            return value
+    raise BadReply(f'no JSON array in the reply: {text[:200]}')
 
 
 def ask_layout_claude(cli, images):
@@ -321,11 +331,17 @@ def mark_layout(folder, client, images, cli=None):
         with claude_slots:
             if claude_failed.is_set():
                 return {}, None
-            try:
-                return ask_layout_claude(cli, batch), None
-            except Exception as e:
-                claude_failed.set()
-                return {}, RuntimeError(f'Gemini: {str((gemini_error or ["no API key"])[0])[:300]}; Sonnet: {e}')
+            for attempt in range(CLAUDE_TRIES):
+                try:
+                    return ask_layout_claude(cli, batch), None
+                except BadReply as e:
+                    # One reply Sonnet wrote badly fails this batch only; Sonnet goes on with the rest.
+                    error = e
+                except Exception as e:
+                    claude_failed.set()
+                    error = e
+                    break
+            return {}, RuntimeError(f'Gemini: {str((gemini_error or ["no API key"])[0])[:300]}; Sonnet: {error}')
 
     first_error = None
     with ThreadPoolExecutor(WORKERS) as pool:
