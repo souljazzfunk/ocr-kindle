@@ -20,7 +20,7 @@ def test_english_pages_of_a_japanese_book_are_kept():
     # 2026-10-12: 英語教育幻想's English quotes and bibliography were blanked as foreign pages.
     japanese = 'ここからは私見です。この文書で英語の位置がどう語られているかを見ていきます。' * 4
     pages = {'page_0001': japanese, 'page_0002': 'Ministry of Education. https://www.mext.go.jp/ English Education Reform Plan.',
-             'page_0003': japanese}
+             'page_0003': 'グローバル化が進むにつれて、世界語としての英語の持つ役割が増していきます。' * 4}
     assert fixes(pages) == []
 
 
@@ -57,6 +57,41 @@ def test_a_screen_saved_twice_at_one_position_is_a_duplicate(tmp_path):
                                                          'page_0003': '145/2566', 'page_0004': '129/2566'}))
     found = sorted((f.kind, f.page) for f in find_all(Book(tmp_path, pages)) if f.kind == 'duplicate_page')
     assert found == [('duplicate_page', 'page_0003'), ('duplicate_page', 'page_0004')]
+
+
+def test_screens_saved_again_far_apart_are_duplicates_even_at_other_positions(tmp_path):
+    # 2026-10-12: Learn Like a Pro on Drive had its Pomodoro pages (paragraphs 45-177) again after paragraph 450, under
+    # other reader positions, so duplicate_page, which matched positions, kept them. A short title page may repeat.
+    first = ("Sounds easy, doesn't it? It is easy. Sometimes your mind may struggle while doing a Pomodoro, but the "
+             'reality is almost anyone can keep their focus for twenty five minutes and then take a short break to rest.')
+    second = ('You might wonder how something so simple can be so powerful. The reason is that the Pomodoro Technique '
+              'captures important aspects of how your brain learns, switching between the focused and diffuse modes.')
+    middle = ('Despite its black box behavior, the procedural system can be extremely sophisticated and it can help you '
+              'learn a great deal without your noticing, from serving a ball to reading a page of music at sight.')
+    pages = {'page_0001': '# Part One', 'page_0002': first, 'page_0003': second, 'page_0004': middle,
+             'page_0005': '# Part One', 'page_0006': first.replace('twenty five', 'twenty-five'), 'page_0007': second}
+    (tmp_path / 'positions.json').write_text(json.dumps({'page_0002': '12/250', 'page_0003': '13/250',
+                                                         'page_0006': '118/250', 'page_0007': '119/250'}))
+    found = sorted(f.page for f in find_all(Book(tmp_path, pages)) if f.kind == 'duplicate_page')
+    assert found == ['page_0006', 'page_0007']
+
+
+def test_a_japanese_sentence_cut_into_paragraphs_is_joined_and_a_reading_between_them_dropped():
+    # 2026-10-12: 考える練習 on Drive had 104 sentences cut at a line end ("思ってしまったりし\n\nます。"), one with the
+    # ruby reading of 搾取 between the halves ("若\n\nさくしゅ\n\nい人たち"); Virtual Girls Singularity 33 ("…で\n\nす").
+    page = ('いるのを見ると、そうなのかな、と思ってしまったりし\n\nます。次の文です。\n\n'
+            '吸い上げられるものもなくなる。そうなると今度は、若\n\nさくしゅ\n\nい人たちが正社員にならない。\n\n'
+            '…・寝てしまったみたい…で\n\nす\n\nいい言い訳を考えた。\n\n## 体全体で考える\n\nなぜ勝つことが大事か？')
+    # A contents list is left as it is, and so is a half that opens its own sentence after a line Live Text lost.
+    contents = ('理を突きつめても意味がない「賢い中学生」式の考え方\n\nあきらめずに動きつづける\n\n無力感を打ち破る\n\nあとがき'
+                '\n\n世界英語研究の中で指摘されてきまし\n\nこれは、幻想5で論じる「比較修辞学」につながります。')
+    book = Book(Path('/nonexistent'), {'page_0001': page, 'page_0002': contents})
+    found = find_all(book)
+    assert [f.kind for f in found] == ['split_sentence'] * 3
+    assert apply(book.pages, found) == {'page_0001': (
+        'いるのを見ると、そうなのかな、と思ってしまったりします。次の文です。\n\n'
+        '吸い上げられるものもなくなる。そうなると今度は、若い人たちが正社員にならない。\n\n'
+        '…・寝てしまったみたい…です\n\nいい言い訳を考えた。\n\n## 体全体で考える\n\nなぜ勝つことが大事か？')}
 
 
 def test_page_level_errors():
