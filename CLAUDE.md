@@ -37,6 +37,7 @@
 | 変換待ちの新しい本が 2 冊あれば、次の本を取り込まずに待つ | `kc_run.py` の `AHEAD`、`test_kc_run.py::test_the_capture_job_stays_at_most_two_new_books_ahead_of_the_convert_job`（F111） |
 | 変換は、まだ公開していない本を先にし、公開済みの本の変換し直しは後にする | `kc_run.py` の `step`、`test_kc_run.py::test_a_new_book_is_converted_before_published_books_are_converted_again`（F112） |
 | 公開した本の report.json と時間を Drive に写し、結果の確認を Mac のセッションに頼まない | `test_kc_run.py::test_a_published_book_s_report_and_time_are_copied_to_drive_for_the_cloud_to_read`、`test_check_book.py::test_a_book_converted_by_hand_also_leaves_its_report_on_drive`（F090 F092） |
+| 変換の 1 歩ごとに全部の本の状態を Drive の `_books.json` に書き、一覧の様子を Mac に聞かない | `kc_run.py` の `step`・`describe`、`capture_book.py` の `publish_states`、`test_kc_run.py::test_each_convert_step_leaves_every_book_s_state_on_drive_for_the_cloud_to_read`（F115） |
 | ページは画像でも canvas でも取り込み、画像がまだない画面は待ってから判断する | `extension/content.js` の `pageImage`、`extension/policy.js`、`extension/policy.test.js::a screen whose image is not there yet is observed again before the capture fails`（F067） |
 | サンプルに転送された本や読み込み直されたタブで止まらない | `extension/job.js`、`extension/job.test.js::a job tab that reloads before sending a page gets its job again; after a page it gets none`、`extension/job.test.js::the sample reader is told apart from the book`（F066） |
 | 全文版リーダーの画面が読めないときは、画面の記録から読む。当て推量で直さない | `extension/pagemeta.js`、`extension/pagemeta.test.js::the library list is read from the page JSON, authors without their trailing colon`、`test_channel.py::test_a_library_scan_writes_what_the_page_showed`（F067 F069） |
@@ -69,6 +70,8 @@
 | 日本語の本の英語のページ（引用・参考文献）を、外国語のページとして消さない | `proofread.py` の `foreign_page`、`test_proofread.py::test_english_pages_of_a_japanese_book_are_kept`（F074） |
 | 記号だけの段落（傍点を読んだ読点やバックスラッシュ）は消し、切れた文をつなぐ | `proofread.py` の `emphasis_dots`、`test_proofread.py::test_emphasis_dots_read_as_commas_on_their_own_lines_are_removed_and_the_sentence_joined`（F106 F109） |
 | 同じ位置で同じ文のページは、離れていても重複として消す | `proofread.py` の `duplicate_page`、`test_proofread.py::test_a_screen_saved_twice_at_one_position_is_a_duplicate`（F077） |
+| 長いページが前のページと同じ文なら、位置が違っても重複として消す | `proofread.py` の `duplicate_page`・`shingles`、`test_proofread.py::test_screens_saved_again_far_apart_are_duplicates_even_at_other_positions`（F114） |
+| 行末で段落に切れた日本語の文はつなぎ、間に入ったルビは消す | `proofread.py` の `split_sentence`、`test_proofread.py::test_a_japanese_sentence_cut_into_paragraphs_is_joined_and_a_reading_between_them_dropped`（F113） |
 | Live Text の見出しから節の印を外し、目次の項目は見出しにせず、目次で階層を揃える | `layout.py` の `section_mark`・`livetext_contents`、`test_layout.py::test_live_text_titles_lose_the_section_mark_and_take_their_level_from_the_contents`（F078） |
 | 節の印は、読み違えた字（十・＋・+）の仲間ごと見出しから外す | `layout.py` の `SECTION_MARKS`、`test_layout.py::test_titles_read_with_a_plus_lose_it_and_a_line_the_contents_lists_becomes_a_chapter`（F080） |
 | 目次に載った短い行は、Gemini が段落にしても章の見出しにする | `layout.py` の `listed`、`test_layout.py::test_titles_read_with_a_plus_lose_it_and_a_line_the_contents_lists_becomes_a_chapter`（F081） |

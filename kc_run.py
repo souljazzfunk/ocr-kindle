@@ -21,7 +21,7 @@ from pathlib import Path
 import book as books
 import capture_book
 import locks
-from book import JOBS, ROOT, Library, Ready, read_json, record_failure
+from book import JOBS, ROOT, Library, Parked, Ready, read_json, record_failure
 
 HERE = Path(__file__).resolve().parent
 IDLE_S = 60  # with nothing to do, or paused, a step waits this long before it exits and launchd starts the next
@@ -108,7 +108,31 @@ def progress_of(lists):
 
 def step(job, root=ROOT, lists=None, downloads=Path.home() / 'Downloads', model='vision', checkout=HERE,
          sleep=time.sleep, now=time.time, config=None):
-    """Run one step of job. Returns what it did, for the log. config (default config.env) names the Drive folders."""
+    """Run one step of job. Returns what it did, for the log. config (default config.env) names the Drive folders.
+
+    After each convert step every book's state goes to Drive (_books.json beside the reports): on 2026-10-12 the cloud
+    could not tell whether four books still in their 10-11 form were queued, parked or not listed at all."""
+    config = capture_book.load_config() if config is None else config
+    done = _step(job, root, lists, downloads, model, checkout, sleep, now, config)
+    if job == 'convert':
+        lists = lists or default_lists(root, downloads)
+        listed = Library(root).add(lists, {}, write=False)
+        current = books.versions(checkout)
+        capture_book.publish_states([{'asin': b.asin, 'title': b.title, 'state': describe(b.state(current)),
+                                      'drive': Path((b.record('publish') or {}).get('drive') or '').name or None}
+                                     for b in listed], done, config)
+    return done
+
+
+def describe(state):
+    if isinstance(state, Ready):
+        return f'ready to {state.stage}' + (' again' if state.recapture else '')
+    if isinstance(state, Parked):
+        return f'parked at {state.stage}: ' + ', '.join(state.failure.get('checks') or [])
+    return 'done'
+
+
+def _step(job, root, lists, downloads, model, checkout, sleep, now, config):
     library = Library(root)
     library.root.mkdir(parents=True, exist_ok=True)
     problem = pull_main(checkout)
@@ -127,7 +151,6 @@ def step(job, root=ROOT, lists=None, downloads=Path.home() / 'Downloads', model=
     if pause:
         sleep(IDLE_S)
         return f'paused: {pause["reason"]}'
-    config = capture_book.load_config() if config is None else config
     options = argparse.Namespace(model=model, now=moment, config=config)
     states = [(book, book.state(current)) for book in listed]
     # A book is timed from its first capture to Drive. How to Write a Lot (2026-10-12) took 85 minutes for 5 minutes of
