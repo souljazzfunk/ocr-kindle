@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import threading
 import zipfile
@@ -65,6 +66,8 @@ GEMINI_ERROR = 'gemini_error.txt'  # why, for capture_book.py
 TEXT_LAYER = 'textlayer'
 PICTURE = 'picture'  # a page Vision found no words on, in a book it reads
 NO_TEXT = 'no text found'
+LIVETEXT = 'livetext'  # a page Vision found no lines on, read by Live Text (tools/livetext.swift)
+LIVETEXT_SOURCE = Path(__file__).resolve().parent / 'tools' / 'livetext.swift'
 PICTURE_SHARE = 0.5  # below half the book: photos in a book Vision reads (For 91 Days in Oviedo: 49 of 265)
 LINES = '.lines.json'  # Vision's line boxes for a page, for layout.py
 
@@ -105,7 +108,7 @@ def ocr_page(client, models, image):
     errors = []
     for model in models:
         try:
-            text = vision_transcribe(image) if model == VISION else transcribe(client, model, image)
+            text, model = vision_transcribe(image) if model == VISION else (transcribe(client, model, image), model)
         except Exception as e:
             errors.append(f'{model}: {e}')
             continue
@@ -177,13 +180,35 @@ def same_line(lines):
     return ordered
 
 
-def vision_transcribe(image):
-    boxes = vision_lines(image)
-    # Vision finds nothing in vertical Japanese, so an empty result must not mark the page done.
+def livetext_binary(source=LIVETEXT_SOURCE):
+    """tools/livetext built from its Swift source on this Mac, again whenever the source is newer."""
+    binary = source.with_suffix('')
+    if not binary.exists() or binary.stat().st_mtime < source.stat().st_mtime:
+        tmp = binary.with_name(f'.{binary.name}.{os.getpid()}')
+        subprocess.run(['swiftc', '-O', str(source), '-o', str(tmp)], check=True, capture_output=True)
+        os.replace(tmp, binary)  # parallel workers may build it at once; each rename is whole
+    return binary
+
+
+def livetext(image, run=subprocess.run, binary=None):
+    """Live Text's transcript of a page, for pages Vision finds no lines on."""
+    done = run([str(binary or livetext_binary()), str(image)], capture_output=True, text=True)
+    if done.returncode:
+        raise RuntimeError(f'livetext: {done.stderr.strip() or done.returncode}')
+    return done.stdout.strip()
+
+
+def vision_transcribe(image, read_lines=None, read_livetext=None):
+    """(text, reader): Vision's lines with headings, or Live Text's transcript when Vision finds no lines, which it
+    does on vertical Japanese. Live Text gives no line boxes, so those pages get no layout from layout.py."""
+    boxes = (read_lines or vision_lines)(image)
     if not boxes:
-        raise RuntimeError(NO_TEXT)
+        text = (read_livetext or livetext)(image) if sys.platform == 'darwin' or read_livetext else ''
+        if not text:
+            raise RuntimeError(NO_TEXT)  # an empty result must not mark the page done
+        return text, LIVETEXT
     image.with_suffix(LINES).write_text(json.dumps(boxes, ensure_ascii=False), encoding='utf-8')
-    return vision_markdown(vision_headings(boxes))
+    return vision_markdown(vision_headings(boxes)), VISION
 
 
 def vision_headings(lines):

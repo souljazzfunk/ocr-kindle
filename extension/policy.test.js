@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { initialState, nextAction, STUCK_TURNS, TURNS_PER_PAGE, EXTRA_TURNS } = require('./policy.js');
+const { initialState, nextAction, STUCK_TURNS, TURNS_PER_PAGE, EXTRA_TURNS, IMAGE_WAITS } = require('./policy.js');
 
 // A screen as content.js observes it: sha names the image, page/pages the footer (none when the footer shows none).
 const screen = (sha, page, pages) => ({ sha, position: page ? { n: page, m: pages } : null, appOnly: false, signedOut: false });
@@ -86,4 +86,14 @@ test('a book that only opens in the Kindle app is refused before anything is sav
 test('a signed-out reader is refused', () => {
   assert.deepStrictEqual(replay([{ sha: null, position: null, appOnly: false, signedOut: true }]).actions,
     ['fail:signed out of Cloud Reader']);
+});
+
+test('a screen whose image is not there yet is observed again before the capture fails', () => {
+  const blank = { sha: null, position: { n: 81, m: 2566 }, appOnly: false, signedOut: false };
+  const b = screen('b', 92, 2566), a = screen('a', 82, 2566), c = screen('c', 81, 2566);
+  const { actions } = replay([b, a, blank, blank, c]);
+  assert.deepStrictEqual(actions.slice(0, 7), ['save', 'turn:prev', 'save', 'turn:prev', 'wait', 'wait', 'save']);
+  const stuck = replay([b, ...Array(IMAGE_WAITS + 1).fill(blank)]);
+  assert.strictEqual(stuck.actions.at(-1), `fail:no page image after ${IMAGE_WAITS} s`);
+  assert.strictEqual(replay([blank]).actions[0], 'fail:no page image');
 });

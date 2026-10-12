@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { pickTitle, parsePosition, appOnly, parseLibraryGuess } = require('./pagemeta.js');
+const { pickTitle, parsePosition, appOnly, parseLibrary } = require('./pagemeta.js');
 
 test('the title element wins when it has text', () => {
   assert.strictEqual(pickTitle(['How to Write a Lot', 'Kindle'], 'B07HNMJV57'), 'How to Write a Lot');
@@ -30,24 +30,16 @@ test('a book Cloud Reader can only send to the Kindle app is recognised', () => 
   assert.ok(!appOnly('Page 1 of 120'));
 });
 
-function element(attributes, text = '', alt = null) {
-  return {
-    getAttribute: (name) => attributes[name] ?? null,
-    textContent: text,
-    querySelector: () => (alt === null ? null : { getAttribute: () => alt }),
-  };
-}
-
-test('the library guess takes each ASIN once, with the best title it carries', () => {
-  const doc = { querySelectorAll: () => [
-    element({ id: 'cover-B07HNMJV57' }, '', 'How to Write a Lot'),
-    element({ 'data-asin': 'B07HNMJV57' }, 'ignored, already titled'),
-    element({ href: '/?asin=B0ZEROSOLD' }),
-    element({ href: '/?asin=B0ZEROSOLD', 'aria-label': 'Zero to Sold' }),
-    element({ id: 'library-header' }, 'Library'),
-  ] };
-  assert.deepStrictEqual(parseLibraryGuess(doc), [
-    { asin: 'B07HNMJV57', title: 'How to Write a Lot' },
-    { asin: 'B0ZEROSOLD', title: 'Zero to Sold' },
-  ]);
+test('the library list is read from the page JSON, authors without their trailing colon', () => {
+  const json = JSON.stringify({ libraryType: 'BOOKS', sortType: 'RECENCY', paginationToken: '50', itemsList: [
+    { asin: 'B07G4SH6BV', title: '英語教育幻想 (ちくま新書) ', authors: ['久保田竜子:'], resourceType: 'EBOOK', originType: 'PURCHASE', mangaOrComicAsin: false },
+    { asin: 'B081F1JL1X', title: '自動車の社会的費用', authors: [], resourceType: 'EBOOK_SAMPLE', originType: 'PURCHASE', mangaOrComicAsin: false },
+    { title: 'no asin' },
+  ] });
+  const doc = { querySelector: (selector) => (selector === '#itemViewResponse' ? { textContent: json } : null) };
+  assert.deepStrictEqual(parseLibrary(doc), { paginationToken: '50', books: [
+    { asin: 'B07G4SH6BV', title: '英語教育幻想 (ちくま新書)', authors: ['久保田竜子'], resourceType: 'EBOOK', manga: false },
+    { asin: 'B081F1JL1X', title: '自動車の社会的費用', authors: [], resourceType: 'EBOOK_SAMPLE', manga: false },
+  ] });
+  assert.deepStrictEqual(parseLibrary({ querySelector: () => null }), { books: [], paginationToken: null });
 });

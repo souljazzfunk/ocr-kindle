@@ -5,7 +5,7 @@ The extension's worker asks GET /job for work, opens the reader itself, and post
 (POST /page) plus what it saw and did (POST /event). Pages are written to the book folder at once, so nothing waits in
 the tab's memory. The server holds at most one job: that is the only guard against two captures of one book.
 
-    venv/bin/python channel.py library read.amazon.com     # record the library page and a guess at its books
+    venv/bin/python channel.py library read.amazon.com     # record the library page and its books
 
 capture_book.py drives captures through Channel.capture. GET /job also returns the extension version on disk, and a
 worker running another version reloads itself (extension/job.js).
@@ -143,7 +143,7 @@ class Channel:
         return job.outcome
 
     def library(self, domain, *, stall_s=STALL_S, reach_s=REACH_S):
-        """Record the library page: the event's books (a guess) and probe, also written to library-<domain>.json."""
+        """Record the library page: its books (pagemeta.parseLibrary) and probe, also written to library-<domain>.json."""
         job = self._run(Job('library', domain, self.downloads / f'library-{domain}'), stall_s, reach_s)
         if job.outcome.status != 'done':
             raise RuntimeError(f'library scan {job.outcome.status}: {job.outcome.reason}')

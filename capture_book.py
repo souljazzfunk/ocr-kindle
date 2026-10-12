@@ -38,7 +38,7 @@ SIGNED_OUT = 'signed_out'
 EXTENSION_VERSION = 'extension_version'
 EXTENSION_FOLDER = 'extension_folder'
 # The extension's reason for a refusal, by its start; any other refusal is capture_refused (extension/policy.js).
-REFUSALS = (('kindle app required', APP_ONLY), ('signed out', SIGNED_OUT))
+REFUSALS = (('kindle app required', APP_ONLY), ('signed out', SIGNED_OUT), ('sample', 'sample_only'))
 GEMINI_CHECK = 'gemini'
 PYTHON = sys.executable
 HERE = Path(__file__).resolve().parent

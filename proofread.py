@@ -19,7 +19,7 @@ from functools import cached_property
 from pathlib import Path
 
 import locks
-from img2txt import (TEXT_LAYER, VISION, page_images, read_sources, vision_lines, vision_transcribe,
+from img2txt import (LIVETEXT, TEXT_LAYER, VISION, page_images, read_sources, vision_lines, vision_transcribe,
                      write_book)
 
 SAMPLES = 6
@@ -349,12 +349,12 @@ DETECTORS = [duplicate_page, seam_overlap, foreign_page, hyphen_break, dash_as_h
 def cross_read(folder, pages, sources):
     """Compare each non-Vision page with a Vision reading of its image, cached next to it as .vision.txt."""
     for stem, text in pages.items():
-        if sources.get(stem) == VISION or not text.strip():
+        if sources.get(stem) in (VISION, LIVETEXT) or not text.strip():  # Live Text is the reading when Vision has none
             continue
         cache = folder / f'{stem}.vision.txt'
         if not cache.exists():
             try:
-                cache.write_text(vision_transcribe(folder / f'{stem}.png'), encoding='utf-8')
+                cache.write_text(vision_transcribe(folder / f'{stem}.png')[0], encoding='utf-8')
             except RuntimeError:
                 cache.write_text('', encoding='utf-8')
         a, b = words(text), words(cache.read_text(encoding='utf-8'))
