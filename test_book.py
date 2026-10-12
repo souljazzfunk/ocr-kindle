@@ -60,6 +60,35 @@ def test_the_stage_version_follows_its_own_code_and_not_the_tests_or_another_sta
     assert book.versions(tmp_path)['capture'] != first['capture']
 
 
+def test_a_checks_code_is_the_functions_that_decide_it(tmp_path):
+    # A change to one check's function retries that check only. The rest of the file, and a check that names
+    # other functions, stay as they were.
+    owners = {}
+    for pairs in book.TOUCH.values():
+        for file, name in pairs:
+            owners.setdefault(file, [])
+            if name and name not in owners[file]:
+                owners[file].append(name)
+    for file, names in owners.items():
+        path = tmp_path / file
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('\n'.join(f'def {name}():\n    return 1\n' for name in names) or 'x = 1\n')
+    first = book.versions(tmp_path)
+    layout = (tmp_path / 'layout.py').read_text().replace('def contents_covered():\n    return 1\n',
+                                                          'def contents_covered():\n    return 2\n', 1)
+    (tmp_path / 'layout.py').write_text(layout)
+    changed = book.versions(tmp_path)
+    assert changed['touch']['contents_chapters'] != first['touch']['contents_chapters']
+    assert changed['touch']['headings'] == first['touch']['headings']
+    assert changed['touch']['gemini'] == first['touch']['gemini']
+    check = (tmp_path / 'check_book.py').read_text().replace('def check_folder():\n    return 1\n',
+                                                             'def check_folder():\n    return 2\n', 1)
+    (tmp_path / 'check_book.py').write_text(check)
+    headings = book.versions(tmp_path)
+    assert headings['touch']['headings'] != first['touch']['headings']
+    assert headings['touch']['contents_chapters'] == changed['touch']['contents_chapters']
+
+
 def test_a_failure_naming_several_checks_takes_the_strictest_rule():
     assert book.classify(['pages', 'start_position']).recapture
     assert not book.classify(['pages', 'headings']).recapture  # the fixes ran; another capture would not help

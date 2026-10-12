@@ -460,6 +460,65 @@ def test_contents_lines_read_as_one_and_chapter_numerals_misread_still_find_thei
     assert by_name(check_folder(folder))['contents_chapters'].ok
 
 
+def _japanese_contents_book(tmp_path, name, pages, headings, lines=False):
+    """A vision-pipeline book. The contents sit in the front matter; blank pages pad the book so that window
+    (the first 15 percent) covers every contents page. lines writes Vision's line boxes instead of a transcript."""
+    body = '\n\n'.join(f'# {heading}\n\nここからは本文です。' for heading in headings)
+    padding = ['ここからは本文です。' * 3] * 14
+    folder = book(tmp_path, [*pages, *padding], sources='vision' if lines else 'livetext', md=body, name=name)
+    if lines:
+        for n, page in enumerate(pages, 1):
+            boxes = [[0.1, 0.05 * (i + 1), 0.02, line] for i, line in enumerate(line for line in page.splitlines() if line.strip())]
+            (folder / f'page_{n:04d}.lines.json').write_text(json.dumps(boxes, ensure_ascii=False))
+    return folder
+
+
+# 代替医療解剖's contents line is several subsection titles joined by ／ and cut at the margin
+# (「天才の一」 for 「天才の一打」, 「コクラン共同」 for 「コクラン共同計画」). 近代中国史's line has the
+# slash already gone, a title split across the page (「…人口」 / 「変動と時期区分―…」), a dash read as ー,
+# and Ⅰ read as i. The headings below are the ones those lines were cut from.
+ALT_HEADINGS = [
+    '壊血病、英国水兵、瀉血の臨床試験', '科学的根拠にもとづく医療', '天才の一打',
+    'プラセボの威力', '盲検法と二重盲検法', '試験される鍼療法', 'コクラン共同計画',
+    'ハーブの薬学', '一番大切なのは、害をなさないこと', '思慮ある人たちがなぜ？',
+    '効果が証明されていない、または反証された医療を広めた責任者トップテン', '代替医療の未来',
+    '付録――代替医療便覧',
+]
+CHINA_HEADINGS = [
+    'Ⅰ ステージ―環境と経済', '世界', '江南の開発', '外界との関係', '南北の対外関係',
+    '人口の中国史', '人口変動と時期区分―一四世紀まで', '人口変動と時期区分―一五世紀以後',
+    '商品と村市', '鎮とその増加', '聚落形態と時代区分', '日中の対比',
+]
+ALT_PAGES = [
+    '目次\n壊血病、英国水兵、瀉血の臨床試験／科学的根拠にもとづく医療／天才の一\n'
+    'プラセボの威力／盲検法と二重盲検法／試験される鍼療法／コクラン共同',
+    'ハーブの薬学／一番大切なのは、害をなさないこと／思慮ある人たちがなぜ？\n'
+    '医療を広めた責任者トップテン／代替医療の未来\n付録ー代替医療便覧',
+]
+CHINA_PAGES = [
+    '目次\niステージー環境と経済\n世界江南の開発外界との関係南北の対外関係\n'
+    '人口の中国史人口変動と時期区分一四世紀まで人口\n変動と時期区分ー一五世紀以後品と村市\n'
+    '鎮とその増加聚落形態と時代区分日中の対比',
+]
+
+
+def test_a_cut_contents_line_matches_its_headings(tmp_path):
+    # 2026-10-12: B01N2WEPWB 代替医療解剖 and B00WJBK92W 近代中国史 failed contents_chapters. The vision pipeline
+    # had read subsection titles as one line, cut at the margin and across a page break, so the line matched no heading.
+    for lines in (False, True):
+        where = tmp_path / ('lines' if lines else 'text')
+        where.mkdir()
+        alt = _japanese_contents_book(where, '代替医療解剖', ALT_PAGES, ALT_HEADINGS, lines)
+        assert by_name(check_folder(alt))['contents_chapters'].ok
+        china = _japanese_contents_book(where, '近代中国史', CHINA_PAGES, CHINA_HEADINGS, lines)
+        assert by_name(check_folder(china))['contents_chapters'].ok
+    # A title the book never headings still fails, including in the middle of a joined line.
+    missing = ALT_PAGES[0].replace('科学的根拠にもとづく医療', '本文にない節の題')
+    folder = _japanese_contents_book(tmp_path, '欠落', [missing, ALT_PAGES[1]], ALT_HEADINGS, lines=False)
+    check = by_name(check_folder(folder))['contents_chapters']
+    assert not check.ok and check.blocking and '本文にない節の題' in check.detail
+
+
 def test_a_number_over_a_japanese_sentence_is_not_a_chapter_opening(tmp_path):
     # 2026-10-12: 代替医療解剖 was parked for "2 / 「王様は裸だ」と言うことを許されない。それを言えば…": a title holds no 。.
     body = '本文です。' * 30

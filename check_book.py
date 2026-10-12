@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from img2txt import LIVETEXT, SOURCES, TEXT_LAYER, VISION, page_images, read_sources
-from layout import CODE_LINE, code_pages, code_rereads, contents_covered, listed, livetext_contents, read_layout
+from layout import CODE_LINE, code_pages, code_rereads, contents_for_check, contents_covered, read_layout
 from proofread import CODE_BLOCK, DECORATIVE_REF, Book, find_all, load_pages
 
 PROBE = 'dom-probe.json'
@@ -79,6 +79,16 @@ def page_positions(folder):
 def end_tolerance(total):
     """Pages at the end the reader may not number (end matter), or the last turn may skip."""
     return max(2, round(total * 0.02))
+
+
+def contents_unheaded(folder, text):
+    """Contents entries no heading accounts for.
+
+    The entries are the contents lines, subsections split on 「／」 and a line cut at the margin or a page break
+    brought back to the headings (layout.contents_covered). 代替医療解剖 and 近代中国史 (2026-10-12) were parked
+    with every heading in place: several subsection titles had been read as one line."""
+    titles = [title for _, title in HEADING.findall(text)]
+    return [entry for entry in contents_for_check(page_images(folder)) if not contents_covered(entry, titles)]
 
 
 def check_folder(folder, title=None):
@@ -172,8 +182,7 @@ def check_folder(folder, title=None):
     checks.append(Check('chapter_titles', not missed, f'{len(missed)} chapter openings without a heading'
                         + (f': {shown}' if missed else ''), fix=None))
     # 英語教育幻想 (2026-10-12) passed with 幻想5 and 幻想6 left as paragraphs: every chapter its contents lists has a heading.
-    titles = [title for _, title in HEADING.findall(text)]
-    unheaded = [entry for entry in livetext_contents(page_images(folder))[1] if not contents_covered(entry, titles)]
+    unheaded = contents_unheaded(folder, text)
     checks.append(Check('contents_chapters', not unheaded, f'{len(unheaded)} contents entries without a heading'
                         + (': ' + '; '.join(f'"{e[:30]}"' for e in unheaded[:5]) if unheaded else ''), fix=None))
 

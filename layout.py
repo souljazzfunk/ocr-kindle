@@ -340,14 +340,14 @@ def livetext_contents(images):
         start = next((i for i, text in enumerate(lines) if CONTENTS.match(text.strip())), None)
         if start is None:
             continue
-        stems, entries = [image.stem], lines[start + 1:]
+        stems, entries = [image.stem], [piece for line in lines[start + 1:] for piece in split_contents(line)]
         for after in pages[k + 1:]:
             more = page_lines(after)
             if not more or any('。' in line for line in more):
                 break
             stems.append(after.stem)
-            entries += more
-        spelled = [re.sub(r'\s*\d+$', '', x).strip() for x in entries]
+            entries += [piece for line in more for piece in split_contents(line)]
+        spelled = [x.strip() for x in entries]
         return set(stems), [e for e in map(comparable, spelled) if len(e) >= 3], spelled
     return set(), [], []
 
@@ -1513,17 +1513,44 @@ def comparable(text):
     return re.sub(r'[^a-z\u3040-\u30ff\u4e00-\u9fff]', '', text.lower().replace('l', 'i'))
 
 
+# Subsection titles of one contents line, as 代替医療解剖 prints them: 「壊血病、…／科学的根拠…／天才の一打」.
+ENTRY_SPLIT = re.compile(r'\s*[／/｜|]\s*')
+
+
+def split_contents(text):
+    """The subsection titles printed on one contents line. A slash between them is not part of either title.
+    A leading item number and a trailing page number are not part of the title."""
+    pieces = []
+    for part in ENTRY_SPLIT.split(text):
+        part = re.sub(r'^\d+\.?\s*', '', part.strip())
+        part = re.sub(r'\s*\d+$', '', part).strip()
+        if part:
+            pieces.append(part)
+    return pieces
+
+
+def _vision_lines(image):
+    return [line[3].strip() for line in sorted_boxes(image)] if image.with_suffix(LINES).exists() else None
+
+
 def contents_entries(images):
-    """The entries of the book's contents page, as comparable strings: every line below a "Contents" line in the
-    front matter. Empty when the book has no such page."""
-    for image in images[:max(1, round(len(images) * CONTENTS_PAGES))]:
-        if not image.with_suffix(LINES).exists():
-            continue
-        lines = [line[3].strip() for line in sorted_boxes(image)]
+    """The entries of the book's contents, as comparable strings: every line below a "Contents" line in the
+    front matter, and the following contents pages (no sentence, so no 「。」), each subsection of a line with
+    「／」 on its own. A contents list that crosses a page break stays one list (近代中国史). Empty when the
+    book has no such page."""
+    front = [image for image in images[:max(1, round(len(images) * CONTENTS_PAGES))] if _vision_lines(image) is not None]
+    for k, image in enumerate(front):
+        lines = _vision_lines(image)
         start = next((i for i, text in enumerate(lines) if CONTENTS.match(text)), None)
-        if start is not None:
-            entries = [comparable(re.sub(r'^\d+\.?\s*', '', text)) for text in lines[start + 1:]]
-            return [entry for entry in entries if len(entry) >= 3]
+        if start is None:
+            continue
+        pieces = [piece for text in lines[start + 1:] for piece in split_contents(text)]
+        for after in front[k + 1:]:
+            more = _vision_lines(after)
+            if not more or any('。' in line for line in more):
+                break
+            pieces += [piece for text in more for piece in split_contents(text)]
+        return [entry for entry in map(comparable, pieces) if len(entry) >= 3]
     return []
 
 
@@ -1539,21 +1566,84 @@ def chapter_level(text, level, chapters):
 
 
 CHAPTER_LABEL = re.compile(r'第[^章]{0,3}章')  # 第Ⅲ章, which Live Text reads as 第山章 or 第i章
+# A contents line's 「―」 read as the long-vowel mark, between a title and the next title or a kanji.
+# 「コーヒー」 keeps its ー: the mark there sits between kana.
+DASH_AS_CHOON = re.compile(r'ー(?=[\u4e00-\u9fff])|(?<=[\u4e00-\u9fff])ー')
+ROMAN = re.compile(r'^[ivx]+')  # Ⅰ read as i at the start of a contents line (近代中国史, 「iステージ」)
+
+
+def contents_key(text):
+    """A contents entry or a heading, comparable, with the chapter label and a dash read as ー taken off."""
+    return DASH_AS_CHOON.sub('', CHAPTER_LABEL.sub('', comparable(text)))
+
+
+def contents_for_check(images):
+    """Every contents entry a heading must account for.
+
+    Live Text pages (no line boxes: a Japanese page the vision pipeline read with Live Text) and Vision's own
+    line boxes. One printed line may hold several titles; split_contents separates them before either list is used."""
+    found = []
+    for entry in [*livetext_contents(images)[1], *contents_entries(images)]:
+        if entry not in found:
+            found.append(entry)
+    return found
+
+
+def _tiles(rest, keys):
+    """Whether rest is headings from keys, joined, and cut at either end.
+
+    The cut is a contents line that ends mid-title, or a page break that continues a title (近代中国史:
+    「…一四世紀まで人口」 then 「変動と時期区分―一五世紀以後」). A fragment covers a heading only when it is that
+    heading or, at the end of a line, the start of one. The start of an entry may be the tail of a heading the
+    previous line kept. Eight characters is the shortest such tail: a shorter one would let a different title through.
+    """
+    if not rest or not keys:
+        return False
+    n = len(rest)
+    reach = {0}
+    for key in keys:
+        for length in range(min(len(key) - 1, n), 7, -1):
+            if rest.startswith(key[-length:]):
+                reach.add(length)
+                break
+    for index in range(n + 1):
+        if index not in reach:
+            continue
+        for key in keys:
+            if rest.startswith(key, index):
+                reach.add(index + len(key))
+    if n in reach:
+        return True
+    for start in reach:
+        if start > n:
+            continue
+        fragment = rest[start:]
+        if len(fragment) < 2:
+            continue
+        for key in keys:
+            # The line ended before the title did. A whole entry may miss only a character or two
+            # (「天才の一」 for 「天才の一打」); a longer cut is the tail of a line that already matched.
+            if key.startswith(fragment) and (start > 0 or len(key) - len(fragment) <= 2):
+                return True
+            # 「品と村市」 for 「商品と村市」: the line lost the first character or two of the last title.
+            if start > 0 and len(fragment) >= 4 and key.endswith(fragment) and len(key) - len(fragment) <= 2:
+                return True
+    return False
 
 
 def contents_covered(entry, titles):
-    """Whether the book's headings account for a contents entry: one heading lists it, or the entry is several
-    headings read as one line, the last perhaps cut mid-title (代替医療解剖 and 近代中国史, 2026-10-12)."""
-    if any(listed(t, [entry]) for t in titles):
+    """Whether the book's headings account for a contents entry.
+
+    One heading, or several subsection titles read as one line (代替医療解剖 joins them with 「／」; when the slash
+    is already gone they still tile). The last title may be cut at the margin and the next line may begin in the
+    middle of a title, including across a page (近代中国史, 2026-10-12). An entry that is not those headings still
+    fails: the unmatched span is not a heading and not the cut end of one."""
+    keys = {k for k in (contents_key(t) for t in titles) if len(k) >= 2}
+    rest = contents_key(entry)
+    if _tiles(rest, keys):
         return True
-    keys = {k for k in (CHAPTER_LABEL.sub('', comparable(t)) for t in titles) if len(k) >= 2}
-    rest = CHAPTER_LABEL.sub('', entry)
-    reach = {0}
-    for i in range(len(rest)):
-        if i in reach:
-            reach |= {i + len(k) for k in keys if rest.startswith(k, i)}
-    return bool(rest) and any(r == len(rest) or len(rest) - r >= 2 and any(k.startswith(rest[r:]) for k in keys)
-                              for r in reach if r > 0)
+    bare = ROMAN.sub('', rest)
+    return bare != rest and _tiles(bare, keys)
 
 
 def listed(text, chapters):

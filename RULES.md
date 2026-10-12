@@ -51,7 +51,8 @@
 | 同じ本・同じチェック・同じ版の失敗の記録は 1 つだけ | `cases.py`、`test_cases.py::test_the_same_failure_with_the_same_versions_leaves_one_case_and_new_code_leaves_another`（F059） |
 | main に入った修正は、人に頼まず次の 1 歩から使う | `kc_run.py`、`test_kc_run.py::test_main_is_pulled_each_step_and_local_changes_pause_the_job_with_gits_message`（F022） |
 | 拡張の再読み込みを人に頼まない。版が変われば拡張が自分で読み込み直す | `extension/job.js` の `pollStep`、`extension/job.test.js::an idle worker on another version than the checkout reloads itself, at most once a minute`（F022） |
-| 変換を直したら、保存済みの取り込みから変換し直す。取り込めた本は取り直さない | `book.py` の `Book.state`、`test_kc_run.py::test_a_new_converter_converts_done_books_again_from_their_pages_and_new_extension_code_recaptures_none`（F036） |
+| 取り込めた本は取り直さない。通った本は変換のコードが変わってもやり直さない | `book.py` の `Book.state`、`test_kc_run.py::test_a_passed_book_stays_done_when_the_converter_changes_and_a_capture_is_not_redone`（F036） |
+| 止まった本は、その検査のコードが変わったときだけやり直す | `book.py` の `touch_of`、`test_kc_run.py::test_a_parked_check_and_its_pause_rerun_only_when_that_check_s_code_changes`、`test_book.py::test_a_checks_code_is_the_functions_that_decide_it`（F123） |
 | 一覧の進み具合は本のフォルダから出し、別のファイルに写さない | `book.py`、`test_kc_run.py::test_books_progress_json_is_carried_over_once_and_stale_results_are_redone`（F020 F031） |
 | 1 冊のフォルダに同時に書くのは 1 つの変換だけ。checkout の git も 1 つずつ | `locks.py`、`test_locks.py::test_a_second_run_on_the_same_book_waits_for_the_first`、`test_locks.py::test_git_calls_on_the_checkout_wait_for_each_other_as_on_2026_10_11`（F038） |
 | 1 冊を変換している間に次の本を取り込む。2 つの仕事は同じファイルに書かない | `kc_run.py`、`test_kc_run.py::test_the_convert_job_makes_no_book_folders`、`test_kc_run.py::test_the_launchd_jobs_run_one_step_of_each_job_and_are_started_again`（F063） |
@@ -73,7 +74,7 @@
 | 節の印は、読み違えた字（十・＋・+）の仲間ごと見出しから外す | `layout.py` の `SECTION_MARKS`、`test_layout.py::test_titles_read_with_a_plus_lose_it_and_a_line_the_contents_lists_becomes_a_chapter`（F080） |
 | 目次に載った短い行は、Gemini が段落にしても章の見出しにする | `layout.py` の `listed`、`test_layout.py::test_titles_read_with_a_plus_lose_it_and_a_line_the_contents_lists_becomes_a_chapter`（F081） |
 | 目次に載った章が 1 つでも見出しになっていなければ、本を落とす | `check_book.py` の `contents_chapters`、`test_check_book.py::test_a_chapter_the_contents_lists_without_a_heading_is_caught`（F082） |
-| 1 行に読まれた目次の数項目や、読み違えた章番号（第山章）も、見出しと照らせば通す | `layout.py` の `contents_covered`、`test_check_book.py::test_contents_lines_read_as_one_and_chapter_numerals_misread_still_find_their_headings`（F118） |
+| 1 行に読まれた目次の数項目や、読み違えた章番号（第山章）も、見出しと照らせば通す | `layout.py` の `contents_covered`、`test_check_book.py::test_contents_lines_read_as_one_and_chapter_numerals_misread_still_find_their_headings`、`test_check_book.py::test_a_cut_contents_line_matches_its_headings`（F118） |
 | 日本語の本の節番号とその下の題は見出しにする。文の上の番号は章の始まりと数えない | `proofread.py` の `numbered_title`、`test_proofread.py::test_a_numbered_section_title_of_a_japanese_book_becomes_a_heading`、`test_check_book.py::test_a_number_over_a_japanese_sentence_is_not_a_chapter_opening`（F119） |
 | 章の見出しの番号は目次の番号に揃え、段落とつながった見出しは段落に戻す | `layout.py` の `contents_spelling`、`test_layout.py::test_a_chapter_number_read_as_a_symbol_takes_the_contents_number_and_a_run_on_title_stays_a_paragraph`（F084） |
 | 変換し直すとき、配置済みの Live Text のページも新しいコードで書き直す | `img2txt.py`、`test_img2txt.py::test_live_text_pages_laid_out_before_are_written_again_without_a_request`（F079） |
