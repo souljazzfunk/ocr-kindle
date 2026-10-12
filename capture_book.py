@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Capture one book from Kindle Cloud Reader through the extension channel (channel.py) and turn it into checked Markdown,
-in the order CLAUDE.md sets.
+in the order RULES.md sets.
 
     venv/bin/python capture_book.py B07HNMJV57 --title "How to Write a Lot"
 

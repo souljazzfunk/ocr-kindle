@@ -71,7 +71,7 @@ def test_a_homework_row_needs_no_code_or_test():
     assert problems('拡張が効いたと言うのは実機で通ったときだけ', '宿題（F012）') == []
 
 
-def test_the_rule_table_in_claude_md_passes():
+def test_the_rule_table_in_rules_md_passes():
     files = subprocess.run(['git', 'ls-files'], cwd=ROOT, capture_output=True, text=True,
                            check=True).stdout.splitlines()
 
@@ -79,4 +79,4 @@ def test_the_rule_table_in_claude_md_passes():
         f = ROOT / path
         return f.read_text(encoding='utf-8') if f.is_file() else None
 
-    assert list(rules.lint((ROOT / 'CLAUDE.md').read_text(encoding='utf-8'), files, read)) == []
+    assert list(rules.lint((ROOT / 'RULES.md').read_text(encoding='utf-8'), files, read)) == []
