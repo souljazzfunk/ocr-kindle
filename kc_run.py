@@ -137,7 +137,9 @@ def step(job, root=ROOT, lists=None, downloads=Path.home() / 'Downloads', model=
     if job == 'capture' and waiting >= AHEAD:
         sleep(IDLE_S)
         return 'waiting for the convert job'
-    for book, state in states:
+    # A book never published goes before one published already and converted again under new code: after #107 the
+    # convert job redid published books for minutes while How to Write a Lot waited (2026-10-12).
+    for book, state in sorted(states, key=lambda bs: bool(bs[0].record('publish'))):
         if isinstance(state, Ready) and state.stage in JOBS[job]:
             print(f'=== {state.stage}{" again" if state.recapture else ""}: {book.title or book.asin} ({book.asin})',
                   flush=True)

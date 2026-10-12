@@ -338,3 +338,13 @@ def test_the_capture_job_stays_at_most_two_new_books_ahead_of_the_convert_job(ho
     assert step(home, 'capture') == 'waiting for the convert job'
     assert step(home, 'convert') == 'published: B1'
     assert step(home, 'capture') == 'captured: B3'
+
+
+def test_a_new_book_is_converted_before_published_books_are_converted_again(home, mac):
+    # 2026-10-12: after #107 changed the converter, the convert job converted and published again Japan Travel Planner,
+    # For 91 Days in Sri Lanka, Zero to Sold and others (07:44-07:45Z) before How to Write a Lot, a new book (07:47Z).
+    step(home, 'capture'), step(home, 'convert'), step(home, 'convert')
+    assert state(home, 'B1') == book.Done()
+    edit(home, 'proofread.py')
+    assert step(home, 'capture') == 'captured: B2'
+    assert [step(home, 'convert') for _ in range(4)] == ['converted: B2', 'published: B2', 'converted: B1', 'published: B1']
