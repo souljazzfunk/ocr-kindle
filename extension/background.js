@@ -5,6 +5,18 @@ const CHANNEL = 'http://127.0.0.1:8765';
 const FAST_MS = 2000; // polling while a job runs, and for a minute after, when the next book usually follows
 const AFTER_JOB_MS = 60000;
 const VERSION = chrome.runtime.getManifest().version;
+const BROWSER = browserName(navigator);
+
+// This install's id, kept across restarts: the channel hands a job to one worker, and every Chrome profile or browser
+// with the extension loaded from the same folder has the same extension id.
+async function workerId() {
+  let { workerId: id } = await chrome.storage.local.get('workerId');
+  if (!id) {
+    id = crypto.randomUUID();
+    await chrome.storage.local.set({ workerId: id });
+  }
+  return id;
+}
 
 // active lives in session storage, so a worker woken again mid-job still knows its tab and window.
 const loadActive = async () => (await chrome.storage.session.get('active')).active ?? null;
@@ -38,7 +50,7 @@ async function openJob(job) {
 async function poll() {
   let reply = null;
   try {
-    reply = await (await fetch(`${CHANNEL}/job?v=${encodeURIComponent(VERSION)}`)).json();
+    reply = await (await fetch(`${CHANNEL}/job?v=${encodeURIComponent(VERSION)}&b=${BROWSER}&w=${await workerId()}`)).json();
   } catch (e) {
     // No channel: nothing is being captured right now.
   }

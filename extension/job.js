@@ -23,8 +23,15 @@ function handOut(active, tabId) {
 // Cloud Reader moved the book's tab to its sample: the purchased book is not on this domain.
 const isSample = (url) => /\/sample\//.test(new URL(url).pathname);
 
+// Which browser this worker runs in, sent with every poll: the channel gives jobs to one browser only (KINDLE_BROWSER,
+// default chrome). Brave adds navigator.brave and a "Brave" brand; Chrome has neither.
+function browserName(nav) {
+  const brands = (nav?.userAgentData?.brands || []).map((b) => b.brand);
+  return nav?.brave || brands.includes('Brave') ? 'brave' : 'chrome';
+}
+
 function readerUrl(job) {
   return job.kind === 'library' ? `https://${job.domain}/kindle-library` : `https://${job.domain}/?asin=${job.asin}`;
 }
 
-if (typeof module !== 'undefined') module.exports = { pollStep, handOut, isSample, readerUrl, RELOAD_GAP_MS };
+if (typeof module !== 'undefined') module.exports = { pollStep, handOut, isSample, browserName, readerUrl, RELOAD_GAP_MS };
