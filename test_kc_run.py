@@ -145,6 +145,19 @@ def test_the_same_check_on_two_books_in_a_row_pauses_the_job_until_its_code_chan
     assert step(home, 'convert') == 'converted: B2'
 
 
+def test_a_convert_pause_left_by_capture_failures_under_older_rules_is_lifted_on_the_next_step(home, mac):
+    # 2026-10-12 14:38: capture_stop and start_position on two books paused converting until new convert code, though
+    # the rules now blame the capture; five captured books waited behind it.
+    for _ in range(2):
+        step(home, 'capture')
+    book.write_json(home / 'kindle' / 'pause.convert.json', {
+        'stage': 'convert', 'checks': ['capture_stop', 'start_position'], 'book': 'B2', 'waits_on': 'convert',
+        'version': book.versions(home / 'checkout')['convert'], 'until': None, 'at': NOON,
+        'reason': 'capture_stop, start_position failed on B1 and B2 in a row; waiting for new convert code'})
+    assert step(home, 'convert') == 'converted: B1'
+    assert not (home / 'kindle' / 'pause.convert.json').exists()
+
+
 def test_kindle_app_only_parks_only_that_book_and_new_extension_code_does_not_retry_it(home, mac):
     mac.captures.update({'B1': [['kindle_app_only']], 'B2': [['kindle_app_only']]})
     # Two app-only books in a row are two books, not a broken browser: the job goes on.
