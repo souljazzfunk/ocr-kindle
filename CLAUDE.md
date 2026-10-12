@@ -28,6 +28,7 @@
 | ページめくりは際限なく続けない。上限はページ数に合わせ、向きごとに数える | `extension/policy.js`、`extension/policy.test.js::turns past three per page stop the capture, each direction counted on its own`（F017 F019 F027） |
 | 止まった取り込みを 1 時間待たない。数分で理由を残して終える | `channel.py`、`test_channel.py::test_a_capture_with_no_page_and_no_event_for_the_stall_time_is_stalled`（F032 F039） |
 | 工程ごとの秒数を report.json に残し、基準より遅い工程は speed の検査で落とす | `capture_book.py` の `speed`・`BUDGETS`、`channel.py`、`test_check_book.py::test_each_step_is_timed_in_the_report_and_a_slow_one_fails_the_speed_check`（F083） |
+| 1 冊の時間は最初の取り込みから Drive まで数え、基準を超えた本を名指す | `kc_run.py` の `publish`、`book.py` の `Book.start`、`test_kc_run.py::test_a_book_s_time_from_its_first_capture_to_drive_is_recorded_once_and_a_slow_one_is_named`（F086） |
 | ページは画像でも canvas でも取り込み、画像がまだない画面は待ってから判断する | `extension/content.js` の `pageImage`、`extension/policy.js`、`extension/policy.test.js::a screen whose image is not there yet is observed again before the capture fails`（F067） |
 | サンプルに転送された本や読み込み直されたタブで止まらない | `extension/job.js`、`extension/job.test.js::a job tab that reloads before sending a page gets its job again; after a page it gets none`、`extension/job.test.js::the sample reader is told apart from the book`（F066） |
 | 全文版リーダーの画面が読めないときは、画面の記録から読む。当て推量で直さない | `extension/pagemeta.js`、`extension/pagemeta.test.js::the library list is read from the page JSON, authors without their trailing colon`、`test_channel.py::test_a_library_scan_writes_what_the_page_showed`（F067 F069） |
@@ -63,6 +64,7 @@
 | 目次に載った章が 1 つでも見出しになっていなければ、本を落とす | `check_book.py` の `contents_chapters`、`test_check_book.py::test_a_chapter_the_contents_lists_without_a_heading_is_caught`（F082） |
 | 章の見出しの番号は目次の番号に揃え、段落とつながった見出しは段落に戻す | `layout.py` の `contents_spelling`、`test_layout.py::test_a_chapter_number_read_as_a_symbol_takes_the_contents_number_and_a_run_on_title_stays_a_paragraph`（F084） |
 | 変換し直すとき、配置済みの Live Text のページも新しいコードで書き直す | `img2txt.py`、`test_img2txt.py::test_live_text_pages_laid_out_before_are_written_again_without_a_request`（F079） |
+| Live Text のページは毎回 Live Text 自身の読みから組み直す。前の出力から組み直さない | `img2txt.py` の `LIVE`・`restore_live`、`test_layout.py::test_a_second_layout_starts_from_live_text_s_reading_not_from_the_first_layout_s_output`（F085） |
 | Live Text のページも見出しを Gemini に読ませる。段落のままにしない | `layout.py` の `livetext_markdown`、`test_layout.py::test_a_live_text_page_takes_its_titles_from_gemini`（F075） |
 | Gemini が 1 回でも失敗したら、残りのページは Sonnet に回す | `layout.py`、`test_layout.py::test_any_failed_gemini_request_stops_the_book_without_sending_the_rest`、`test_layout.py::test_sonnet_lays_out_the_pages_gemini_could_not_and_the_book_goes_on`（F028） |
 | Sonnet も落ちたら、本を失敗にせず、変換の仕事を Gemini の枠が戻るまで止める | `book.py` の `RULES`、`test_kc_run.py::test_a_gemini_quota_failure_waits_for_the_reset_and_converts_the_same_pages_with_no_new_capture`（F028） |
