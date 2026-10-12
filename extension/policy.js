@@ -87,7 +87,9 @@ function nextAction(state, observation) {
   const { position, sha, appOnly, signedOut } = observation;
   if (appOnly) return fail(state, APP_ONLY_REASON);
   if (signedOut) return fail(state, 'signed out of Cloud Reader');
-  if (!sha && (state.last === null || state.waits >= IMAGE_WAITS)) return fail(state, `no page image${state.waits ? ` after ${state.waits} s` : ''}`);
+  // Right after the jump to the start the reader shows no page for a while (History of Jazz, 2026-10-12), so it gets longer.
+  const waits = state.jumped && state.last === null ? 3 * IMAGE_WAITS : IMAGE_WAITS;
+  if (!sha && ((state.last === null && !state.jumped) || state.waits >= waits)) return fail(state, `no page image${state.waits ? ` after ${state.waits} s` : ''}`);
   if (!sha) return { state: { ...state, waits: state.waits + 1 }, action: 'wait' };
   if (state.waits) state = { ...state, waits: 0 };
   if (state.last === null && state.jumped === null && position && position.n > JUMP_FROM) {

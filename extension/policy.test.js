@@ -194,3 +194,11 @@ test('a reader that stops turning mid-book both ways rests and starts over with 
   assert.strictEqual(stuck.actions.filter((x) => x === 'rest').length, RESTS);
   assert.strictEqual(stuck.actions.at(-1), 'done:turns stopped at page 275 of 540');
 });
+
+test('after the jump to the start, a screen without its image yet is waited for', () => {
+  // 2026-10-12, extension 2.7: History of Jazz and Steve Jobs jumped from 180 and 238 and failed "no page image" at once.
+  const end = screen('end', 180, 389), blank = { sha: null, position: null, appOnly: false, signedOut: false };
+  const a = screen('a', 1, 389);
+  assert.deepStrictEqual(replay([end, blank, blank, a]).actions.slice(0, 4), ['jump:start', 'wait', 'wait', 'save']);
+  assert.strictEqual(replay([end, ...Array(3 * IMAGE_WAITS + 1).fill(blank)]).actions.at(-1), `fail:no page image after ${3 * IMAGE_WAITS} s`);
+});
