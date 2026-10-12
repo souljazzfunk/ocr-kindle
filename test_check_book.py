@@ -14,7 +14,7 @@ BODY2 = ('Wozniak went with Allen Baum to the first meeting, held in a garage in
          'idea of building a terminal of his own. ')
 
 
-def book(tmp_path, pages, sources='vision', md=None, name='How to Write a Lot', laid=True):
+def book(tmp_path, pages, sources='vision', md=None, name='How to Write a Lot', laid=True, numbered=True):
     """A converted book folder; laid says whether Gemini has read the layout of its Vision pages."""
     folder = tmp_path / name
     folder.mkdir()
@@ -25,6 +25,9 @@ def book(tmp_path, pages, sources='vision', md=None, name='How to Write a Lot', 
     (folder / SOURCES).write_text(''.join(f'page_{n:04d}\t{sources}\n' for n in range(1, len(pages) + 1)))
     if laid:
         (folder / 'layout.json').write_text(json.dumps({f'page_{n:04d}': {} for n in range(1, len(pages) + 1)}))
+    if numbered:  # a capture whose screens each show their page, start to end
+        (folder / 'positions.json').write_text(json.dumps(
+            {f'page_{n:04d}': f'{n}/{len(pages)}' for n in range(1, len(pages) + 1)}))
     if md is not None:
         (folder / f'{name}.md').write_text(md)
     return folder
@@ -137,7 +140,7 @@ def test_a_capture_that_stopped_early_is_caught_but_end_matter_is_allowed(tmp_pa
 
 
 def test_without_positions_the_probe_gives_the_start_and_a_warning_remains(tmp_path):
-    folder = book(tmp_path, [BODY] * 3, md='# A\n\n' + BODY)
+    folder = book(tmp_path, [BODY] * 3, md='# A\n\n' + BODY, numbered=False)
     # dom-probe.json as extension-dom-probe wrote it: probes on pages 1 and 3 with the footer text.
     (folder / 'dom-probe.json').write_text(json.dumps([
         {'page': 1, 'titleCandidates': [{'class': 'footer-label position', 'text': 'Page 75 of 120\u2002●\u200259%'}]},
@@ -145,7 +148,17 @@ def test_without_positions_the_probe_gives_the_start_and_a_warning_remains(tmp_p
     checks = by_name(check_folder(folder))
     assert not checks['start_position'].ok
     assert not checks['positions'].ok and not checks['positions'].blocking
-    assert checks['end_position'].ok and checks['end_position'].detail == 'end not recorded'
+    assert not checks['end_position'].ok and checks['end_position'].detail == 'end not recorded'
+
+
+def test_a_capture_with_no_recorded_start_or_end_fails_both(tmp_path):
+    # Steve Jobs (2026-10-12): positions.json present but no numbered screen; 52 pages were published.
+    folder = book(tmp_path, [BODY] * 3, md='# A\n\n' + BODY)
+    positions(folder, ['', '', ''])
+    checks = by_name(check_folder(folder))
+    assert not checks['start_position'].ok and checks['start_position'].blocking
+    assert checks['start_position'].detail == 'start not recorded'
+    assert not checks['end_position'].ok and checks['end_position'].detail == 'end not recorded'
 
 
 def test_heading_noise_missed_chapters_and_digits_in_the_text_are_caught(tmp_path):

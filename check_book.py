@@ -108,12 +108,14 @@ def check_folder(folder, title=None):
     positions, complete = page_positions(folder)
     first = positions[0] if positions else None
     # A screen shows one page number or less, so page N cannot be reached in fewer than N - 1 screens.
-    late = first and first[1] - 1 > first[0]
+    # No numbered screen is no evidence of the start: Steve Jobs (2026-10-12) was published from 52 of its pages
+    # because a missing start and end passed.
+    late = not first or first[1] - 1 > first[0]
     checks.append(Check('start_position', not late,
                         f'first numbered screen {first[0] + 1} shows page {first[1]} of {first[2]}' if first else 'start not recorded',
                         fix=None))
     last = positions[-1] if complete and positions else None
-    short = last and last[1] < last[2] - end_tolerance(last[2])
+    short = not last or last[1] < last[2] - end_tolerance(last[2])
     checks.append(Check('end_position', not short,
                         f'last page {last[1]} of {last[2]}' if last else 'end not recorded', fix=None))
     capture = folder / CAPTURE
