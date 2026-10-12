@@ -23,12 +23,14 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
-from check_book import check_folder, markdown_file
+import json
+
+from check_book import Check, check_folder, markdown_file
 import locks
 from channel import Channel, safe_name, set_aside
 from extension_state import capture_version, folder_problem, repo_version
 from book import write_json
-from img2txt import GEMINI_ERROR, GEMINI_FAILED_EXIT, load_config
+from img2txt import GEMINI_ERROR, GEMINI_FAILED_EXIT, load_config, page_images
 
 ROUNDS = 3
 STALL = 'capture_stall'
@@ -40,6 +42,9 @@ EXTENSION_FOLDER = 'extension_folder'
 # The extension's reason for a refusal, by its start; any other refusal is capture_refused (extension/policy.js).
 REFUSALS = (('kindle app required', APP_ONLY), ('signed out', SIGNED_OUT), ('sample', 'sample_only'))
 GEMINI_CHECK = 'gemini'
+# The longest each step of one book may take, per screen or page so a long book keeps the same pace as a short one.
+# 2026-10-12: the redesign was planned and shipped without timing a single step, so nobody could say it got faster.
+BUDGETS = {'reach': 60, 'capture_per_screen': 1.5, 'ocr_per_page': 2.0, 'checks_per_page': 0.5}
 PYTHON = sys.executable
 HERE = Path(__file__).resolve().parent
 # The LLM wiki's watcher (llm-wiki/scripts/watch.sh). It takes only books whose report.json passed.
@@ -88,6 +93,17 @@ def correct(folder, title, rounds=ROUNDS, runner=run):
             reocr_done = reocr_done or '--force' in fix
         checks = check_folder(folder, title)
     return checks, round_no
+
+
+def speed(seconds, budgets=BUDGETS):
+    """The speed check over report.json's seconds: each step against its budget. A slow book still goes to Drive; the
+    check names the step, so the next fix starts from it."""
+    per = {'reach': (seconds.get('reach'), 1), 'capture_per_screen': (seconds.get('capture'), seconds.get('screens')),
+           'ocr_per_page': (seconds.get('ocr'), seconds.get('pages')), 'checks_per_page': (seconds.get('checks'), seconds.get('pages'))}
+    taken = {step: total / count for step, (total, count) in per.items() if total is not None and count}
+    slow = [f'{step} {taken[step]:.2f} s > {budgets[step]:g} s' for step in taken if taken[step] > budgets[step]]
+    shown = ', '.join(f'{step} {value:.2f} s' for step, value in taken.items())
+    return Check('speed', not slow, ('slow: ' + '; '.join(slow) if slow else shown or 'no timings'), blocking=False, fix=None)
 
 
 def not_captured(asin, check, reason, recapture):
@@ -140,7 +156,7 @@ def convert(asin, title=None, model='vision', domain='read.amazon.com', download
         if failure:
             return failure
     data = convert_folder(asin, title, model, source, recapture)
-    data['seconds'] = round(time.time() - started)
+    data['total_seconds'] = round(time.time() - started)
     if not data['blocking_failures']:
         publish(Path(data['folder']), title)
     start_wiki_ingest(data)
@@ -177,7 +193,9 @@ def convert_folder(asin, title, model, source, recapture=False):
     folder = source.with_suffix('') if source.suffix == '.zip' else source
     with locks.holding(locks.book_lock(source)):
         try:
+            started = time.time()
             run([PYTHON, str(HERE / 'img2txt.py'), str(source), '--model', model] + (['--title', title] if title else []))
+            ocr = time.time()
             checks, rounds = correct(folder, title)
         except subprocess.CalledProcessError as e:
             if e.returncode != GEMINI_FAILED_EXIT:
@@ -188,7 +206,11 @@ def convert_folder(asin, title, model, source, recapture=False):
             print(f'FAIL {GEMINI_CHECK:18} {reason}', flush=True)
             return {'asin': asin, 'source': str(folder), 'folder': str(folder), 'recapture': recapture,
                     'blocking_failures': [GEMINI_CHECK], 'warnings': [], 'error': reason}
-        data = report(folder, checks, {'asin': asin, 'source': str(source), 'recapture': recapture, 'rounds': rounds})
+        captured = folder / 'capture.json'
+        seconds = {**(json.loads(captured.read_text()).get('seconds') or {} if captured.exists() else {}),
+                   'pages': len(page_images(folder)), 'ocr': round(ocr - started, 1), 'checks': round(time.time() - ocr, 1)}
+        data = report(folder, checks + [speed(seconds)], {'asin': asin, 'source': str(source), 'recapture': recapture,
+                                                          'rounds': rounds, 'seconds': seconds})
     return {**data, 'folder': str(folder)}
 
 

@@ -423,3 +423,29 @@ def test_a_chapter_the_contents_lists_without_a_heading_is_caught(tmp_path):
     assert not check.ok and check.blocking and check.detail == '1 contents entries without a heading: "幻想英語ができれば世界中だれとでも意思疎通できる"'
     (folder / '英語教育幻想.md').write_text(md.replace('\n\n幻想6 英語', '\n\n# 幻想6 英語'))
     assert by_name(check_folder(folder))['contents_chapters'].ok
+
+
+def test_each_step_is_timed_in_the_report_and_a_slow_one_fails_the_speed_check(tmp_path, monkeypatch):
+    # 2026-10-12: the redesign shipped with no step timed, so whether a book got faster could not be answered.
+    drive = tmp_path / 'Kindle_md'
+    drive.mkdir()
+    folder = tmp_path / 'Book'
+    folder.mkdir()
+    for n in range(1, 11):
+        (folder / f'page_{n:04d}.png').write_bytes(b'')
+    (folder / 'Book.md').write_text('# One\n\n' + BODY, encoding='utf-8')
+    (folder / 'capture.json').write_text(json.dumps({'seconds': {'reach': 3, 'capture': 40, 'screens': 10}}))
+    clock = iter([100.0, 100.0, 130.0, 131.0, 140.0])
+    monkeypatch.setattr(capture_book.time, 'time', lambda: next(clock))
+    monkeypatch.setattr(capture_book, 'load_config', lambda: {'GOOGLE_DRIVE_FOLDER': str(drive)})
+    monkeypatch.setattr(capture_book, 'run', lambda *a, **k: None)
+    monkeypatch.setattr(capture_book, 'correct', lambda f, t: ([Check('headings', True, '1 headings')], 1))
+    monkeypatch.setattr(capture_book, 'start_wiki_ingest', lambda data: None)
+    data = capture_book.convert('B0', 'Book', source=folder)
+    report = json.loads((folder / 'report.json').read_text())
+    assert report['seconds'] == {'reach': 3, 'capture': 40, 'screens': 10, 'pages': 10, 'ocr': 30.0, 'checks': 1.0}
+    speed = by_name(Check(**c) for c in report['checks'])['speed']
+    assert not speed.ok and speed.detail == 'slow: capture_per_screen 4.00 s > 1.5 s; ocr_per_page 3.00 s > 2 s'
+    # A slow book is still a correct one: it goes to Drive, with speed among its warnings.
+    assert data['warnings'] == ['speed'] and (drive / 'Book.md').exists()
+    assert capture_book.speed({'reach': 3, 'capture': 10, 'screens': 10, 'pages': 10, 'ocr': 5, 'checks': 1}).ok
