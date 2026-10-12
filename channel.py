@@ -33,6 +33,9 @@ STALL_S = 300
 # Heading-only pages keep part of their text in the image (e.g. layer "1" for a page reading "幻想1 アメリカ…"),
 # so short layers are left for img2txt.py to OCR.
 MIN_TEXT_CHARS = 40
+# The one browser whose extension gets jobs. Laiken has the extension in Chrome and Brave; on 2026-10-12 the Brave copy
+# took the jobs after the move to Chrome (2026-10-11). A worker says which browser it runs in (extension/job.js).
+BROWSER = os.environ.get('KINDLE_BROWSER', 'chrome')
 STAGING = '.staging'
 TRACE = 'trace.jsonl'
 # img2txt.py's names, kept here so this module needs nothing outside the standard library (test_channel.py checks).
@@ -48,6 +51,7 @@ class Job:
     recapture: bool = False
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     taken: float | None = None  # when a worker first received it
+    worker: str = ''  # the one worker that has it; any other worker is offered nothing
     active: float = 0.0  # the last page or event
     pages: dict = field(default_factory=dict)  # screen number (signed, see extension/policy.js) -> {position, text}
     title: str = ''
@@ -113,8 +117,8 @@ def make_room(folder):
 
 
 class Channel:
-    def __init__(self, port=PORT, root=HERE, downloads=Path.home() / 'Downloads', clock=time.monotonic):
-        self.port, self.root, self.downloads, self.clock = port, Path(root), Path(downloads), clock
+    def __init__(self, port=PORT, root=HERE, downloads=Path.home() / 'Downloads', clock=time.monotonic, browser=BROWSER):
+        self.port, self.root, self.downloads, self.clock, self.browser = port, Path(root), Path(downloads), clock, browser
         self.job = None
         self.lock = threading.Condition()
         self.polled = None  # when a worker last asked for work, and the version it runs
@@ -166,7 +170,7 @@ class Channel:
                         seen = (f'a worker on extension {self.worker_version} asked, but never for this job'
                                 if self.polled and self.polled >= offered else 'no worker asked for work')
                         job.outcome = CaptureResult('unreachable', f'{seen} in {reach_s} s (disk version '
-                                                    f'{self.disk_version()}); is Chrome open with the extension loaded?')
+                                                    f'{self.disk_version()}); is {self.browser} open with the extension loaded?')
                     elif job.taken is not None and now - job.active >= stall_s:
                         job.outcome = CaptureResult('stalled', f'no page and no event for {stall_s:g} s after '
                                                     f'{len(job.pages)} screens', job.title, len(job.pages))
@@ -179,17 +183,23 @@ class Channel:
 
     # The handlers below run on the server's threads.
 
-    def get_job(self, worker_version):
+    def get_job(self, worker_version, worker_browser='', worker_id=''):
+        """A worker in another browser than self.browser is told the version (so it stays current) but never a job, and
+        a job goes to one worker only: on 2026-10-12 two workers paged the same book into one folder."""
         with self.lock:
             now = self.clock()
+            if worker_browser != self.browser:
+                return {'version': self.disk_version(), 'job': None}
             self.polled, self.worker_version = now, worker_version
             job = self.job
             # A worker on another version reloads first (extension/job.js); the job counts as taken once a worker on
             # the disk version has it.
             if job and job.taken is None and worker_version == self.disk_version():
                 job.taken = job.active = now
+                job.worker = worker_id
                 self.lock.notify_all()
-            return {'version': self.disk_version(), 'job': job.public() if job else None}
+            mine = job and job.taken is not None and job.worker == worker_id
+            return {'version': self.disk_version(), 'job': job.public() if mine or (job and job.taken is None) else None}
 
     def _current(self, job_id):
         if not self.job or self.job.id != job_id or self.job.outcome is not None:
@@ -249,7 +259,8 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         if url.path != '/job':
             return self.reply(404, {'ok': False})
-        self.reply(200, self.server.channel.get_job(parse_qs(url.query).get('v', [''])[0]))
+        query = parse_qs(url.query)
+        self.reply(200, self.server.channel.get_job(query.get('v', [''])[0], query.get('b', [''])[0], query.get('w', [''])[0]))
 
     def do_POST(self):
         url = urlparse(self.path)

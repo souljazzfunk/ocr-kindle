@@ -33,10 +33,10 @@ def call(ch, method, path, body=b'', headers=None):
         return e.code, json.loads(e.read())
 
 
-def take(ch, version='2.0'):
+def take(ch, version='2.0', browser='chrome', worker='w1'):
     """Poll as the worker does until a job is offered; returns it."""
     for _ in range(100):
-        _, reply = call(ch, 'GET', f'/job?v={version}')
+        _, reply = call(ch, 'GET', f'/job?v={version}&b={browser}&w={worker}')
         if reply['job']:
             return reply['job']
         time.sleep(0.02)
@@ -68,7 +68,7 @@ def test_a_capture_opened_mid_book_lands_as_page_files_in_reading_order(served, 
     thread, out = in_background(lambda: served.capture('B0FOUR', 'read.amazon.com', folder, False))
     job = take(served)
     assert job == {'id': job['id'], 'kind': 'capture', 'asin': 'B0FOUR', 'domain': 'read.amazon.com', 'recapture': False}
-    _, reply = call(served, 'GET', '/job?v=2.0')
+    _, reply = call(served, 'GET', '/job?v=2.0&b=chrome&w=w1')
     assert reply['version'] == '2.0'
     # Opened at page 3, paged back to 1 (screens 0, -1, -2), then forward past them to page 4 (screen 1).
     assert event(served, job, type='title', title='Four Pages', probe={'counts': {'textLayer': 1}}) == 200
@@ -96,7 +96,7 @@ def test_a_capture_opened_mid_book_lands_as_page_files_in_reading_order(served, 
     assert not (folder / channel.STAGING).exists()
     checks = {c.name: c.ok for c in check_folder(folder)}
     assert checks['pages'] and checks['start_position'] and checks['end_position'] and checks['capture_stop']
-    _, reply = call(served, 'GET', '/job?v=2.0')
+    _, reply = call(served, 'GET', '/job?v=2.0&b=chrome&w=w1')
     assert reply['job'] is None
 
 
@@ -146,7 +146,7 @@ def test_no_worker_is_unreachable_and_a_worker_on_another_version_is_named(serve
     assert result.status == 'unreachable' and result.reason.startswith('no worker asked for work')
     thread, out = in_background(lambda: served.capture('B0', 'read.amazon.com', tmp_path / 'Downloads' / 'B0', reach_s=1))
     time.sleep(0.2)
-    call(served, 'GET', '/job?v=1.10')  # a worker that should have reloaded to 2.0 and did not
+    call(served, 'GET', '/job?v=1.10&b=chrome')  # a worker that should have reloaded to 2.0 and did not
     thread.join(5)
     assert out['result'].status == 'unreachable' and 'a worker on extension 1.10 asked' in out['result'].reason
 
@@ -179,3 +179,26 @@ def test_a_library_scan_writes_what_the_page_showed(served, tmp_path):
 
 def test_the_text_layer_names_match_img2txt():
     assert (channel.SOURCES, channel.TEXT_LAYER) == (img2txt.SOURCES, img2txt.TEXT_LAYER)
+
+
+def test_only_the_chosen_browser_gets_jobs(served, tmp_path):
+    # 2026-10-12: the Brave copy of the extension took the job after Laiken moved the capture to Chrome.
+    thread, out = in_background(lambda: served.capture('B0', 'read.amazon.com', tmp_path / 'Downloads' / 'B0', reach_s=1))
+    time.sleep(0.2)
+    for query in ('v=2.0&b=brave', 'v=2.0'):
+        _, reply = call(served, 'GET', f'/job?{query}')
+        assert reply == {'version': '2.0', 'job': None}
+    thread.join(5)
+    assert out['result'].status == 'unreachable' and out['result'].reason.startswith('no worker asked for work')
+    assert 'is chrome open' in out['result'].reason
+
+
+def test_a_job_goes_to_one_worker_only(served, tmp_path):
+    # 2026-10-12: Chrome and Brave both took 英語教育幻想 and their pages mixed in one folder.
+    thread, out = in_background(lambda: served.capture('B0', 'read.amazon.com', tmp_path / 'Downloads' / 'B0'))
+    job = take(served, worker='w1')
+    _, other = call(served, 'GET', '/job?v=2.0&b=chrome&w=w2')
+    _, again = call(served, 'GET', '/job?v=2.0&b=chrome&w=w1')
+    assert other['job'] is None and again['job'] == job
+    event(served, job, type='refused', reason='stop')
+    thread.join(5)
