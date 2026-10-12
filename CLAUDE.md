@@ -84,6 +84,7 @@
 | Live Text のページは毎回 Live Text 自身の読みから組み直す。前の出力から組み直さない | `img2txt.py` の `LIVE`・`restore_live`、`test_layout.py::test_a_second_layout_starts_from_live_text_s_reading_not_from_the_first_layout_s_output`（F088） |
 | Live Text のページも見出しを Gemini に読ませる。段落のままにしない | `layout.py` の `livetext_markdown`、`test_layout.py::test_a_live_text_page_takes_its_titles_from_gemini`（F075） |
 | 配置は Sonnet から順に試し、後ろが残るうちは本を止めない | `layout.py` の `provider_order`、`test_layout.py::test_sonnet_is_asked_first_and_a_spent_one_gives_way_to_the_next`、`test_layout.py::test_any_failed_gemini_request_stops_the_book_without_sending_the_rest`（F028） |
+| OpenRouter の無いモデルや画像非対応は次の提供者へ回す | `layout.py` の `model_missing`、`test_layout.py::test_a_missing_openrouter_model_moves_on_to_the_next_provider`（F028） |
 | 尽きた提供者だけをリセットまで休ませ、全部尽きたときだけ仕事を止める | `book.py` の `gemini_reset`、`test_layout.py::test_an_exhausted_provider_stays_out_until_its_reset`、`test_kc_run.py::test_a_gemini_quota_failure_waits_for_the_reset_and_converts_the_same_pages_with_no_new_capture`（F028） |
 | Sonnet には Gemini と同じスキーマを --json-schema で渡す。自由文の JSON は読まない | `scripts/check_claude.py`、`layout.py` の `ask_claude`・`LAYOUT_SCHEMA`、`test_layout.py::test_a_claude_call_without_json_schema_is_the_steve_jobs_reply`（F121） |
 | 各提供者のスキーマは LAYOUT_SCHEMA から描き、拒む形は通信せずに落とす | `layout.py` の `provider_rejected`、`test_layout.py::test_each_provider_schema_is_rejected_offline_when_the_shape_is_wrong`、`test_layout.py::test_the_schema_merged_in_2282ee7_is_rejected_by_gemini`（F122） |

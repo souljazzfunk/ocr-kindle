@@ -423,6 +423,50 @@ def test_an_exhausted_provider_stays_out_until_its_reset(tmp_path, monkeypatch):
     assert calls[0] == 'claude'
 
 
+def test_a_missing_openrouter_model_moves_on_to_the_next_provider(tmp_path, monkeypatch):
+    # qwen/qwen3.8-27b:free left OpenRouter's list. A 404, or a model that cannot take an image, is that
+    # provider being out: the next free model is tried, then the next provider. The convert job is not paused.
+    assert layout.failure_kind('404 No endpoints found for qwen/qwen3.8-27b:free') == 'unavailable'
+    assert layout.failure_kind('400 image input not supported') == 'unavailable'
+    assert layout.openrouter_models({}) == list(layout.OPENROUTER_MODELS)
+    asked = []
+    fallback_fails = {'on': False}
+
+    def http_json(url, body, headers, timeout=180):
+        model = body.get('model')
+        asked.append(model)
+        if '11434' in url:
+            page = {'page': 'page_0001', 'titles': [{'line': 0, 'level': 2}], 'quotes': [], 'figures': [], 'art': [], 'code': []}
+            return {'model': model, 'message': {'content': json.dumps({'pages': [page]})}}
+        if model == layout.OPENROUTER_MODELS[0]:
+            raise RuntimeError('404 No endpoints found')
+        if fallback_fails['on']:
+            raise RuntimeError('400 {"error":{"message":"image input not supported"}}')
+        page = {'page': 'page_0001', 'titles': [{'line': 0, 'level': 2}], 'quotes': [], 'figures': [], 'art': [], 'code': []}
+        return {'model': model, 'choices': [{'message': {'content': json.dumps({'pages': [page]})}}]}
+
+    def book(folder):
+        folder.mkdir()
+        (folder / 'page_0001.png').write_bytes(b'png')
+        (folder / 'page_0001.lines.json').write_text(json.dumps([[0.1, 0.1, 0.03, 'A TITLE']] + BODY))
+
+    monkeypatch.setattr(layout, 'http_json', http_json)
+    monkeypatch.setattr(layout, 'ollama_ready', lambda config=None: True)
+    config = {'OPENROUTER_API_KEY': 'key', 'LAYOUT_PROVIDERS': 'openrouter,ollama'}
+    one = tmp_path / 'one'
+    book(one)
+    assert mark_layout(one, None, [one / 'page_0001.png'], config=config) == []
+    assert asked == list(layout.OPENROUTER_MODELS)
+    assert read_layout(one)['page_0001']['model'] == layout.OPENROUTER_MODELS[1]
+    asked.clear()
+    fallback_fails['on'] = True
+    two = tmp_path / 'two'
+    book(two)
+    assert mark_layout(two, None, [two / 'page_0001.png'], config=config) == []
+    assert asked == [*layout.OPENROUTER_MODELS, layout.OLLAMA_MODEL]
+    assert read_layout(two)['page_0001']['provider'] == 'ollama'
+
+
 def test_each_provider_schema_is_rejected_offline_when_the_shape_is_wrong():
     # The rendered request is acceptable. The shape each API refuses is the one that would have been sent
     # by reusing another provider's rendering: Gemini's additionalProperties, a top-level array, GLM's

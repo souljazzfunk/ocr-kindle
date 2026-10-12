@@ -48,7 +48,7 @@ Keys and the local model:
 
 - **Mistral** — a key from [console.mistral.ai](https://console.mistral.ai/). In the workspace settings, turn off training on your data before the first book. The pages are copyrighted.
 - **Z.ai** — a key from [z.ai](https://z.ai/). The model is GLM-4.6V-Flash, free, one request at a time.
-- **OpenRouter** — a key from [openrouter.ai/keys](https://openrouter.ai/keys). Only a `:free` model is sent (default `qwen/qwen3.8-27b:free`, about 50 requests a day). The code refuses OpenAI, whose free tokens share the pages.
+- **OpenRouter** — a key from [openrouter.ai/keys](https://openrouter.ai/keys). Only `:free` models are sent. The default is `google/gemma-4-31b-it:free`, then `google/gemma-4-26b-a4b-it:free` when that model is missing or cannot take an image. Free limits are 20 requests a minute and 50 a day (1000 a day after buying 10 credits). In OpenRouter's privacy settings, turn off providers that train on prompts. The code refuses OpenAI, whose free tokens share the pages.
 - **Ollama** — already on the Mac. A 16 GB M1 holds the 7B model; an 8 GB Mac should set `OLLAMA_MODEL=qwen2.5vl:3b`.
 
 ```bash

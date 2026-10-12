@@ -46,7 +46,9 @@ PROVIDERS = ('claude', 'gemini', 'mistral', 'glm', 'openrouter', 'ollama')
 CLAUDE_MODELS = ('sonnet', 'haiku')
 MISTRAL_MODEL = 'mistral-small-latest'
 GLM_MODEL = 'glm-4.6v-flash'
-OPENROUTER_MODEL = 'qwen/qwen3.8-27b:free'
+# Free vision models on OpenRouter as of 2026-10-12. The first is tried; a 404 or a model that
+# cannot take an image tries the next. qwen/qwen3.8-27b:free is no longer listed.
+OPENROUTER_MODELS = ('google/gemma-4-31b-it:free', 'google/gemma-4-26b-a4b-it:free')
 OLLAMA_MODEL = 'qwen2.5vl:7b'  # about 6 GB; a 16 GB M1 holds it. An 8 GB Mac should set qwen2.5vl:3b.
 OLLAMA_BATCH = 4
 MISTRAL_URL = 'https://api.mistral.ai/v1/chat/completions'
@@ -379,7 +381,7 @@ def model_of(name, config):
     if name == 'glm':
         return config.get('GLM_MODEL') or GLM_MODEL
     if name == 'openrouter':
-        return config.get('OPENROUTER_MODEL') or OPENROUTER_MODEL
+        return openrouter_models(config)[0]
     if name == 'ollama':
         return config.get('OLLAMA_MODEL') or OLLAMA_MODEL
     raise RuntimeError(f'Unknown layout provider {name}')
@@ -414,17 +416,32 @@ def provider_order(config, cli, client, limit=None, ollama=None):
             continue
         if name == 'openrouter' and not config.get('OPENROUTER_API_KEY'):
             continue
-        if name == 'openrouter' and not free_model(model_of(name, config)):
-            print(f'OPENROUTER_MODEL {model_of(name, config)} is not a :free model; skipping', flush=True)
-            continue
+        if name == 'openrouter':
+            models = openrouter_models(config)
+            if not models or not all(free_model(model) for model in models):
+                print(f'OPENROUTER_MODEL {config.get("OPENROUTER_MODEL")} is not a :free model; skipping', flush=True)
+                continue
         if name == 'ollama' and not ready:
             continue
         order.append(name)
     return order
 
 
+def openrouter_models(config):
+    """Comma-separated `OPENROUTER_MODEL`, or the default list. The first model that is still listed is used."""
+    raw = (config or {}).get('OPENROUTER_MODEL') or ','.join(OPENROUTER_MODELS)
+    return [part.strip() for part in raw.split(',') if part.strip()]
+
+
 def free_model(model):
     return model == 'openrouter/free' or model.endswith(':free')
+
+
+def model_missing(error):
+    """A model id OpenRouter no longer lists (404), or a model that cannot see the page image.
+    That provider is out; the next model in the list, then the next provider, reads the pages."""
+    text = str(error)
+    return text.startswith('404') or 'image input not supported' in text.lower()
 
 
 def ollama_ready(config):
@@ -630,6 +647,25 @@ def ask_chat(provider, images, config, model):
     return parse_layout(content, {image.stem for image in images}, used or model, provider)
 
 
+def ask_openrouter(images, config, skip):
+    """Try each free vision model. A missing model, or one that cannot take an image, is skipped; a quota
+    error stops the provider so the next one in the list is asked."""
+    models = [model for model in openrouter_models(config) if model not in skip]
+    if not models:
+        raise RuntimeError('404 no OpenRouter vision model left')
+    last = None
+    for model in models:
+        try:
+            return ask_chat('openrouter', images, config, model)
+        except Exception as e:
+            last = e
+            if not model_missing(e):
+                raise
+            skip.add(model)
+            print(f'{model} is out: {e}', flush=True)
+    raise last
+
+
 def ask_ollama(images, config, model):
     merged = {}
     url, headers = endpoint('ollama', config)
@@ -686,6 +722,10 @@ def display(name, model):
 def failure_kind(error):
     text = str(error)
     low = text.lower()
+    # A deleted model or one that cannot see images is this provider being out, not a schema bug. A schema
+    # bug pauses until the converter changes; that would stop the list on a 404.
+    if model_missing(error):
+        return 'unavailable'
     if 'INVALID_ARGUMENT' in text or 'additional_properties' in low:
         return 'schema'
     if any(mark in text for mark in ('401', '403', 'PERMISSION_DENIED')) or 'invalid api key' in low or 'unauthorized' in low:
@@ -801,13 +841,15 @@ class Roster:
         return f'Layout failed with {left} pages left: {body}.{extra}'
 
 
-def call_provider(name, images, model, client, cli, config):
+def call_provider(name, images, model, client, cli, config, skip=None):
     if name == 'claude':
         return ask_layout_claude(cli, images, model)
     if name == 'gemini':
         return ask_layout(client, images)
     if name == 'ollama':
         return ask_ollama(images, config, model)
+    if name == 'openrouter':
+        return ask_openrouter(images, config, skip if skip is not None else set())
     return ask_chat(name, images, config, model)
 
 
@@ -831,6 +873,7 @@ def mark_layout(folder, client, images, cli=None, config=None, limit=None, now=N
     path = PROVIDER_STATE if state_path is None else state_path
     roster = Roster(order, load_blocks(path, now, config, converter_version()), now, config, path, converter_version())
     slots = {'claude': threading.Semaphore(CLAUDE_WORKERS), 'glm': threading.Semaphore(1)}
+    skip = set()  # OpenRouter models already answered 404 or that they cannot take an image
 
     def ask(batch):
         while True:
@@ -844,7 +887,7 @@ def mark_layout(folder, client, images, cli=None, config=None, limit=None, now=N
                 if not roster.open(name):
                     continue
                 model = model_of(name, config)
-                return call_provider(name, batch, model, client, cli, config), False
+                return call_provider(name, batch, model, client, cli, config, skip), False
             except Exception as e:
                 roster.block(name, model_of(name, config), e)
             finally:
