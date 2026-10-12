@@ -58,7 +58,7 @@ CAP_LINES = 4
 NOISE_CHARS = 2  # a line this short that is no title is art read as text (binary digits behind a chapter number)
 BINARY = re.compile(r'[01\s]{3,}')  # zeros and ones are a picture of data, not words
 BULLET = re.compile(r'^[•►▪‣◦●■]\s*')
-CONTENTS = re.compile(r'^(?:table of )?contents$', re.I)
+CONTENTS = re.compile(r'^(?:(?:table of )?contents|目\s*次)$', re.I)
 CONTENTS_PAGES = 0.15  # the contents page is in the front matter
 # A line that only code starts so: a prompt (Vision reads >>> as >>, ›> or >> >), a shell's $, a definition, an
 # import, a call to print, a comment, a block statement. A book with this many is a programming book.
@@ -144,11 +144,55 @@ def page_lines(image):
     return [re.sub(r'^#+ ', '', line) for line in text.splitlines() if line.strip()]
 
 
-def livetext_markdown(lines, page):
+def livetext_markdown(lines, page, chapters=(), contents=False, mark=''):
     """A Live Text page with Gemini's titles marked. 英語教育幻想 (2026-10-12) came out with no headings: its section
-    marks 「†」 read as 「十」 and the titles stayed paragraphs. Without boxes, only the titles are taken."""
+    marks 「†」 read as 「十」 and the titles stayed paragraphs. Without boxes, only the titles are taken: the book's
+    section mark is taken off them, the contents page gives their level, and a contents page's entries stay text."""
     levels = {t['line']: t['level'] for t in page.get('titles', []) if 0 <= t.get('line', -1) < len(lines)}
-    return '\n\n'.join(f'{"#" * levels[i]} {line}' if i in levels else line for i, line in enumerate(lines))
+    out = []
+    for i, line in enumerate(lines):
+        if i not in levels or contents and not CONTENTS.match(line.strip()):
+            out.append(line)
+            continue
+        title = line[len(mark):].lstrip() if mark and line.startswith(mark) else line
+        out.append(f'{"#" * chapter_level(title, levels[i], chapters)} {title}')
+    return '\n\n'.join(out)
+
+
+SECTION_MARKS = '十†‡◆◇■□●○▼▽★☆※'
+MARK_MIN = 5
+MARK_SHARE = 0.3
+
+
+def section_mark(titles):
+    """The character a book sets before its section titles, when one of SECTION_MARKS starts at least MARK_MIN of them
+    and MARK_SHARE of all: 英語教育幻想's 73 titles that began with 「†」, which Live Text reads as 「十」."""
+    firsts = [t.strip()[:1] for t in titles if t.strip()]
+    counts = {c: firsts.count(c) for c in set(firsts) if c in SECTION_MARKS}
+    mark = max(counts, key=counts.get, default='')
+    return mark if mark and counts[mark] >= MARK_MIN and counts[mark] >= MARK_SHARE * len(firsts) else ''
+
+
+def livetext_contents(images):
+    """(stems, entries) of a Live Text book's contents: the front-matter page with a 目次 line and the pages right after
+    it that hold no sentence (no 「。」). 英語教育幻想's contents ran over several pages, and each entry came out as a
+    title, some cut mid-line."""
+    pages = [image for image in images[:max(1, round(len(images) * CONTENTS_PAGES))]
+             if not image.with_suffix(LINES).exists() and image.with_suffix('.txt').exists()]
+    for k, image in enumerate(pages):
+        lines = page_lines(image)
+        start = next((i for i, text in enumerate(lines) if CONTENTS.match(text.strip())), None)
+        if start is None:
+            continue
+        stems, entries = [image.stem], lines[start + 1:]
+        for after in pages[k + 1:]:
+            more = page_lines(after)
+            if not more or any('。' in line for line in more):
+                break
+            stems.append(after.stem)
+            entries += more
+        return set(stems), [e for e in (comparable(re.sub(r'\s*\d+$', '', x)) for x in entries) if len(e) >= 3]
+    return set(), []
 
 
 def ask_layout(client, images):
@@ -258,7 +302,13 @@ def mark_layout(folder, client, images, cli=None):
                 print(f'[layout {done}/{len(batches)}] {len(pages)} pages by Sonnet', flush=True)
             layout.update((stem, dict(page, code=code_groups(page.get('code')))) for stem, page in pages.items())
             (folder / LAYOUT).write_text(json.dumps(layout, ensure_ascii=False, indent=0), encoding='utf-8')
-    chapters = contents_entries(page_images(folder))
+    every = page_images(folder)
+    contents, toc = livetext_contents(every)
+    chapters = contents_entries(every) or toc
+    live = [image for image in every if image.stem in layout and not image.with_suffix(LINES).exists()
+            and image.with_suffix('.txt').exists()]
+    mark = section_mark([lines[t['line']] for image in live for lines in [page_lines(image)]
+                         for t in layout[image.stem].get('titles', []) if 0 <= t.get('line', -1) < len(lines)])
     styled = styled_titles(folder, layout)
     for image in images:
         if image.stem in layout and image.with_suffix(LINES).exists():
@@ -267,7 +317,7 @@ def mark_layout(folder, client, images, cli=None):
             text = page_markdown(boxes, page, chapters)
             image.with_suffix('.txt').write_text(text or ' ', encoding='utf-8')
         elif image.stem in layout and image.with_suffix('.txt').exists():
-            text = livetext_markdown(page_lines(image), layout[image.stem])
+            text = livetext_markdown(page_lines(image), layout[image.stem], chapters, image.stem in contents, mark)
             image.with_suffix('.txt').write_text(text or ' ', encoding='utf-8')
     left = [image for image in images if image.stem not in layout]
     if first_error:
@@ -593,8 +643,8 @@ def drop_cap(texts, boxes, cap, art, code=()):
 
 
 def comparable(text):
-    """Letters only, lower case, with Vision's I/l confusion folded (AI read as Al)."""
-    return re.sub(r'[^a-z]', '', text.lower().replace('l', 'i'))
+    """Letters and Japanese only, lower case, with Vision's I/l confusion folded (AI read as Al)."""
+    return re.sub(r'[^a-z\u3040-\u30ff\u4e00-\u9fff]', '', text.lower().replace('l', 'i'))
 
 
 def contents_entries(images):

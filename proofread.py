@@ -11,6 +11,7 @@ import argparse
 import dataclasses
 import difflib
 import html
+import json
 import re
 import subprocess
 from collections import Counter, defaultdict
@@ -99,6 +100,14 @@ class Book:
         return '\n'.join(self.pages.values())
 
     @cached_property
+    def positions(self):
+        """{page stem: reader position} from the capture's positions.json, {} without one."""
+        try:
+            return json.loads((self.folder / 'positions.json').read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            return {}
+
+    @cached_property
     def counts(self):
         return Counter(w.lower() for w in WORD.findall(self.corpus))
 
@@ -118,13 +127,27 @@ def words(text):
     return re.sub(r'[#*_]', '', text).split()
 
 
+def same_text(a, b):
+    """Two page texts that are one page read twice. Japanese has no spaces between words, so it is compared by letter."""
+    x, y = words(a), words(b)
+    if len(CJK.findall(a)) > len(LATIN.findall(a)):
+        x, y = list(''.join(x)), list(''.join(y))
+    return bool(x and y) and difflib.SequenceMatcher(None, x, y, autojunk=False).ratio() >= DUPLICATE_RATIO
+
+
 def duplicate_page(book):
+    """A page that repeats the one before it, or a page at the same reader position as an earlier one: 英語教育幻想
+    (2026-10-12) had 13 screens saved twice, a hundred pages apart, at the same positions."""
     pages = book.pages
     stems = [s for s in pages if pages[s].strip()]
-    for previous, stem in zip(stems, stems[1:]):
-        a, b = words(pages[previous]), words(pages[stem])
-        if a and b and difflib.SequenceMatcher(None, a, b, autojunk=False).ratio() >= DUPLICATE_RATIO:
+    at = book.positions
+    first = {}
+    for i, stem in enumerate(stems):
+        earlier = first.get(at.get(stem)) if at.get(stem) else None
+        if i and same_text(pages[stems[i - 1]], pages[stem]) or earlier and same_text(pages[earlier], pages[stem]):
             yield Finding('duplicate_page', stem, pages[stem], ' ')
+        elif at.get(stem):
+            first.setdefault(at[stem], stem)
 
 
 def seam_overlap(book):

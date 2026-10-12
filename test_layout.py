@@ -138,6 +138,33 @@ def test_a_live_text_page_takes_its_titles_from_gemini(tmp_path, monkeypatch):
     assert (tmp_path / 'page_0011.txt').read_text(encoding='utf-8').startswith('## 十日米同盟\n\n')
 
 
+def test_live_text_titles_lose_the_section_mark_and_take_their_level_from_the_contents(tmp_path, monkeypatch):
+    # 2026-10-12: 英語教育幻想's 73 titles kept 「十」 (its 「†」), its contents entries came out as titles, and some
+    # section titles came out at level 1.
+    pages = {'page_0001': ['目次', '幻想1 英語は世界の共通語である 13', '幻想2 ネイティブの英語が正しい 41'],
+             'page_0002': ['幻想3 英語は早く始めるほどよい 70', '主要参考・引用文献 240']}
+    body = 'ここからは私見です。この文書で英語の位置が語られます。'
+    for n in range(3, 23):
+        pages[f'page_{n:04d}'] = (['幻想1 英語は世界の共通語である'] if n == 3 else []) + [f'十見出し{n}', body]
+    for stem, lines in pages.items():
+        (tmp_path / f'{stem}.png').write_bytes(b'png')
+        (tmp_path / f'{stem}.txt').write_text('\n'.join(lines), encoding='utf-8')
+
+    def generate_content(model, contents, config):
+        stems = [part.split('"')[1] for part in contents if isinstance(part, str) and part.startswith('Page "')]
+        return SimpleNamespace(text=json.dumps([{'page': s, 'quotes': [], 'figures': [], 'art': [], 'code': [], 'titles':
+            [{'line': i, 'level': 1} for i, line in enumerate(pages[s]) if line != body]} for s in stems]))
+
+    monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
+    client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    assert mark_layout(tmp_path, client, sorted(tmp_path.glob('page_*.png'))) == []
+    read = lambda stem: (tmp_path / f'{stem}.txt').read_text(encoding='utf-8')
+    assert read('page_0001') == '# 目次\n\n幻想1 英語は世界の共通語である 13\n\n幻想2 ネイティブの英語が正しい 41'
+    assert read('page_0002') == '幻想3 英語は早く始めるほどよい 70\n\n主要参考・引用文献 240'
+    assert read('page_0003') == f'# 幻想1 英語は世界の共通語である\n\n## 見出し3\n\n{body}'
+    assert read('page_0004') == f'## 見出し4\n\n{body}'
+
+
 def test_gemini_s_daily_limit_is_not_waited_out_and_stops_after_writing_what_was_laid_out(tmp_path, monkeypatch):
     # 2026-10-10: the free tier's 500 requests a day ran out mid-list, and every later page failed its layout.
     for n in range(1, 31):
