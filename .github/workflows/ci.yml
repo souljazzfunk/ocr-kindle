@@ -36,3 +36,5 @@ jobs:
       - if: runner.os == 'macOS'
         run: python -m pip install -r requirements.txt
       - run: python -m pytest -q
+      - if: runner.os == 'Linux'
+        run: python3 scripts/rules.py CLAUDE.md
