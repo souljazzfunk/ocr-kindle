@@ -314,6 +314,13 @@ def test_a_book_cloud_reader_cannot_open_is_the_book_s_failure_not_the_browser_s
     assert capture_book.convert('B00S1MW0KM', 'For 91 Days In Tokyo', downloads=tmp_path)['blocking_failures'] == ['signed_out']
 
 
+def test_a_book_the_reader_opens_as_its_sample_fails_as_sample_only(tmp_path, monkeypatch):
+    # 2026-10-12: read.amazon.co.jp redirected the purchased 英語教育幻想 to /sample/B07G4SH6BV.
+    offer(monkeypatch, ('refused', 'sample: the reader showed the sample, not the purchased book (read.amazon.co.jp)'))
+    data = capture_book.convert('B07G4SH6BV', '英語教育幻想', downloads=tmp_path)
+    assert data['blocking_failures'] == ['sample_only'] and 'read.amazon.co.jp' in data['error']
+
+
 def test_a_stalled_or_unreached_capture_stops_with_its_own_check(tmp_path, monkeypatch):
     offer(monkeypatch, ('stalled', 'no page and no event for 5 minutes after 41 screens'))
     data = capture_book.convert('B07J4521M3', 'Python Crash Course', downloads=tmp_path)
@@ -340,3 +347,42 @@ def test_a_capture_lands_in_a_folder_named_by_the_list_title_and_its_version_is_
     offer(monkeypatch, ('done', '', 'Zero to Sold_ How to Start', 3), seen, version=capture_book.repo_version())
     capture_book.convert('B0ZERO', None, downloads=tmp_path)
     assert seen[-1][2] == tmp_path / 'B0ZERO' and ran[-1][-2:] == ['--title', 'Zero to Sold_ How to Start']
+
+
+def test_a_page_vision_finds_no_lines_on_is_read_by_live_text(tmp_path):
+    # 2026-10-12: Vision returned 0 lines on both vertical pages of 英語教育幻想; Live Text read them.
+    import img2txt
+    page = tmp_path / 'page_0001.png'
+    page.write_bytes(b'')
+    assert img2txt.vision_transcribe(page, read_lines=lambda image: [], read_livetext=lambda image: '英語教育は') == (
+        '英語教育は', 'livetext')
+    try:
+        img2txt.vision_transcribe(page, read_lines=lambda image: [], read_livetext=lambda image: '')
+        raise AssertionError('an empty page was marked done')
+    except RuntimeError as e:
+        assert str(e) == img2txt.NO_TEXT
+    assert img2txt.vision_transcribe(page, read_lines=lambda image: [(0.1, 0.1, 0.02, 'Hello world')],
+                                     read_livetext=lambda image: 'unused')[1] == 'vision'
+
+
+def test_live_text_failures_carry_its_message():
+    import subprocess
+    import img2txt
+    failed = lambda args, **kw: subprocess.CompletedProcess(args, 1, '', 'cannot read page.png')
+    try:
+        img2txt.livetext('page.png', run=failed, binary='livetext')
+        raise AssertionError('no error')
+    except RuntimeError as e:
+        assert str(e) == 'livetext: cannot read page.png'
+
+
+def test_the_live_text_tool_builds_on_a_mac(tmp_path):
+    import shutil
+    import sys
+    import pytest
+    import img2txt
+    if sys.platform != 'darwin' or not shutil.which('swiftc'):
+        pytest.skip('Live Text needs macOS and swiftc')
+    source = tmp_path / 'livetext.swift'
+    source.write_text(img2txt.LIVETEXT_SOURCE.read_text())
+    assert img2txt.livetext_binary(source) == tmp_path / 'livetext' and (tmp_path / 'livetext').exists()

@@ -83,7 +83,7 @@ def test_each_step_runs_one_stage_of_the_next_ready_book_in_list_order(home, mac
     assert [step(home, 'capture', lists=lists) for _ in range(6)] == [
         'captured: B1', 'captured: B2', 'captured: B3', 'captured: B4', 'captured: B5', 'nothing to do']
     assert json.loads((home / 'kindle' / 'B5' / 'book.json').read_text()) == {
-        'asin': 'B5', 'title': 'Five', 'domain': 'read.amazon.co.jp'}
+        'asin': 'B5', 'title': 'Five', 'domain': 'read.amazon.com'}
     assert [step(home, 'convert', lists=lists) for _ in range(3)] == ['converted: B1', 'published: B1', 'converted: B2']
     assert mac.log[-3:] == [('convert', 'B1', home / 'kindle' / 'B1' / 'pages'), ('publish', 'One'),
                             ('convert', 'B2', home / 'kindle' / 'B2' / 'pages')]

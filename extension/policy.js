@@ -4,7 +4,8 @@
 // the opening screen (0): earlier ones -1, -2, ... and later ones 1, 2, ..., so reading order is the numeric order.
 //
 // observation: { position: {n, m} | null, sha: string | null, appOnly: bool, signedOut: bool }
-// action: 'save' (state.n is the screen's number; call again with the same observation), 'turn:prev', 'turn:next',
+// action: 'save' (state.n is the screen's number; call again with the same observation), 'wait' (observe again after a
+// second), 'turn:prev', 'turn:next',
 // 'done:<proof>' or 'fail:<reason>'.
 
 const NEXT_ATTEMPTS = 3; // Cloud Reader occasionally ignores a turn, so an edge is 3 turns that leave the image unchanged
@@ -17,11 +18,14 @@ const UNKNOWN_LENGTH = 3000;
 // A turn onto a screen not seen before is progress even when the page number stays: Facing the Mountain's notes run
 // for more than 30 screens all numbered 540 of 540.
 const STUCK_TURNS = 30;
+// A turn can land before the next page image is in place: 英語教育幻想 failed with "no page image" on its third screen
+// (2026-10-12). A screen without an image is observed again, once a second, this many times before the capture fails.
+const IMAGE_WAITS = 10;
 const APP_ONLY_REASON = 'kindle app required: Cloud Reader cannot open this book';
 
 function initialState() {
   return { phase: 'back', saved: {}, low: 1, high: 0, n: null, last: null, pending: false, tries: 0, turns: 0, limit: 0,
-    page: null, same: 0, opened: '', start: '' };
+    page: null, same: 0, waits: 0, opened: '', start: '' };
 }
 
 const limitFor = (position) => TURNS_PER_PAGE * (position?.m || UNKNOWN_LENGTH) + EXTRA_TURNS;
@@ -52,7 +56,9 @@ function nextAction(state, observation) {
   const { position, sha, appOnly, signedOut } = observation;
   if (appOnly) return fail(state, APP_ONLY_REASON);
   if (signedOut) return fail(state, 'signed out of Cloud Reader');
-  if (!sha) return fail(state, 'no page image');
+  if (!sha && (state.last === null || state.waits >= IMAGE_WAITS)) return fail(state, `no page image${state.waits ? ` after ${state.waits} s` : ''}`);
+  if (!sha) return { state: { ...state, waits: state.waits + 1 }, action: 'wait' };
+  if (state.waits) state = { ...state, waits: 0 };
   if (state.last === null) return save({ ...state, opened: where(position), limit: limitFor(position) }, sha);
   if (state.pending) return turn({ ...state, pending: false });
 
@@ -74,5 +80,5 @@ function nextAction(state, observation) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { initialState, nextAction, NEXT_ATTEMPTS, TURNS_PER_PAGE, EXTRA_TURNS, UNKNOWN_LENGTH, STUCK_TURNS, APP_ONLY_REASON };
+  module.exports = { initialState, nextAction, NEXT_ATTEMPTS, TURNS_PER_PAGE, EXTRA_TURNS, UNKNOWN_LENGTH, STUCK_TURNS, IMAGE_WAITS, APP_ONLY_REASON };
 }

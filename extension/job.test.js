@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { pollStep, readerUrl, RELOAD_GAP_MS } = require('./job.js');
+const { pollStep, handOut, isSample, readerUrl, RELOAD_GAP_MS } = require('./job.js');
 
 const job = { id: 'j1', kind: 'capture', asin: 'B07HNMJV57', domain: 'read.amazon.com', recapture: false };
 const running = { job, tabId: 7, windowId: 3, handed: true };
@@ -29,4 +29,19 @@ test('a job the channel dropped or replaced ends; an unreachable channel changes
 test('the worker opens the book or the library on the job domain', () => {
   assert.strictEqual(readerUrl(job), 'https://read.amazon.com/?asin=B07HNMJV57');
   assert.strictEqual(readerUrl({ kind: 'library', domain: 'read.amazon.co.jp' }), 'https://read.amazon.co.jp/kindle-library');
+});
+
+test('a job tab that reloads before sending a page gets its job again; after a page it gets none', () => {
+  const opened = { job, tabId: 7, windowId: 3, handed: false };
+  assert.strictEqual(handOut(opened, 7), job);
+  assert.strictEqual(handOut({ ...opened, handed: true }, 7), job); // read.amazon.co.jp redirected to the sample
+  assert.strictEqual(handOut({ ...opened, handed: true, started: true }, 7), null);
+  assert.strictEqual(handOut(opened, 8), null);
+  assert.strictEqual(handOut(null, 7), null);
+});
+
+test('the sample reader is told apart from the book', () => {
+  assert.strictEqual(isSample('https://read.amazon.co.jp/sample/B07G4SH6BV'), true);
+  assert.strictEqual(isSample('https://read.amazon.co.jp/kindle-library/sample/B07G4SH6BV?ref_=kfw_samples_to_litb'), true);
+  assert.strictEqual(isSample('https://read.amazon.com/?asin=B07G4SH6BV'), false);
 });

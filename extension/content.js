@@ -9,9 +9,19 @@ const LIBRARY_WAIT_MS = 30000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const toWorker = (message) => chrome.runtime.sendMessage(message).catch((e) => ({ ok: false, reason: String(e) }));
 
+// The full-book reader draws a page as a blob <img> or, on other openings of the same book, into the one <canvas> under
+// .kg-full-page-img (英語教育幻想 on read.amazon.com, 2026-10-12: img at positions 92 and 82, canvas at 81; toDataURL works).
 function pageImage() {
-  return [...document.querySelectorAll('img[src^="blob:"]')]
-    .find((img) => img.getBoundingClientRect().width > 200);
+  return [...document.querySelectorAll('img[src^="blob:"], .kg-full-page-img canvas')]
+    .find((el) => el.getBoundingClientRect().width > 200);
+}
+
+// What changes when the reader shows another page: the img's blob URL, or for a canvas, its pixels.
+function surfaceKey(el) {
+  if (!el) return null;
+  if (el.tagName !== 'CANVAS') return el.src;
+  const data = el.toDataURL('image/png');
+  return `${data.length}:${data.slice(data.length >> 1, (data.length >> 1) + 64)}`;
 }
 
 function bookTitle(asin) {
@@ -40,6 +50,7 @@ function press(label) {
 }
 
 async function pngOf(img) {
+  if (img.tagName === 'CANVAS') return img.toDataURL('image/png');
   await img.decode();
   const canvas = document.createElement('canvas');
   canvas.width = img.naturalWidth;
@@ -59,13 +70,13 @@ async function observe() {
   const text = document.body.innerText;
   const png = img ? await pngOf(img) : null;
   return { position: parsePosition(text), sha: png ? await sha256(png) : null, appOnly: appOnly(text),
-    signedOut: signedOut(document), src: img?.src ?? null, png };
+    signedOut: signedOut(document), key: surfaceKey(img), png };
 }
 
-async function waitForTurn(prevSrc) {
-  for (let t = 0; t < PAGE_WAIT_MS; t += 100) {
-    if (pageImage()?.src !== prevSrc) return;
-    await sleep(100);
+async function waitForTurn(prevKey) {
+  for (let t = 0; t < PAGE_WAIT_MS; t += 300) {
+    if (surfaceKey(pageImage()) !== prevKey) return;
+    await sleep(300);
   }
 }
 
@@ -96,9 +107,12 @@ async function capture(job) {
       const sent = await toWorker({ kc: 'page', job: job.id, n: state.n, png: seen.png, position: positions[state.n],
         text: pageMarkdown(), sha });
       if (!sent?.ok) return; // the channel dropped the job; it reports the stall itself
+    } else if (action === 'wait') {
+      await sleep(1000);
+      seen = await observe();
     } else if (action.startsWith('turn:')) {
       press(action === 'turn:prev' ? 'Previous page' : 'Next page');
-      await waitForTurn(seen.src);
+      await waitForTurn(seen.key);
       seen = await observe();
     } else {
       const reason = action.slice(action.indexOf(':') + 1);
@@ -122,7 +136,7 @@ async function scanLibrary(job) {
   let probe;
   try { probe = probePage(document); } catch (e) { probe = { error: String(e) }; }
   return toWorker({ kc: 'event', event: { job: job.id, type: 'library', domain: location.hostname,
-    books: parseLibraryGuess(document), probe } });
+    ...parseLibrary(document), probe } });
 }
 
 (async () => {

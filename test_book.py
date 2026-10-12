@@ -8,9 +8,10 @@ import book
 def test_both_lists_make_one_ordered_list_with_each_book_once(tmp_path):
     (tmp_path / 'books.tsv').write_text('# asin\ttitle\nB1\tOne\n\nB2\t二\tread.amazon.co.jp\n')
     (tmp_path / 'library-read.amazon.co.jp.json').write_text(json.dumps(
-        {'books': [{'asin': 'B3', 'title': ' Three '}, {'asin': 'B1', 'title': 'Other'}, {'title': 'no asin'}]}))
+        {'books': [{'asin': 'B3', 'title': ' Three '}, {'asin': 'B1', 'title': 'Other'}, {'title': 'no asin'},
+                   {'asin': 'B4', 'title': 'Sample', 'resourceType': 'EBOOK_SAMPLE'}, {'asin': 'B5', 'manga': True}]}))
     assert book.read_lists([tmp_path / 'books.tsv', tmp_path / 'library-read.amazon.co.jp.json', tmp_path / 'gone.tsv']) == [
-        ('B1', 'One', 'read.amazon.com'), ('B2', '二', 'read.amazon.co.jp'), ('B3', 'Three', 'read.amazon.co.jp')]
+        ('B1', 'One', 'read.amazon.com'), ('B2', '二', 'read.amazon.co.jp'), ('B3', 'Three', 'read.amazon.com')]
 
 
 def test_a_book_folder_goes_from_ready_to_done_through_its_stages(tmp_path):

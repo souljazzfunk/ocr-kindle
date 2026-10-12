@@ -235,11 +235,16 @@ def read_tsv(path):
     return books
 
 
+# read.amazon.co.jp lists the Japanese purchases but opens each one as its sample; read.amazon.com opens the whole
+# book (英語教育幻想, 2026-10-12). Every listed book is read on .com, whichever library listed it.
+READER = 'read.amazon.com'
+
+
 def read_library(path):
-    """(asin, title, domain) per book of a `library-<domain>.json` written by `channel.py library`."""
-    domain = Path(path).stem.removeprefix('library-')
-    return [(b['asin'], (b.get('title') or '').strip(), domain) for b in (read_json(path) or {}).get('books') or []
-            if b.get('asin')]
+    """(asin, title, domain) per book of a `library-<domain>.json` written by `channel.py library`; domain is the
+    reader that opens the whole book, not the library's. Samples and manga are left out, as in the 2026-10-10 list."""
+    return [(b['asin'], (b.get('title') or '').strip(), READER) for b in (read_json(path) or {}).get('books') or []
+            if b.get('asin') and b.get('resourceType') != 'EBOOK_SAMPLE' and not b.get('manga')]
 
 
 def read_lists(lists):

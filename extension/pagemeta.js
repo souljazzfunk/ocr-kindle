@@ -70,21 +70,24 @@ function signedOut(doc) {
   return /\/ap\/signin/.test(doc.location.pathname) || Boolean(doc.querySelector('input[type="password"]'));
 }
 
-const ASIN = /\b(B0[0-9A-Z]{8})\b/;
-
-// Books on the library page as { asin, title }. Its structure has not been recorded yet, so this reads every element
-// that carries an ASIN in an attribute, and the library event also sends probePage's record to fix it from.
-function parseLibraryGuess(doc) {
-  const books = new Map();
-  for (const el of doc.querySelectorAll('[data-asin], [id*="B0"], a[href*="asin="]')) {
-    const asin = ['data-asin', 'id', 'href'].map((name) => ASIN.exec(el.getAttribute(name) || '')?.[1]).find(Boolean);
-    if (!asin) continue;
-    const image = el.querySelector('img[alt]');
-    const title = [el.getAttribute('aria-label'), el.getAttribute('title'), image?.getAttribute('alt'), el.textContent]
-      .map((text) => (text || '').trim()).find(Boolean) || '';
-    if (!books.has(asin) || (!books.get(asin).title && title)) books.set(asin, { asin, title: title.slice(0, 200) });
+// The library page carries its list as JSON in #itemViewResponse (read.amazon.co.jp, 2026-10-12): itemsList of
+// { asin, title, authors, resourceType (EBOOK | EBOOK_SAMPLE), originType, mangaOrComicAsin, ... } and a paginationToken.
+// It holds the 50 most recent books; the page loads more through its own getLibrary call, not by scrolling.
+function parseLibrary(doc) {
+  let data;
+  try {
+    data = JSON.parse(doc.querySelector('#itemViewResponse')?.textContent || 'null');
+  } catch (e) {
+    return { books: [], error: String(e) };
   }
-  return [...books.values()];
+  const books = (data?.itemsList || []).filter((item) => item.asin).map((item) => ({
+    asin: item.asin,
+    title: (item.title || '').trim(),
+    authors: (item.authors || []).map((a) => a.replace(/:+$/, '').trim()),
+    resourceType: item.resourceType || '',
+    manga: Boolean(item.mangaOrComicAsin),
+  }));
+  return { books, paginationToken: data?.paginationToken ?? null };
 }
 
-if (typeof module !== 'undefined') module.exports = { pickTitle, probePage, parsePosition, appOnly, signedOut, parseLibraryGuess };
+if (typeof module !== 'undefined') module.exports = { pickTitle, probePage, parsePosition, appOnly, signedOut, parseLibrary };

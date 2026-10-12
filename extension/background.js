@@ -71,6 +71,7 @@ async function tick() {
 
 async function forward(message, active) {
   if (message.kc === 'page') {
+    if (!active.started) await storeActive({ ...active, started: true });
     const png = await (await fetch(message.png)).blob();
     const text = btoa(Array.from(new TextEncoder().encode(message.text || ''), (b) => String.fromCharCode(b)).join(''));
     await post(`/page?job=${message.job}&n=${message.n}`, { body: png, headers: {
@@ -87,9 +88,10 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     const mine = active && active.tabId === sender.tab?.id;
     if (message.kc === 'job') {
       if (opening) return null;
-      if (!mine || active.handed) return { none: true }; // a reload of the job's tab does not start it twice
+      const job = handOut(active, sender.tab?.id);
+      if (!job) return { none: true };
       await storeActive({ ...active, handed: true });
-      return active.job;
+      return job;
     }
     if (!mine) return { ok: false, reason: 'not the job tab' };
     try {
@@ -114,6 +116,7 @@ async function abandon(tabId, reason) {
 chrome.tabs.onRemoved.addListener((tabId) => abandon(tabId, 'the reader tab was closed'));
 chrome.tabs.onUpdated.addListener((tabId, info) => {
   if (info.url && /\/ap\/signin/.test(info.url)) abandon(tabId, 'signed out of Amazon: the reader went to the sign-in page');
+  else if (info.url && isSample(info.url)) abandon(tabId, `sample: the reader showed the sample, not the purchased book (${new URL(info.url).hostname})`);
 });
 
 chrome.alarms.onAlarm.addListener(tick);
