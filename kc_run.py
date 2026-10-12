@@ -27,6 +27,9 @@ HERE = Path(__file__).resolve().parent
 IDLE_S = 60  # with nothing to do, or paused, a step waits this long before it exits and launchd starts the next
 
 
+AHEAD = 2
+
+
 def pull_main(checkout=HERE, git=None):
     """Pull main. Returns None, or why the checkout cannot follow main (local changes stand in the way)."""
     git = git or (lambda *args: subprocess.run(['git', '-C', str(checkout), *args], capture_output=True, text=True))
@@ -126,8 +129,15 @@ def step(job, root=ROOT, lists=None, downloads=Path.home() / 'Downloads', model=
         return f'paused: {pause["reason"]}'
     config = capture_book.load_config() if config is None else config
     options = argparse.Namespace(model=model, now=moment, config=config)
-    for book in listed:
-        state = book.state(current)
+    states = [(book, book.state(current)) for book in listed]
+    # A book is timed from its first capture to Drive. How to Write a Lot (2026-10-12) took 85 minutes for 5 minutes of
+    # work, waiting behind captured books for the convert job; so a new capture waits while two new books do.
+    waiting = sum(isinstance(s, Ready) and s.stage not in JOBS['capture'] and (b.folder / 'start.json').exists()
+                  and not b.record('publish') for b, s in states)
+    if job == 'capture' and waiting >= AHEAD:
+        sleep(IDLE_S)
+        return 'waiting for the convert job'
+    for book, state in states:
         if isinstance(state, Ready) and state.stage in JOBS[job]:
             print(f'=== {state.stage}{" again" if state.recapture else ""}: {book.title or book.asin} ({book.asin})',
                   flush=True)

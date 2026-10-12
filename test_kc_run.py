@@ -80,8 +80,8 @@ def test_each_step_runs_one_stage_of_the_next_ready_book_in_list_order(home, mac
     library = home / 'library-read.amazon.co.jp.json'
     library.write_text(json.dumps({'books': [{'asin': 'B5', 'title': 'Five'}, {'asin': 'B1', 'title': 'Again'}]}))
     lists = [home / 'books.tsv', library]
-    assert [step(home, 'capture', lists=lists) for _ in range(6)] == [
-        'captured: B1', 'captured: B2', 'captured: B3', 'captured: B4', 'captured: B5', 'nothing to do']
+    assert [step(home, 'capture', lists=lists) for _ in range(3)] == [
+        'captured: B1', 'captured: B2', 'waiting for the convert job']
     assert json.loads((home / 'kindle' / 'B5' / 'book.json').read_text()) == {
         'asin': 'B5', 'title': 'Five', 'domain': 'read.amazon.com'}
     assert [step(home, 'convert', lists=lists) for _ in range(3)] == ['converted: B1', 'published: B1', 'converted: B2']
@@ -327,3 +327,14 @@ def test_a_book_parked_for_its_capture_by_the_checks_is_captured_again_once_the_
     edit(home, 'extension/background.js')
     assert step(home, 'capture') == 'captured: B1'
     assert mac.log[-1] == ('capture', 'B1', True)
+
+
+def test_the_capture_job_stays_at_most_two_new_books_ahead_of_the_convert_job(home, mac):
+    # 2026-10-12: How to Write a Lot took 85 minutes from its first capture to Drive for about 5 minutes of work; the
+    # rest it waited behind captured books for the convert job. A book is timed from its first capture, so the capture
+    # job captures the next new book only while at most one new book waits for convert or publish.
+    assert [step(home, 'capture') for _ in range(3)] == ['captured: B1', 'captured: B2', 'waiting for the convert job']
+    assert step(home, 'convert') == 'converted: B1'
+    assert step(home, 'capture') == 'waiting for the convert job'
+    assert step(home, 'convert') == 'published: B1'
+    assert step(home, 'capture') == 'captured: B3'
