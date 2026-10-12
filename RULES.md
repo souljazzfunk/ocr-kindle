@@ -19,7 +19,7 @@
 | アプリの読み終わり画面は、最後の画像ごと捨てて Escape で閉じる | `capture_app.py` の `end_sheet_shown`、`test_capture_app.py::test_the_end_of_book_sheet_is_closed_and_its_image_dropped_after_a_capture`（F059） |
 | アプリのライブラリに戻るのは Close Book ボタンだけ。File > Close や Cmd+W は使わない | `capture_app.py`、`test_capture_app.py::test_a_reader_left_open_is_closed_with_its_close_book_button_never_file_close`（F059） |
 | 本は 1 ページ目から最後まで取り込む。開いた位置からそのまま取り込まない | `extension/policy.js`、`extension/policy.test.js::opened mid-book: pages back to page 1 saving each screen, then forward past them to the end`、`test_check_book.py::test_a_capture_that_began_mid_book_is_caught`（F007） |
-| 始まりと終わりの位置が記録されていない取り込みは落とす。記録なしを通さない | `check_book.py` の `check_folder`、`test_check_book.py::test_a_capture_with_no_recorded_start_or_end_fails_both`（F126） |
+| 始まりと終わりの位置が記録されていない取り込みは落とす。記録なしを通さない | `check_book.py` の `check_folder`、`test_check_book.py::test_a_capture_with_no_recorded_start_or_end_fails_both`（F128） |
 | 先頭から遠くで開いた本は、最初にスクラバーで先頭へ跳ぶ。本を丸ごと逆にめくらない | `policy.js` の `JUMP_FROM`、`extension/main.js`、`extension/policy.test.js::a book opened far from its start jumps to the start before it saves anything, and pages back as before when the jump does not move it`（F107） |
 | 前のページのボタンで戻れなくなったら矢印キーで戻り、止まった画面を記録する | `extension/policy.js`、`extension/policy.test.js::a reader stuck on Previous page pages back by the left arrow key`、`test_channel.py::test_the_screen_where_a_capture_stopped_is_kept_beside_the_trace`（F076） |
 | 戻るはずのめくりで先のページに出たら、次の手（左キー、右キー）に替え、その画面は保存しない | `extension/policy.js` の `WAYS`、`extension/policy.test.js::a book read right to left, whose left arrow key turns forward, pages back by the right arrow key`（F093） |
@@ -53,7 +53,7 @@
 | main に入った修正は、人に頼まず次の 1 歩から使う | `kc_run.py`、`test_kc_run.py::test_main_is_pulled_each_step_and_local_changes_pause_the_job_with_gits_message`（F022） |
 | 拡張の再読み込みを人に頼まない。版が変われば拡張が自分で読み込み直す | `extension/job.js` の `pollStep`、`extension/job.test.js::an idle worker on another version than the checkout reloads itself, at most once a minute`（F022） |
 | 取り込めた本は取り直さない。通った本は変換のコードが変わってもやり直さない | `book.py` の `Book.state`、`test_kc_run.py::test_a_passed_book_stays_done_when_the_converter_changes_and_a_capture_is_not_redone`（F036） |
-| 止まった本は、その検査のコードが変わったときだけやり直す | `book.py` の `touch_of`、`test_kc_run.py::test_a_parked_check_and_its_pause_rerun_only_when_that_check_s_code_changes`、`test_book.py::test_a_checks_code_is_the_functions_that_decide_it`（F125） |
+| 止まった本は、その検査のコードが変わったときだけやり直す | `book.py` の `touch_of`、`test_kc_run.py::test_a_parked_check_and_its_pause_rerun_only_when_that_check_s_code_changes`、`test_book.py::test_a_checks_code_is_the_functions_that_decide_it`（F127） |
 | 一覧の進み具合は本のフォルダから出し、別のファイルに写さない | `book.py`、`test_kc_run.py::test_books_progress_json_is_carried_over_once_and_stale_results_are_redone`（F020 F031） |
 | 1 冊のフォルダに同時に書くのは 1 つの変換だけ。checkout の git も 1 つずつ | `locks.py`、`test_locks.py::test_a_second_run_on_the_same_book_waits_for_the_first`、`test_locks.py::test_git_calls_on_the_checkout_wait_for_each_other_as_on_2026_10_11`（F038） |
 | 1 冊を変換している間に次の本を取り込む。2 つの仕事は同じファイルに書かない | `kc_run.py`、`test_kc_run.py::test_the_convert_job_makes_no_book_folders`、`test_kc_run.py::test_the_launchd_jobs_run_one_step_of_each_job_and_are_started_again`（F063） |
