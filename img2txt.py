@@ -498,6 +498,11 @@ def main():
               + (f'; {len(left)} left, run again to retry' if left else ''), flush=True)
     elif vision:
         print(f'GEMINI_API_KEY is not set in {CONFIG_PATH} and claude is not installed: {len(vision)} Vision pages keep titles guessed from layout')
+    # Live Text pages already laid out are written again from layout.json, with no request: a new livetext_markdown
+    # (section marks, contents pages) then reaches books converted before it.
+    kept = [img for img in images if sources.get(img.stem) == LIVETEXT and img.stem in done and img not in vision]
+    if kept:
+        mark_layout(args.folder, None, kept)
 
     write_book(args.folder, args.title or args.folder.resolve().name)
 
