@@ -8,7 +8,7 @@
 // second), 'turn:prev', 'turn:prev-key' (the left arrow key instead of the button), 'turn:prev-key-right' (the right
 // arrow key, for a book read right to left), 'turn:next', 'turn:next-key' (the right arrow key), 'turn:next-key-left'
 // (the left arrow key, for a book read right to left),
-// 'done:<proof>' or 'fail:<reason>'.
+// 'jump:start' (the scrubber to the book's first page, then observe again), 'done:<proof>' or 'fail:<reason>'.
 
 const NEXT_ATTEMPTS = 3; // Cloud Reader occasionally ignores a turn, so an edge is 3 turns that leave the image unchanged
 // Caps on page turns, each direction counted on its own. On 2026-10-10 Automate the Boring Stuff (552 pages, opened at
@@ -23,11 +23,16 @@ const STUCK_TURNS = 30;
 // A turn can land before the next page image is in place: 英語教育幻想 failed with "no page image" on its third screen
 // (2026-10-12). A screen without an image is observed again, once a second, this many times before the capture fails.
 const IMAGE_WAITS = 10;
+// Paging back a whole book is slow and the reader stops going back partway: opened near the end, Python Crash Course,
+// The History of Jazz and Steve Jobs (2026-10-12) each stuck about halfway back, where neither Previous page nor the left
+// arrow key moved them. A book opened further in than this first jumps to its start with the reader's scrubber
+// (main.js); if the jump does not move it, it pages back as before.
+const JUMP_FROM = 10;
 const APP_ONLY_REASON = 'kindle app required: Cloud Reader cannot open this book';
 
 function initialState() {
   return { phase: 'back', saved: {}, low: 1, high: 0, n: null, last: null, pending: false, tries: 0, turns: 0, limit: 0,
-    page: null, pages: null, same: 0, waits: 0, keyed: false, opened: '', openedAt: null, start: '' };
+    page: null, pages: null, same: 0, waits: 0, keyed: false, jumped: null, opened: '', openedAt: null, start: '' };
 }
 
 const limitFor = (position) => TURNS_PER_PAGE * (position?.m || UNKNOWN_LENGTH) + EXTRA_TURNS;
@@ -78,7 +83,11 @@ function nextAction(state, observation) {
   if (!sha && (state.last === null || state.waits >= IMAGE_WAITS)) return fail(state, `no page image${state.waits ? ` after ${state.waits} s` : ''}`);
   if (!sha) return { state: { ...state, waits: state.waits + 1 }, action: 'wait' };
   if (state.waits) state = { ...state, waits: 0 };
-  if (state.last === null) return save({ ...state, opened: where(position), openedAt: position ? position.n : null, page: position ? position.n : null, pages: position ? position.m : null, limit: limitFor(position) }, sha);
+  if (state.last === null && state.jumped === null && position && position.n > JUMP_FROM) {
+    return { state: { ...state, jumped: where(position) }, action: 'jump:start' };
+  }
+  const opened = state.jumped && state.jumped !== where(position) ? `${state.jumped}, jumped to ${where(position)}` : where(position);
+  if (state.last === null) return save({ ...state, opened, openedAt: position ? position.n : null, page: position ? position.n : null, pages: position ? position.m : null, limit: limitFor(position) }, sha);
   if (state.pending) return turn({ ...state, pending: false });
 
   const turns = state.turns + 1;

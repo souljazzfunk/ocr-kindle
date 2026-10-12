@@ -119,6 +119,11 @@ async function capture(job) {
     } else if (action === 'wait') {
       await sleep(1000);
       seen = await observe();
+    } else if (action === 'jump:start') {
+      window.postMessage({ kc: 'jump-start' }, location.origin);
+      await waitForTurn(seen.key, KEY_WAIT_MS);
+      await sleep(1000); // the footer can still show the old page when the new image is in
+      seen = await observe();
     } else if (action in ARROW_KEYS) {
       pressKey(ARROW_KEYS[action]);
       await waitForTurn(seen.key, KEY_WAIT_MS);
