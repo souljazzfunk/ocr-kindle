@@ -44,7 +44,9 @@ REFUSALS = (('kindle app required', APP_ONLY), ('signed out', SIGNED_OUT), ('sam
 GEMINI_CHECK = 'gemini'
 # The longest each step of one book may take, per screen or page so a long book keeps the same pace as a short one.
 # 2026-10-12: the redesign was planned and shipped without timing a single step, so nobody could say it got faster.
-BUDGETS = {'reach': 60, 'capture_per_screen': 1.5, 'ocr_per_page': 2.0, 'checks_per_page': 0.5}
+# About twice 英語教育幻想's pace on extension 2.3: 0.37 to 0.47 s a screen, OCR 0.39 s and the checks 0.23 s a page.
+# The Kindle app turned 1.26 to 1.29 s a screen, so it would fail this budget.
+BUDGETS = {'reach': 60, 'capture_per_screen': 1.0, 'ocr_per_page': 1.0, 'checks_per_page': 0.5}
 PYTHON = sys.executable
 HERE = Path(__file__).resolve().parent
 # The LLM wiki's watcher (llm-wiki/scripts/watch.sh). It takes only books whose report.json passed.
