@@ -423,54 +423,234 @@ def test_an_exhausted_provider_stays_out_until_its_reset(tmp_path, monkeypatch):
     assert calls[0] == 'claude'
 
 
-def test_a_missing_openrouter_model_moves_on_to_the_next_provider(tmp_path, monkeypatch):
-    # qwen/qwen3.8-27b:free left OpenRouter's list. A 404, or a model that cannot take an image, is that
-    # provider being out: the next free model is tried, then the next provider. The convert job is not paused.
-    assert layout.failure_kind('404 No endpoints found for qwen/qwen3.8-27b:free') == 'unavailable'
+def _one_page(folder):
+    folder.mkdir(exist_ok=True)
+    image = folder / 'page_0001.png'
+    image.write_bytes(b'png')
+    (folder / 'page_0001.lines.json').write_text(json.dumps([[0.1, 0.1, 0.03, 'A TITLE']] + BODY))
+    return image
+
+
+def _page_reply(body):
+    texts = []
+    for message in body.get('messages') or []:
+        content = message.get('content')
+        if isinstance(content, str):
+            texts.append(content)
+        elif isinstance(content, list):
+            texts += [part.get('text', '') for part in content if isinstance(part, dict)]
+    stems = re.findall(r'Page "([^"]+)"', '\n'.join(texts))
+    pages = [{'page': stem, 'titles': [{'line': 0, 'level': 2}], 'quotes': [], 'figures': [], 'art': [], 'code': []}
+             for stem in stems]
+    return {'model': body.get('model'), 'choices': [{'message': {'content': json.dumps({'pages': pages})}}]}
+
+
+def test_openrouter_is_not_a_layout_provider():
+    # Free Gemma models 404 once providers that train on prompts are turned off, so OpenRouter is not asked.
+    assert 'openrouter' not in layout.PROVIDERS
+    with pytest.raises(RuntimeError, match='Unknown layout provider openrouter'):
+        layout.provider_order({'LAYOUT_PROVIDERS': 'openrouter,ollama'}, cli=None, client=None, ollama=False)
+    assert layout.failure_kind('404 No endpoints found') == 'unavailable'
     assert layout.failure_kind('400 image input not supported') == 'unavailable'
-    assert layout.openrouter_models({}) == list(layout.OPENROUTER_MODELS)
-    asked = []
-    fallback_fails = {'on': False}
+
+
+def test_a_short_limit_is_retried_and_a_daily_quota_waits(tmp_path, monkeypatch):
+    # Mistral 1300 is a per-minute limit. GLM 1305 is a brief overload. Neither is the day's quota, so the
+    # request is retried and the provider is set aside only after those retries, for a short cooldown.
+    mistral = '429 {"code":"1300","message":"Rate limit exceeded"}'
+    glm = '429 {"code":"1305","message":"The service may be temporarily overloaded"}'
+    daily = '429 RESOURCE_EXHAUSTED quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier'
+    assert layout.failure_kind(mistral) == 'rate'
+    assert layout.failure_kind(glm) == 'rate'
+    assert layout.failure_kind(daily) == 'quota'
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    now = 1_700_000_000
+    assert layout.block_until('mistral', 'rate', now, mistral) == now + layout.RATE_RESET_S
+    assert layout.block_until('glm', 'rate', now, glm) == now + layout.RATE_RESET_S
+    # A long retryDelay on a per-minute error is still a short cooldown, not the daily reset.
+    long = mistral + " 'retryDelay': '86384s'"
+    assert layout.failure_kind(long) == 'rate'
+    assert layout.block_until('mistral', 'rate', now, long) == now + layout.RATE_RESET_S
+    assert layout.retry_pause(RuntimeError(long), 0, lambda: 0) == layout.RETRY_AFTER_CAP_S
+    pacific = ZoneInfo('America/Los_Angeles')
+    midnight = (datetime.fromtimestamp(now, pacific).replace(
+        hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).timestamp()
+    assert layout.block_until('gemini', 'quota', now, daily) == midnight
+    assert layout.retry_pause(RuntimeError(mistral + ' Retry-After: 12'), 0, lambda: 0) == 12
+    assert layout.retry_pause(RuntimeError(glm), 0, lambda: 0) == 0.5
+    assert layout.retry_pause(RuntimeError(glm), 3, lambda: 0) == 4
+
+    sleeps = []
+    monkeypatch.setattr(layout.time, 'sleep', lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(layout, 'jitter', lambda: 0)
+
+    def boom():
+        raise RuntimeError(daily)
+
+    with pytest.raises(RuntimeError, match='PerDay'):
+        layout.call_retrying(boom)
+    assert sleeps == []
+
+    import io
+    import urllib.error
+    from email.message import Message
+    hdrs = Message()
+    hdrs['Retry-After'] = '12'
+    http_error = urllib.error.HTTPError(
+        layout.MISTRAL_URL, 429, 'Too Many Requests', hdrs,
+        io.BytesIO(b'{"code":"1300","message":"Rate limit exceeded"}'))
+
+    def urlopen(req, timeout=0):
+        raise http_error
+
+    monkeypatch.setattr(layout.urllib.request, 'urlopen', urlopen)
+    with pytest.raises(RuntimeError) as kept:
+        layout.http_json(layout.MISTRAL_URL, {}, {})
+    assert kept.value.retry_after == '12'
+    assert 'Retry-After: 12' in str(kept.value)
+    assert layout.failure_kind(kept.value) == 'rate'
+    assert layout.retry_pause(kept.value, 0, lambda: 0) == 12
+
+    calls = []
 
     def http_json(url, body, headers, timeout=180):
-        model = body.get('model')
-        asked.append(model)
-        if '11434' in url:
-            page = {'page': 'page_0001', 'titles': [{'line': 0, 'level': 2}], 'quotes': [], 'figures': [], 'art': [], 'code': []}
-            return {'model': model, 'message': {'content': json.dumps({'pages': [page]})}}
-        if model == layout.OPENROUTER_MODELS[0]:
-            raise RuntimeError('404 No endpoints found')
-        if fallback_fails['on']:
-            raise RuntimeError('400 {"error":{"message":"image input not supported"}}')
-        page = {'page': 'page_0001', 'titles': [{'line': 0, 'level': 2}], 'quotes': [], 'figures': [], 'art': [], 'code': []}
-        return {'model': model, 'choices': [{'message': {'content': json.dumps({'pages': [page]})}}]}
-
-    def book(folder):
-        folder.mkdir()
-        (folder / 'page_0001.png').write_bytes(b'png')
-        (folder / 'page_0001.lines.json').write_text(json.dumps([[0.1, 0.1, 0.03, 'A TITLE']] + BODY))
+        calls.append(url)
+        if len(calls) == 1:
+            raise RuntimeError(mistral + ' Retry-After: 12')
+        return _page_reply(body)
 
     monkeypatch.setattr(layout, 'http_json', http_json)
-    monkeypatch.setattr(layout, 'ollama_ready', lambda config=None: True)
-    config = {'OPENROUTER_API_KEY': 'key', 'LAYOUT_PROVIDERS': 'openrouter,ollama'}
-    one = tmp_path / 'one'
-    book(one)
-    assert mark_layout(one, None, [one / 'page_0001.png'], config=config) == []
-    assert asked == list(layout.OPENROUTER_MODELS)
-    assert read_layout(one)['page_0001']['model'] == layout.OPENROUTER_MODELS[1]
-    asked.clear()
-    fallback_fails['on'] = True
-    two = tmp_path / 'two'
-    book(two)
-    assert mark_layout(two, None, [two / 'page_0001.png'], config=config) == []
-    assert asked == [*layout.OPENROUTER_MODELS, layout.OLLAMA_MODEL]
-    assert read_layout(two)['page_0001']['provider'] == 'ollama'
+    folder = tmp_path / 'retried'
+    assert mark_layout(folder, None, [_one_page(folder)], config={'MISTRAL_API_KEY': 'key'}, now=now) == []
+    assert calls == [layout.MISTRAL_URL, layout.MISTRAL_URL]
+    assert sleeps == [12]
+    assert read_layout(folder)['page_0001']['provider'] == 'mistral'
+    assert not (tmp_path / 'layout-providers.json').exists()
+
+    sleeps.clear()
+    calls.clear()
+
+    def always(url, body, headers, timeout=180):
+        calls.append(url)
+        raise RuntimeError(mistral)
+
+    monkeypatch.setattr(layout, 'http_json', always)
+    spent = tmp_path / 'spent'
+    import book
+    with pytest.raises(layout.GeminiFailed, match='1 pages left') as caught:
+        mark_layout(spent, None, [_one_page(spent)], config={'MISTRAL_API_KEY': 'key'}, now=now)
+    assert calls == [layout.MISTRAL_URL] * layout.RATE_ATTEMPTS
+    assert sleeps == [0.5, 1, 2, 4]
+    state = json.loads((tmp_path / 'layout-providers.json').read_text())
+    assert state['mistral']['kind'] == 'rate'
+    assert state['mistral']['until'] == now + layout.RATE_RESET_S
+    assert 'midnight Pacific' not in str(caught.value)
+    assert book.gemini_reset(str(caught.value), now) == now + layout.RATE_RESET_S
+
+
+def test_ollama_sends_num_ctx_and_splits_a_batch_that_does_not_fit(tmp_path, monkeypatch):
+    images = []
+    for n in range(1, 5):
+        image = tmp_path / f'page_{n:04d}.png'
+        image.write_bytes(b'png')
+        image.with_suffix('.lines.json').write_text(json.dumps([[0.1, 0.1, 0.03, 'A TITLE']] + BODY))
+        images.append(image)
+    plain = layout.ollama_body(images[:1], {}, layout.OLLAMA_MODEL)
+    assert plain['options'] == {'temperature': 0, 'num_ctx': 16384}
+    custom = layout.ollama_body(images[:1], {'OLLAMA_NUM_CTX': '8192'}, layout.OLLAMA_MODEL)
+    assert custom['options']['num_ctx'] == 8192
+    with pytest.raises(RuntimeError, match='OLLAMA_NUM_CTX'):
+        layout.ollama_num_ctx({'OLLAMA_NUM_CTX': 'wide'})
+    # Four pages were 7881 tokens against the model's 4096. The default window holds them; 4096 does not.
+    assert layout.ollama_estimate(images) > 4096
+    assert layout.ollama_estimate(images) <= 16384
+    assert len(layout.ollama_batches(images, 16384)) == 1
+    split = layout.ollama_batches(images, 4096)
+    assert len(split) > 1
+    assert [len(batch) for batch in split] == [1, 1, 1, 1]
+
+    sent = []
+
+    def http_json(url, body, headers, timeout=180):
+        sent.append(body)
+        stems = re.findall(r'Page "([^"]+)"', body['messages'][0]['content'])
+        pages = [{'page': stem, 'titles': [], 'quotes': [], 'figures': [], 'art': [], 'code': []} for stem in stems]
+        return {'model': body['model'], 'message': {'content': json.dumps({'pages': pages})}}
+
+    monkeypatch.setattr(layout, 'http_json', http_json)
+    assert layout.ask_ollama(images, {'OLLAMA_NUM_CTX': '4096'}, layout.OLLAMA_MODEL)
+    assert len(sent) == 4
+    assert all(body['options']['num_ctx'] == 4096 for body in sent)
+    sent.clear()
+    assert layout.ask_ollama(images, {}, layout.OLLAMA_MODEL)
+    assert len(sent) == 1 and sent[0]['options']['num_ctx'] == 16384
+
+
+def test_a_stated_reset_is_kept_and_a_session_limit_is_quota(tmp_path, monkeypatch):
+    # "You've hit your session limit · resets 9:30pm (Asia/Tokyo)" is a quota with a clock, not 'other'.
+    # Blocking for OTHER_RESET_S ran past 21:30. The stated time is the block; CLAUDE_RESET_S is the fallback.
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    tokyo = ZoneInfo('Asia/Tokyo')
+    # 21:10. A half-hour block would run until 21:40, past the 21:30 reset the message names.
+    now = datetime(2026, 10, 12, 21, 10, tzinfo=tokyo).timestamp()
+    later = datetime(2026, 10, 12, 21, 40, tzinfo=tokyo).timestamp()
+    tonight = datetime(2026, 10, 12, 21, 30, tzinfo=tokyo).timestamp()
+    tomorrow = datetime(2026, 10, 13, 21, 30, tzinfo=tokyo).timestamp()
+    session = "You've hit your session limit · resets 9:30pm (Asia/Tokyo)"
+    assert layout.failure_kind(session) == 'quota'
+    assert layout.failure_kind('Claude usage limit reached') == 'quota'
+    assert layout.failure_kind(session) != 'other'
+    assert layout.block_until('claude', 'quota', now, session) == tonight
+    assert tonight < now + layout.OTHER_RESET_S
+    assert layout.block_until('claude', 'quota', later, session) == tomorrow
+    assert layout.block_until('claude', 'quota', now, 'Claude usage limit reached') == now + layout.CLAUDE_RESET_S
+    assert layout.block_until('claude', 'quota', now, session) != now + layout.OTHER_RESET_S
+    assert layout.stated_reset("resets 9:30 pm (Asia/Tokyo)", now) == tonight
+    assert layout.stated_reset("You've hit your session limit · resets Oct 13, 9:30pm (Asia/Tokyo)", now) == tomorrow
+    assert layout.stated_reset('resets 2026-10-13 9:30pm (Asia/Tokyo)', now) == tomorrow
+    assert layout.stated_reset('resets 9:30pm (Asia/Tokyo) on 2026-10-13', now) == tomorrow
+    assert layout.stated_reset('resets October 13, 2026, 9:30pm (Asia/Tokyo)', now) == tomorrow
+    assert layout.stated_reset('resets 13 Oct 2026 9:30pm (Asia/Tokyo)', now) == tomorrow
+    assert layout.claude_reset('resets 9:30pm (Not/Azone)', now) is None
+
+    daily = ("429 RESOURCE_EXHAUSTED PerDay {'@type': 'type.googleapis.com/google.rpc.RetryInfo', "
+             "'retryDelay': '86384s'}")
+    assert layout.failure_kind(daily) == 'quota'
+    assert layout.block_until('gemini', 'quota', now, daily) == now + 86384
+    burst = "429 RESOURCE_EXHAUSTED. {'retryDelay': '32s'}"
+    assert layout.failure_kind(burst) == 'rate'
+    assert layout.retry_pause(RuntimeError(burst), 0, lambda: 0) == 32
+    when = datetime(2026, 10, 21, 7, 28, tzinfo=timezone.utc)
+    header = when.strftime('%a, %d %b %Y %H:%M:%S GMT')
+    err = RuntimeError('429 too many requests')
+    err.retry_after = header
+    assert layout.stated_reset(err, now) == when.timestamp()
+    assert layout.stated_reset(f'429 too many requests Retry-After: {header}', now) == when.timestamp()
+
+    sleeps = []
+    monkeypatch.setattr(layout.time, 'sleep', lambda seconds: sleeps.append(seconds))
+
+    def run(command, input, **kwargs):
+        return SimpleNamespace(returncode=1, stdout='', stderr=session)
+
+    monkeypatch.setattr(layout.subprocess, 'run', run)
+    folder = tmp_path / 'session'
+    import book
+    with pytest.raises(layout.GeminiFailed, match='1 pages left') as caught:
+        mark_layout(folder, None, [_one_page(folder)], cli='claude', now=now)
+    assert sleeps == []
+    state = json.loads((tmp_path / 'layout-providers.json').read_text())
+    assert state['claude']['kind'] == 'quota'
+    assert state['claude']['until'] == tonight
+    assert book.gemini_reset(str(caught.value), now) == int(tonight)
 
 
 def test_each_provider_schema_is_rejected_offline_when_the_shape_is_wrong():
     # The rendered request is acceptable. The shape each API refuses is the one that would have been sent
     # by reusing another provider's rendering: Gemini's additionalProperties, a top-level array, GLM's
-    # json_schema, a paid OpenRouter model, and Ollama's free-text "json" mode.
+    # json_schema, and Ollama's free-text "json" mode.
     for name in layout.PROVIDERS:
         assert layout.provider_rejected(name) == [], name
     assert layout.provider_rejected('gemini', layout.LAYOUT_SCHEMA)
@@ -478,8 +658,6 @@ def test_each_provider_schema_is_rejected_offline_when_the_shape_is_wrong():
     assert layout.provider_rejected('claude', {'type': 'array'})
     assert layout.provider_rejected('mistral', {'response_format': {'type': 'json_object'}})
     assert layout.provider_rejected('glm', {'response_format': {'type': 'json_schema'}, 'messages': []})
-    paid = {'model': 'openai/gpt-4o', 'response_format': {'type': 'json_schema', 'json_schema': {'schema': layout.LAYOUT_SCHEMA}}}
-    assert layout.provider_rejected('openrouter', paid)
     assert layout.provider_rejected('ollama', {'format': 'json'})
     with pytest.raises(RuntimeError, match='OpenAI'):
         layout.provider_order({'LAYOUT_PROVIDERS': 'openai,claude'}, cli='claude', client=object(), ollama=False)

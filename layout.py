@@ -9,17 +9,19 @@ It answers with line numbers and a few words, never the book's text, so RECITATI
 go in one request. The answers are kept in layout.json, with the provider and the model that read each page, so a
 re-run asks only for pages not yet read.
 
-Providers are tried in order (Sonnet first, then Gemini, Mistral, GLM-4.6V-Flash, an OpenRouter :free vision model,
-then local Ollama). One that is out of quota, rate-limited, unauthorized or unreachable is remembered until its reset
-and the next one reads the pages. The book is not parked while a later provider remains. Every provider is given
+Providers are tried in order (Sonnet first, then Gemini, Mistral, GLM-4.6V-Flash, then local Ollama). One that
+is out of quota, unauthorized or unreachable is remembered until the reset it states, or the usual reset when it
+states none, and the next one reads the pages. A per-minute limit or a brief overload is retried, and only then
+remembered for a short cooldown. The book is not parked while a later provider remains. Every provider is given
 LAYOUT_SCHEMA, rendered for that API. OpenAI's free tokens are not used: they share the pages, and the books are
-copyrighted.
+copyrighted. OpenRouter is not a provider: with training providers turned off, its free models answer 404.
 """
 
 import base64
 import hashlib
 import json
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -28,7 +30,8 @@ import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from statistics import median
 from zoneinfo import ZoneInfo
@@ -42,25 +45,47 @@ LAYOUT = 'layout.json'
 MODEL = 'gemini-3.5-flash-lite'
 BATCH = 20  # pages per request; the free tier allows 500 requests a day, which 8 a request used up on 2026-10-10
 DAILY_LIMIT = 'PerDay'  # in a 429 for the day's requests, which waiting minutes does not end
-PROVIDERS = ('claude', 'gemini', 'mistral', 'glm', 'openrouter', 'ollama')
+# OpenRouter is not here. Free models 404 once providers that train on prompts are turned off.
+PROVIDERS = ('claude', 'gemini', 'mistral', 'glm', 'ollama')
 CLAUDE_MODELS = ('sonnet', 'haiku')
 MISTRAL_MODEL = 'mistral-small-latest'
 GLM_MODEL = 'glm-4.6v-flash'
-# Free vision models on OpenRouter as of 2026-10-12. The first is tried; a 404 or a model that
-# cannot take an image tries the next. qwen/qwen3.8-27b:free is no longer listed.
-OPENROUTER_MODELS = ('google/gemma-4-31b-it:free', 'google/gemma-4-26b-a4b-it:free')
 OLLAMA_MODEL = 'qwen2.5vl:7b'  # about 6 GB; a 16 GB M1 holds it. An 8 GB Mac should set qwen2.5vl:3b.
 OLLAMA_BATCH = 4
+# qwen2.5vl's own default is 4096. A batch of pages was 7881 tokens and the request was refused. 16384 holds
+# that batch; a larger one is split.
+OLLAMA_NUM_CTX = 16384
+OLLAMA_IMAGE_TOKENS = 1800  # one page image, beside the prompt text
+OLLAMA_REPLY_TOKENS = 1024  # room for the JSON answer inside num_ctx
 MISTRAL_URL = 'https://api.mistral.ai/v1/chat/completions'
 GLM_URL = 'https://api.z.ai/api/paas/v4/chat/completions'
-OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 OLLAMA_HOST = 'http://127.0.0.1:11434'
 # Remembered across books. A provider that is out stays out until the time below, so the next book does not spend
 # the request that finds the same limit.
 PROVIDER_STATE = os.path.join(os.path.expanduser('~/Downloads/kindle'), 'layout-providers.json')
 CLAUDE_RESET_S = 5 * 3600  # Claude Code's session limit, when the reply does not name an earlier time
-RATE_RESET_S = 60
+RATE_RESET_S = 60  # short cooldown after per-minute retries are used up, not the daily reset
 OTHER_RESET_S = 1800
+RATE_ATTEMPTS = 5  # one try plus retries, then the provider is out for the short cooldown
+BACKOFF_BASE_S = 1
+BACKOFF_CAP_S = 32
+RETRY_AFTER_CAP_S = 120  # a per-minute Retry-After longer than this is not waited out inside the step
+SHORT_MAX_S = 15 * 60  # a stated delay longer than this is a daily reset, not a burst cooldown
+_SHORT_CODE = re.compile(r'"code"\s*:\s*"?(1300|1305)"?')
+_RETRY_DELAY = re.compile(r"retryDelay['\"]?\s*[:=]\s*['\"]?(\d+(?:\.\d+)?)s", re.I)
+_RETRY_AFTER_SECONDS = re.compile(r'Retry-After:\s*(\d+(?:\.\d+)?)\b', re.I)
+_RETRY_AFTER_DATE = re.compile(r'Retry-After:\s*([A-Za-z]{3},\s*\d{1,2}\s+\w+\s+\d{4}[^\n]*)', re.I)
+_MONTHS = {name: n for n, full in enumerate(
+    ('january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october',
+     'november', 'december'), 1) for name in (full, full[:3])}
+_RESET_AT = re.compile(
+    r'resets(?:\s+at)?\s+(?P<body>.+?)\s*\((?P<tz>[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)*)\)'
+    r'(?:\s+on\s+(?P<on>\d{4}-\d{2}-\d{2}|[A-Za-z]+\s+\d{1,2}(?:,\s*\d{4})?))?',
+    re.I)
+_CLOCK = re.compile(r'(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*$', re.I)
+_ISO_DATE = re.compile(r'(\d{4})-(\d{2})-(\d{2})')
+_MDY = re.compile(r'([A-Za-z]+)\s+(\d{1,2})(?:\s*,?\s*(\d{4}))?')
+_DMY = re.compile(r'(\d{1,2})\s+([A-Za-z]+)(?:\s+(\d{4}))?')
 
 
 class GeminiFailed(RuntimeError):
@@ -380,8 +405,6 @@ def model_of(name, config):
         return config.get('MISTRAL_MODEL') or MISTRAL_MODEL
     if name == 'glm':
         return config.get('GLM_MODEL') or GLM_MODEL
-    if name == 'openrouter':
-        return openrouter_models(config)[0]
     if name == 'ollama':
         return config.get('OLLAMA_MODEL') or OLLAMA_MODEL
     raise RuntimeError(f'Unknown layout provider {name}')
@@ -414,32 +437,15 @@ def provider_order(config, cli, client, limit=None, ollama=None):
             continue
         if name == 'glm' and not config.get('ZAI_API_KEY'):
             continue
-        if name == 'openrouter' and not config.get('OPENROUTER_API_KEY'):
-            continue
-        if name == 'openrouter':
-            models = openrouter_models(config)
-            if not models or not all(free_model(model) for model in models):
-                print(f'OPENROUTER_MODEL {config.get("OPENROUTER_MODEL")} is not a :free model; skipping', flush=True)
-                continue
         if name == 'ollama' and not ready:
             continue
         order.append(name)
     return order
 
 
-def openrouter_models(config):
-    """Comma-separated `OPENROUTER_MODEL`, or the default list. The first model that is still listed is used."""
-    raw = (config or {}).get('OPENROUTER_MODEL') or ','.join(OPENROUTER_MODELS)
-    return [part.strip() for part in raw.split(',') if part.strip()]
-
-
-def free_model(model):
-    return model == 'openrouter/free' or model.endswith(':free')
-
-
 def model_missing(error):
-    """A model id OpenRouter no longer lists (404), or a model that cannot see the page image.
-    That provider is out; the next model in the list, then the next provider, reads the pages."""
+    """A model id the provider no longer lists (404), or a model that cannot see the page image.
+    That provider is out; the next one reads the pages. A 404 is not a schema bug."""
     text = str(error)
     return text.startswith('404') or 'image input not supported' in text.lower()
 
@@ -482,7 +488,7 @@ def request_schema(provider, config=None):
         return chat_body('glm', [], config, model)
     if provider == 'ollama':
         return ollama_body([], config, model)
-    if provider in ('mistral', 'openrouter'):
+    if provider == 'mistral':
         return chat_body(provider, [], config, model)
     raise RuntimeError(f'Unknown layout provider {provider}')
 
@@ -499,8 +505,6 @@ def provider_rejected(provider, payload=None, config=None):
         return mistral_rejected(payload)
     if provider == 'glm':
         return glm_rejected(payload)
-    if provider == 'openrouter':
-        return openrouter_rejected(payload)
     if provider == 'ollama':
         return ollama_rejected(payload)
     return [f'Unknown layout provider {provider}']
@@ -531,17 +535,6 @@ def glm_rejected(body):
     if '"titles"' not in blob or '"pages"' not in blob:
         return ['GLM is json_object, so the prompt must carry LAYOUT_SCHEMA']
     return []
-
-
-def openrouter_rejected(body):
-    model = (body or {}).get('model') or ''
-    if not free_model(model):
-        return [f'OpenRouter model {model} is not a :free model; paid models are not used for these pages']
-    fmt = (body or {}).get('response_format') or {}
-    schema = (fmt.get('json_schema') or {}).get('schema')
-    if fmt.get('type') != 'json_schema' or not isinstance(schema, dict):
-        return ['OpenRouter takes response_format type json_schema with LAYOUT_SCHEMA']
-    return [f'OpenRouter schema: {item}' for item in closed_objects(schema)]
 
 
 def ollama_rejected(body):
@@ -581,13 +574,48 @@ def chat_body(provider, images, config, model):
         parts = chat_parts(images, image_url='string')
         fmt = {'type': 'json_schema', 'json_schema': {'name': 'layout', 'strict': True, 'schema': LAYOUT_SCHEMA}}
     else:
-        parts = chat_parts(images, image_url='object')
-        fmt = {'type': 'json_schema', 'json_schema': {'name': 'layout', 'strict': True, 'schema': LAYOUT_SCHEMA}}
+        raise RuntimeError(f'Unknown layout provider {provider}')
     return {'model': model, 'temperature': 0, 'messages': [{'role': 'user', 'content': parts}], 'response_format': fmt}
 
 
+def ollama_num_ctx(config):
+    """`OLLAMA_NUM_CTX` in config.env. The default holds a batch; the model's own 4096 does not."""
+    raw = (config or {}).get('OLLAMA_NUM_CTX')
+    if raw in (None, ''):
+        return OLLAMA_NUM_CTX
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 0
+    if value < 1:
+        raise RuntimeError(f'OLLAMA_NUM_CTX must be a positive integer, not {raw}')
+    return value
+
+
+def ollama_estimate(images):
+    """Tokens a batch will occupy, including the reply. One page image is OLLAMA_IMAGE_TOKENS."""
+    text = PROMPT + '\n\n' + '\n\n'.join(f'Page "{image.stem}":\n{numbered_lines(image)}' for image in images)
+    return len(text) // 4 + OLLAMA_IMAGE_TOKENS * len(images) + OLLAMA_REPLY_TOKENS
+
+
+def ollama_batches(images, num_ctx):
+    """Groups that fit in num_ctx, at most OLLAMA_BATCH pages each. A single page is never split."""
+    groups, current = [], []
+    for image in images:
+        trial = current + [image]
+        if current and (len(trial) > OLLAMA_BATCH or ollama_estimate(trial) > num_ctx):
+            groups.append(current)
+            current = [image]
+        else:
+            current = trial
+    if current:
+        groups.append(current)
+    return groups
+
+
 def ollama_body(images, config, model):
-    return {'model': model, 'stream': False, 'format': LAYOUT_SCHEMA, 'options': {'temperature': 0},
+    return {'model': model, 'stream': False, 'format': LAYOUT_SCHEMA,
+            'options': {'temperature': 0, 'num_ctx': ollama_num_ctx(config)},
             'messages': [{'role': 'user', 'content': PROMPT + '\n\n' + '\n\n'.join(
                 f'Page "{image.stem}":\n{numbered_lines(image)}' for image in images),
                 'images': [base64.b64encode(image.read_bytes()).decode() for image in images]}]}
@@ -599,11 +627,10 @@ def endpoint(provider, config):
         return MISTRAL_URL, {'Authorization': f'Bearer {config.get("MISTRAL_API_KEY", "")}', 'Content-Type': 'application/json'}
     if provider == 'glm':
         return GLM_URL, {'Authorization': f'Bearer {config.get("ZAI_API_KEY", "")}', 'Content-Type': 'application/json'}
-    if provider == 'openrouter':
-        return OPENROUTER_URL, {'Authorization': f'Bearer {config.get("OPENROUTER_API_KEY", "")}',
-                                'Content-Type': 'application/json'}
-    host = (config.get('OLLAMA_HOST') or OLLAMA_HOST).rstrip('/')
-    return host + '/api/chat', {'Content-Type': 'application/json'}
+    if provider == 'ollama':
+        host = (config.get('OLLAMA_HOST') or OLLAMA_HOST).rstrip('/')
+        return host + '/api/chat', {'Content-Type': 'application/json'}
+    raise RuntimeError(f'Unknown layout provider {provider}')
 
 
 def http_json(url, body, headers, timeout=CHAT_TIMEOUT_S):
@@ -613,7 +640,14 @@ def http_json(url, body, headers, timeout=CHAT_TIMEOUT_S):
             return json.loads(res.read().decode())
     except urllib.error.HTTPError as e:
         detail = e.read().decode(errors='replace')[:500]
-        raise RuntimeError(f'{e.code} {detail}') from None
+        retry = e.headers.get('Retry-After') if e.headers else None
+        message = f'{e.code} {detail}'
+        if retry:
+            message += f' Retry-After: {retry}'
+        err = RuntimeError(message)
+        if retry:
+            err.retry_after = retry
+        raise err from None
     except urllib.error.URLError as e:
         raise RuntimeError(f'unavailable: {e.reason}') from None
 
@@ -647,30 +681,11 @@ def ask_chat(provider, images, config, model):
     return parse_layout(content, {image.stem for image in images}, used or model, provider)
 
 
-def ask_openrouter(images, config, skip):
-    """Try each free vision model. A missing model, or one that cannot take an image, is skipped; a quota
-    error stops the provider so the next one in the list is asked."""
-    models = [model for model in openrouter_models(config) if model not in skip]
-    if not models:
-        raise RuntimeError('404 no OpenRouter vision model left')
-    last = None
-    for model in models:
-        try:
-            return ask_chat('openrouter', images, config, model)
-        except Exception as e:
-            last = e
-            if not model_missing(e):
-                raise
-            skip.add(model)
-            print(f'{model} is out: {e}', flush=True)
-    raise last
-
-
 def ask_ollama(images, config, model):
     merged = {}
     url, headers = endpoint('ollama', config)
-    for start in range(0, len(images), OLLAMA_BATCH):
-        batch = images[start:start + OLLAMA_BATCH]
+    num_ctx = ollama_num_ctx(config)
+    for batch in ollama_batches(images, num_ctx):
         reply = http_json(url, ollama_body(batch, config, model), headers, timeout=OLLAMA_TIMEOUT_S)
         content, used = chat_content(reply)
         if not content:
@@ -730,21 +745,178 @@ def failure_kind(error):
         return 'schema'
     if any(mark in text for mark in ('401', '403', 'PERMISSION_DENIED')) or 'invalid api key' in low or 'unauthorized' in low:
         return 'auth'
-    if 'perday' in low or 'per day' in low or DAILY_LIMIT.lower() in low or 'usage limit' in low:
+    # Daily and session quotas wait out a reset. A per-minute 429 and a brief overload do not: those are 'rate'.
+    if 'perday' in low or 'per day' in low or DAILY_LIMIT.lower() in low or 'usage limit' in low or 'session limit' in low:
         return 'quota'
-    if any(mark in low for mark in ('429', 'resource_exhausted', 'rate limit', 'rate_limit', 'too many requests')):
+    if _SHORT_CODE.search(text) or any(mark in low for mark in (
+            '429', 'resource_exhausted', 'rate limit', 'rate_limit', 'too many requests', 'overloaded')):
         return 'rate'
     if any(mark in low for mark in ('unavailable', 'connection refused', 'timed out', 'timeout', 'model not found', '502', '503', '504')):
         return 'unavailable'
     return 'other'
 
 
-def block_until(name, kind, now):
-    """When this provider may be asked again. A schema 400 is the request we send, so it waits for new code, not a clock."""
+def _hour24(hour, ampm):
+    if ampm:
+        if not 1 <= hour <= 12:
+            return None
+        if ampm.lower() == 'am':
+            return 0 if hour == 12 else hour
+        return 12 if hour == 12 else hour + 12
+    if not 0 <= hour <= 23:
+        return None
+    return hour
+
+
+def _date_parts(text):
+    """(year or None, month, day, year_was_written) from a date fragment, or None."""
+    text = (text or '').strip().strip(',').strip()
+    if not text:
+        return None
+    iso = _ISO_DATE.fullmatch(text)
+    if iso:
+        return int(iso.group(1)), int(iso.group(2)), int(iso.group(3)), True
+    mdy = _MDY.fullmatch(text)
+    if mdy and mdy.group(1).lower() in _MONTHS:
+        year = int(mdy.group(3)) if mdy.group(3) else None
+        return year, _MONTHS[mdy.group(1).lower()], int(mdy.group(2)), year is not None
+    dmy = _DMY.fullmatch(text)
+    if dmy and dmy.group(2).lower() in _MONTHS:
+        year = int(dmy.group(3)) if dmy.group(3) else None
+        return year, _MONTHS[dmy.group(2).lower()], int(dmy.group(1)), year is not None
+    return None
+
+
+def claude_reset(text, now):
+    """Unix time from `resets 9:30pm (Asia/Tokyo)`, including a date when one is written. None when it isn't there."""
+    found = _RESET_AT.search(text or '')
+    if not found:
+        return None
+    body = found.group('body').strip()
+    clock = _CLOCK.search(body)
+    if not clock:
+        return None
+    hour = _hour24(int(clock.group(1)), clock.group(3))
+    if hour is None:
+        return None
+    minute = int(clock.group(2) or 0)
+    if not 0 <= minute <= 59:
+        return None
+    try:
+        zone = ZoneInfo(found.group('tz'))
+    except Exception:
+        return None
+    local_now = datetime.fromtimestamp(now, zone)
+    prefix = body[:clock.start()].strip().strip(',').strip()
+    dated = _date_parts(prefix) or _date_parts(found.group('on'))
+    if dated is None and (prefix or found.group('on')):
+        return None
+    if dated is None:
+        when = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if when <= local_now:
+            when += timedelta(days=1)
+        return when.timestamp()
+    year, month, day, year_written = dated
+    year = local_now.year if year is None else year
+    try:
+        when = datetime(year, month, day, hour, minute, tzinfo=zone)
+    except ValueError:
+        return None
+    if not year_written and when <= local_now:
+        try:
+            when = when.replace(year=year + 1)
+        except ValueError:
+            return None
+    return when.timestamp()
+
+
+def delay_seconds(error, now):
+    """Seconds the provider asked us to wait: Retry-After (header or the same words in the message), then
+    Gemini's RetryInfo retryDelay. None when neither is present."""
+    raw = getattr(error, 'retry_after', None)
+    if raw not in (None, ''):
+        parsed = _retry_after_value(str(raw), now)
+        if parsed is not None:
+            return parsed
+    text = str(error)
+    seconds = _RETRY_AFTER_SECONDS.search(text)
+    if seconds:
+        return float(seconds.group(1))
+    dated = _RETRY_AFTER_DATE.search(text)
+    if dated:
+        parsed = _retry_after_value(dated.group(1).strip(), now)
+        if parsed is not None:
+            return parsed
+    delay = _RETRY_DELAY.search(text)
+    if delay:
+        return float(delay.group(1))
+    return None
+
+
+def _retry_after_value(value, now):
+    value = value.strip()
+    if re.fullmatch(r'\d+(?:\.\d+)?', value):
+        return float(value)
+    try:
+        parsed = parsedate_to_datetime(value)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp() - now
+
+
+def stated_reset(error, now):
+    """Unix time the provider named. A clock time wins over a delay. None when the message names neither."""
+    clock = claude_reset(str(error), now)
+    if clock is not None:
+        return clock
+    delay = delay_seconds(error, now)
+    if delay is not None:
+        return now + delay
+    return None
+
+
+def jitter():
+    return random.random()
+
+
+def retry_pause(error, attempt, rng=None):
+    """Seconds to wait before another try. Retry-After and retryDelay are kept (capped); otherwise exponential
+    backoff with equal jitter."""
+    rng = jitter if rng is None else rng
+    stated = delay_seconds(error, time.time())
+    if stated is not None:
+        return min(RETRY_AFTER_CAP_S, max(0.0, stated))
+    growth = min(BACKOFF_CAP_S, BACKOFF_BASE_S * (2 ** attempt))
+    return growth * (0.5 + 0.5 * rng())
+
+
+def call_retrying(fn):
+    """Retry a per-minute limit or a brief overload. A quota, an auth failure or a schema error is raised at once."""
+    for attempt in range(RATE_ATTEMPTS):
+        try:
+            return fn()
+        except Exception as e:
+            if failure_kind(e) != 'rate' or attempt + 1 == RATE_ATTEMPTS:
+                raise
+            time.sleep(retry_pause(e, attempt))
+
+
+def block_until(name, kind, now, error=''):
+    """When this provider may be asked again. A time the provider states wins over the fixed defaults.
+    A per-minute limit uses that time only when it is a short cooldown. A schema 400 waits for new code."""
     if kind == 'schema':
         return None
+    stated = stated_reset(error, now)
     if kind == 'rate':
+        if stated is not None and 0 <= stated - now <= SHORT_MAX_S:
+            return stated
         return now + RATE_RESET_S
+    if stated is not None:
+        return stated
     if kind == 'quota' and name == 'gemini':
         pacific = datetime.fromtimestamp(now, ZoneInfo('America/Los_Angeles'))
         return (pacific.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).timestamp()
@@ -761,8 +933,7 @@ def converter_version():
 
 
 def key_hash(config, name):
-    secret = {'mistral': 'MISTRAL_API_KEY', 'glm': 'ZAI_API_KEY', 'openrouter': 'OPENROUTER_API_KEY',
-              'gemini': 'GEMINI_API_KEY'}.get(name)
+    secret = {'mistral': 'MISTRAL_API_KEY', 'glm': 'ZAI_API_KEY', 'gemini': 'GEMINI_API_KEY'}.get(name)
     return hashlib.sha256(((config or {}).get(secret, '') if secret else '').encode()).hexdigest()[:12]
 
 
@@ -819,7 +990,7 @@ class Roster:
 
     def block(self, name, model, error):
         kind = failure_kind(error)
-        rec = {'kind': kind, 'until': block_until(name, kind, self.now), 'reason': str(error)[:300],
+        rec = {'kind': kind, 'until': block_until(name, kind, self.now, error), 'reason': str(error)[:300],
                'converter': self.converter, 'key': key_hash(self.config, name)}
         with self.lock:
             if name not in self.blocks:
@@ -841,16 +1012,17 @@ class Roster:
         return f'Layout failed with {left} pages left: {body}.{extra}'
 
 
-def call_provider(name, images, model, client, cli, config, skip=None):
-    if name == 'claude':
-        return ask_layout_claude(cli, images, model)
-    if name == 'gemini':
-        return ask_layout(client, images)
-    if name == 'ollama':
-        return ask_ollama(images, config, model)
-    if name == 'openrouter':
-        return ask_openrouter(images, config, skip if skip is not None else set())
-    return ask_chat(name, images, config, model)
+def call_provider(name, images, model, client, cli, config):
+    def once():
+        if name == 'claude':
+            return ask_layout_claude(cli, images, model)
+        if name == 'gemini':
+            return ask_layout(client, images)
+        if name == 'ollama':
+            return ask_ollama(images, config, model)
+        return ask_chat(name, images, config, model)
+
+    return call_retrying(once)
 
 
 def mark_layout(folder, client, images, cli=None, config=None, limit=None, now=None, state_path=None):
@@ -873,7 +1045,6 @@ def mark_layout(folder, client, images, cli=None, config=None, limit=None, now=N
     path = PROVIDER_STATE if state_path is None else state_path
     roster = Roster(order, load_blocks(path, now, config, converter_version()), now, config, path, converter_version())
     slots = {'claude': threading.Semaphore(CLAUDE_WORKERS), 'glm': threading.Semaphore(1)}
-    skip = set()  # OpenRouter models already answered 404 or that they cannot take an image
 
     def ask(batch):
         while True:
@@ -887,7 +1058,7 @@ def mark_layout(folder, client, images, cli=None, config=None, limit=None, now=N
                 if not roster.open(name):
                     continue
                 model = model_of(name, config)
-                return call_provider(name, batch, model, client, cli, config, skip), False
+                return call_provider(name, batch, model, client, cli, config), False
             except Exception as e:
                 roster.block(name, model_of(name, config), e)
             finally:
@@ -1004,7 +1175,7 @@ def main(argv=None):
 
     parser = argparse.ArgumentParser(description='Lay out the same pages with two providers and report differences')
     parser.add_argument('folder', type=Path)
-    parser.add_argument('--a', required=True, help='sonnet, haiku, or a provider (gemini, mistral, glm, openrouter, ollama)')
+    parser.add_argument('--a', required=True, help='sonnet, haiku, or a provider (gemini, mistral, glm, ollama)')
     parser.add_argument('--b', required=True)
     parser.add_argument('-n', type=int, default=8)
     args = parser.parse_args(argv)
