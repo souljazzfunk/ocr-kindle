@@ -707,6 +707,24 @@ def chapter_level(text, level, chapters):
     return 1 if CONTENTS.match(text.strip()) or listed(text, chapters) else max(level, 2)
 
 
+CHAPTER_LABEL = re.compile(r'第[^章]{0,3}章')  # 第Ⅲ章, which Live Text reads as 第山章 or 第i章
+
+
+def contents_covered(entry, titles):
+    """Whether the book's headings account for a contents entry: one heading lists it, or the entry is several
+    headings read as one line, the last perhaps cut mid-title (代替医療解剖 and 近代中国史, 2026-10-12)."""
+    if any(listed(t, [entry]) for t in titles):
+        return True
+    keys = {k for k in (CHAPTER_LABEL.sub('', comparable(t)) for t in titles) if len(k) >= 2}
+    rest = CHAPTER_LABEL.sub('', entry)
+    reach = {0}
+    for i in range(len(rest)):
+        if i in reach:
+            reach |= {i + len(k) for k in keys if rest.startswith(k, i)}
+    return bool(rest) and any(r == len(rest) or len(rest) - r >= 2 and any(k.startswith(rest[r:]) for k in keys)
+                              for r in reach if r > 0)
+
+
 def listed(text, chapters):
     """Whether the contents lists this title: the same letters, or one begins the other (an entry cut mid-line, or two
     entries read as one line)."""
