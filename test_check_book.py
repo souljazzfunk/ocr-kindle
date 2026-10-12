@@ -445,7 +445,7 @@ def test_each_step_is_timed_in_the_report_and_a_slow_one_fails_the_speed_check(t
     report = json.loads((folder / 'report.json').read_text())
     assert report['seconds'] == {'reach': 3, 'capture': 40, 'screens': 10, 'pages': 10, 'ocr': 30.0, 'checks': 1.0}
     speed = by_name(Check(**c) for c in report['checks'])['speed']
-    assert not speed.ok and speed.detail == 'slow: capture_per_screen 4.00 s > 1.5 s; ocr_per_page 3.00 s > 2 s'
+    assert not speed.ok and speed.detail == 'slow: capture_per_screen 4.00 s > 1 s; ocr_per_page 3.00 s > 1 s'
     # A slow book is still a correct one: it goes to Drive, with speed among its warnings.
     assert data['warnings'] == ['speed'] and (drive / 'Book.md').exists()
     assert capture_book.speed({'reach': 3, 'capture': 10, 'screens': 10, 'pages': 10, 'ocr': 5, 'checks': 1}).ok
