@@ -323,14 +323,17 @@ class Library:
         (self.root / f'pause.{job}.json').unlink(missing_ok=True)
 
     def active_pause(self, job, current, now=None):
-        """The job's pause while it holds; a pause whose time has come or whose stage has new code is removed."""
+        """The job's pause while it holds; a pause whose time has come, whose stage has new code, or whose checks the
+        RULES now blame on another job's stage is removed."""
         pause = self.pause(job)
         if not pause:
             return None
         now = time.time() if now is None else now
         due = pause.get('until') is not None and now >= pause['until']
         new_code = pause.get('version') is not None and pause['version'] != current.get(pause.get('waits_on'))
-        if due or new_code:
+        elsewhere = any(STAGE[rule.blame].job != job for rule in (RULES.get(c, BOOK_FAULT) for c in pause.get('checks', []))
+                        if rule.blame)
+        if due or new_code or elsewhere:
             self.clear_pause(job)
             return None
         return pause
