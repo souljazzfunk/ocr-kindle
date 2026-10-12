@@ -50,6 +50,7 @@ class Job:
     asin: str = ''
     recapture: bool = False
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    offered: float = 0.0  # when the channel put it up
     taken: float | None = None  # when a worker first received it
     worker: str = ''  # the one worker that has it; any other worker is offered nothing
     active: float = 0.0  # the last page or event
@@ -74,7 +75,7 @@ def page_name(i):
     return f'page_{i:04d}'
 
 
-def finish_folder(folder, pages, done):
+def finish_folder(folder, pages, done, seconds=None):
     """Rename the staged screens into page_NNNN in reading order and write positions.json and capture.json as the
     ZIP of extension 1.x held them, so img2txt.py and check_book.py read the folder unchanged. Returns stopped."""
     staging = folder / STAGING
@@ -98,7 +99,8 @@ def finish_folder(folder, pages, done):
     if pages:
         (folder / 'positions.json').write_text(json.dumps(positions, indent=1), encoding='utf-8')
         (folder / 'capture.json').write_text(json.dumps({'extension_version': done.get('extension_version'),
-                                                         'stopped': stopped, 'start': done.get('start', '')}),
+                                                         'stopped': stopped, 'start': done.get('start', ''),
+                                                         'seconds': seconds or {}}),
                                              encoding='utf-8')
     shutil.rmtree(staging, ignore_errors=True)
     return stopped
@@ -163,7 +165,7 @@ class Channel:
                     make_room(job.folder)
                 else:
                     job.folder.mkdir(parents=True, exist_ok=True)  # for its trace.jsonl
-                offered = self.clock()
+                offered = job.offered = self.clock()
                 while job.outcome is None:
                     now = self.clock()
                     if job.taken is None and now - offered >= reach_s:
@@ -219,11 +221,13 @@ class Channel:
     def put_event(self, job_id, event):
         with self.lock:
             job = self._current(job_id)
-            job.active = self.clock()
+            job.active = now = self.clock()
             kind = event.get('type')
             if kind == 'trace':
+                # t: seconds since the worker took the job, so a slow stretch of a capture shows in its trace.
+                line = {'t': round(now - job.taken, 2), **{k: v for k, v in event.items() if k not in ('type', 'job')}}
                 with open(job.folder / TRACE, 'a', encoding='utf-8') as f:
-                    f.write(json.dumps({k: v for k, v in event.items() if k not in ('type', 'job')}, ensure_ascii=False) + '\n')
+                    f.write(json.dumps(line, ensure_ascii=False) + '\n')
             elif kind == 'title':
                 job.title = event.get('title') or ''
                 if event.get('probe') is not None:
@@ -232,7 +236,9 @@ class Channel:
                 label = re.sub(r'[^a-z-]', '', str(event.get('label') or 'probe'))
                 (job.folder / f'dom-probe-{label}.json').write_text(json.dumps(event.get('probe'), indent=1), encoding='utf-8')
             elif kind == 'done':
-                stopped = finish_folder(job.folder, job.pages, event)
+                stopped = finish_folder(job.folder, job.pages, event, {
+                    'reach': round(job.taken - job.offered, 1), 'capture': round(now - job.taken, 1),
+                    'screens': len(job.pages)})
                 job.outcome = CaptureResult('done', stopped, job.title, len(job.pages))
             elif kind == 'refused':
                 job.outcome = CaptureResult('refused', event.get('reason') or 'no reason given', job.title, len(job.pages))

@@ -87,12 +87,15 @@ def test_a_capture_opened_mid_book_lands_as_page_files_in_reading_order(served, 
     assert not (folder / 'page_0003.txt').exists()  # under 40 characters: left for OCR
     assert json.loads((folder / 'positions.json').read_text()) == {
         'page_0001': '1/4', 'page_0002': '2/4', 'page_0003': '3/4', 'page_0004': '4/4'}
-    assert json.loads((folder / 'capture.json').read_text()) == {
-        'extension_version': '2.0', 'stopped': '', 'start': 'opened at 3/4; 2 earlier screens saved back to page 1'}
+    capture = json.loads((folder / 'capture.json').read_text())
+    seconds = capture.pop('seconds')
+    assert capture == {'extension_version': '2.0', 'stopped': '', 'start': 'opened at 3/4; 2 earlier screens saved back to page 1'}
+    assert seconds['screens'] == 4 and 0 <= seconds['reach'] < 5 and 0 <= seconds['capture'] < 5
     assert (folder / img2txt.SOURCES).read_text() == f'page_0001\t{img2txt.TEXT_LAYER}\n'
     assert json.loads((folder / 'dom-probe.json').read_text()) == {'counts': {'textLayer': 1}}
-    assert json.loads((folder / 'trace.jsonl').read_text()) == {'observation': {'position': {'n': 1, 'm': 4}},
-                                                                'action': 'turn:prev'}
+    trace = json.loads((folder / 'trace.jsonl').read_text())
+    assert 0 <= trace.pop('t') <= seconds['capture'] + 0.1
+    assert trace == {'observation': {'position': {'n': 1, 'm': 4}}, 'action': 'turn:prev'}
     assert not (folder / channel.STAGING).exists()
     checks = {c.name: c.ok for c in check_folder(folder)}
     assert checks['pages'] and checks['start_position'] and checks['end_position'] and checks['capture_stop']
