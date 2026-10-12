@@ -245,18 +245,25 @@ def stray_symbol(book):
 
 # 傍点 (emphasis dots beside vertical Japanese) that Live Text reads as paragraphs of commas or backslashes, cutting
 # the sentence they mark: 英語教育幻想 (2026-10-12) "組み直すこと\n\n、\n\nもできます" and "、、、\n\n、\n\n\\\n\n".
-DOTS = r'[、。﹅・\\＼]+'
-EMPHASIS_DOTS = re.compile(rf'\n\n(?:{DOTS}\n\n)*{DOTS}(\n\n|$)')
+DOTS = r'[、。﹅・\\＼]+[ \t\u3000]*'
+EMPHASIS_DOTS = re.compile(rf'(?:^|\n+)(?:{DOTS}\n+)*{DOTS}(\n+|$)')
 SENTENCE_END = '。！？」』）'
 
 
 def emphasis_dots(book):
     """Paragraphs of nothing but commas, dots and backslashes: removed, and the sentence they cut joined again. A full
-    stop among them ends the sentence before them ("じゃな\n\n、。\n\nサッカー" in 考える練習)."""
+    stop among them ends the sentence before them ("じゃな\n\n、。\n\nサッカー" in 考える練習). A run can open a page
+    and lines can be broken singly; a backslash line inside a code block is code."""
     for stem, text in book.pages.items():
         for m in EMPHASIS_DOTS.finditer(text):
-            ended = m.start() == 0 or text[m.start() - 1] in SENTENCE_END or not m.group(1)
-            after = m.group(1) if ended else '。\n\n' if '。' in m.group() else ''
+            if text.count('```', 0, m.start()) % 2:
+                continue
+            if m.start() == 0 and not m.group().startswith('\n'):
+                after = ''
+            elif text[m.start() - 1] in SENTENCE_END or not m.group(1):
+                after = '\n\n' if m.group(1) else ''
+            else:
+                after = '。\n\n' if '。' in m.group() else ''
             yield Finding('emphasis_dots', stem, m.group(), after, at=m.start())
 
 

@@ -41,6 +41,11 @@ def test_emphasis_dots_read_as_commas_on_their_own_lines_are_removed_and_the_sen
     book = Book(Path('/nonexistent'), pages)
     assert apply(book.pages, find_all(book)) == {'page_0001': '中長期的な視点に立てば、日米同盟の深化です。',
                                                  'page_0002': 'すっとぼけてるじゃな。\n\nサッカーも同じで'}
+    # The published 英語教育幻想 kept them after the fix: a run can open a page, and a page can break lines singly.
+    pages = {'page_0001': '組み直すこと', 'page_0002': '、\n\nもできます。受信モードであ\n、、\nるのに対して',
+             'page_0003': '```\nx = 1 + \\\n    2\n```'}
+    book = Book(Path('/nonexistent'), pages)
+    assert apply(book.pages, find_all(book)) == {'page_0002': 'もできます。受信モードであるのに対して'}
 
 
 def test_a_screen_saved_twice_at_one_position_is_a_duplicate(tmp_path):

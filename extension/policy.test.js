@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { initialState, nextAction, STUCK_TURNS, TURNS_PER_PAGE, EXTRA_TURNS, IMAGE_WAITS } = require('./policy.js');
+const { initialState, nextAction, RESTS, STUCK_TURNS, TURNS_PER_PAGE, EXTRA_TURNS, IMAGE_WAITS } = require('./policy.js');
 
 // A screen as content.js observes it: sha names the image, page/pages the footer (none when the footer shows none).
 const screen = (sha, page, pages) => ({ sha, position: page ? { n: page, m: pages } : null, appOnly: false, signedOut: false });
@@ -42,9 +42,11 @@ test('opened at page 1: three turns back that change nothing confirm the start',
 
 test('an end the footer does not confirm is still the end once both keys fail; check_book.py judges how short it stopped', () => {
   const a = screen('a', 1, 300), b = screen('b', 2, 300);
-  assert.deepStrictEqual(replay([a, a, a, a, ...Array(10).fill(b)]).actions.slice(5), ['save', 'turn:next', 'turn:next',
-    'turn:next', 'turn:next-key', 'turn:next-key', 'turn:next-key', 'turn:next-key-left', 'turn:next-key-left',
-    'turn:next-key-left', 'done:turns stopped at page 2 of 300']);
+  const short = replay([a, a, a, a, ...Array(40).fill(b)]).actions;
+  assert.deepStrictEqual(short.slice(5, 16), ['save', 'turn:next', 'turn:next', 'turn:next', 'turn:next-key', 'turn:next-key',
+    'turn:next-key', 'turn:next-key-left', 'turn:next-key-left', 'turn:next-key-left', 'rest']);
+  assert.strictEqual(short.filter((x) => x === 'rest').length, RESTS);
+  assert.strictEqual(short.at(-1), 'done:turns stopped at page 2 of 300');
   const z = screen('z', 296, 300);
   assert.strictEqual(replay([a, a, a, a, z, z, z, z]).actions.at(-1), 'done:turns stopped at page 296 of 300');
   const x = screen('x'), y = screen('y');
@@ -53,9 +55,12 @@ test('an end the footer does not confirm is still the end once both keys fail; c
 
 test('a reader that will not go back to page 1 fails the capture where it stuck', () => {
   const c = screen('c', 3, 4);
-  assert.deepStrictEqual(replay([c, c, c, c, c, c, c, c, c, c]).actions, ['save', 'turn:prev', 'turn:prev', 'turn:prev',
+  const { actions } = replay(Array(41).fill(c));
+  assert.deepStrictEqual(actions.slice(0, 11), ['save', 'turn:prev', 'turn:prev', 'turn:prev',
     'turn:prev-key', 'turn:prev-key', 'turn:prev-key', 'turn:prev-key-right', 'turn:prev-key-right',
-    'turn:prev-key-right', 'fail:could not page back past page 3 of 4 by button or key']);
+    'turn:prev-key-right', 'rest']);
+  assert.strictEqual(actions.filter((x) => x === 'rest').length, RESTS);
+  assert.strictEqual(actions.at(-1), 'fail:could not page back past page 3 of 4 by button or key');
 });
 
 test('a book read right to left, whose left arrow key turns forward, pages back by the right arrow key', () => {
@@ -72,9 +77,19 @@ test('a book read right to left, whose left arrow key turns forward, pages back 
 });
 
 test('paging back that goes forward by the button and both keys fails instead of saving later screens', () => {
-  const b = screen('b', 2, 9), c = screen('c', 3, 9), d = screen('d', 4, 9), e = screen('e', 5, 9);
-  assert.deepStrictEqual(replay([b, c, d, e]).actions, ['save', 'turn:prev', 'turn:prev-key', 'turn:prev-key-right',
-    'fail:paging back went forward from page 4 to 5 by button and both keys']);
+  const p = (n) => screen(`p${n}`, n, 20);
+  const { actions, state } = replay([2, 3, 4, 5, 5, 6, 7, 8, 8, 9, 10, 11, 11, 12, 13, 14].map(p));
+  assert.deepStrictEqual(actions.slice(0, 6), ['save', 'turn:prev', 'turn:prev-key', 'turn:prev-key-right', 'rest', 'turn:prev']);
+  assert.strictEqual(actions.at(-1), 'fail:paging back went forward from page 13 to 14 by button and both keys');
+  assert.deepStrictEqual(Object.keys(state.saved), ['p2']);
+});
+
+test('after a rest, screens a wrong-way turn carried the reader past are not saved out of order', () => {
+  const b = screen('b', 2, 9), c = screen('c', 3, 9), d = screen('d', 4, 9), e = screen('e', 5, 9), a = screen('a', 1, 9);
+  const { actions, state } = replay([b, c, d, e, e, d, c, b, a, a, a, a]);
+  assert.deepStrictEqual(actions.slice(0, 10), ['save', 'turn:prev', 'turn:prev-key', 'turn:prev-key-right', 'rest',
+    'turn:prev', 'turn:prev', 'turn:prev', 'turn:prev', 'save']);
+  assert.deepStrictEqual(order(state.saved), ['a', 'b']);
 });
 
 test('a reader stuck on Previous page pages back by the left arrow key', () => {
@@ -166,4 +181,24 @@ test('a book opened far from its start jumps to the start before it saves anythi
   assert.deepStrictEqual(stayed.actions.slice(0, 4), ['jump:start', 'save', 'turn:prev', 'save']);
   assert.deepStrictEqual(stayed.state.saved, { end: 0, y: -1 });
   assert.strictEqual(replay([screen('c', 3, 4)]).actions[0], 'save');
+});
+
+test('a reader that stops turning mid-book both ways rests and starts over with the button before the capture gives up', () => {
+  // Facing the Mountain (2026-10-12): Next page and the right key stopped at 275 of 540, the left key went back to 274.
+  const a = screen('a', 1, 540), b = screen('b', 274, 540), c = screen('c', 275, 540), d = screen('d', 276, 540);
+  const resumed = replay([a, a, a, a, b, c, c, c, c, c, c, c, b, b, c, d]);
+  assert.deepStrictEqual(resumed.actions.slice(9, 19), ['turn:next', 'turn:next', 'turn:next-key', 'turn:next-key',
+    'turn:next-key', 'turn:next-key-left', 'rest', 'turn:next', 'turn:next', 'save']);
+  assert.deepStrictEqual(order(resumed.state.saved), ['a', 'b', 'c', 'd']);
+  const stuck = replay([a, a, a, a, ...Array(40).fill(c)]);
+  assert.strictEqual(stuck.actions.filter((x) => x === 'rest').length, RESTS);
+  assert.strictEqual(stuck.actions.at(-1), 'done:turns stopped at page 275 of 540');
+});
+
+test('after the jump to the start, a screen without its image yet is waited for', () => {
+  // 2026-10-12, extension 2.7: History of Jazz and Steve Jobs jumped from 180 and 238 and failed "no page image" at once.
+  const end = screen('end', 180, 389), blank = { sha: null, position: null, appOnly: false, signedOut: false };
+  const a = screen('a', 1, 389);
+  assert.deepStrictEqual(replay([end, blank, blank, a]).actions.slice(0, 4), ['jump:start', 'wait', 'wait', 'save']);
+  assert.strictEqual(replay([end, ...Array(3 * IMAGE_WAITS + 1).fill(blank)]).actions.at(-1), `fail:no page image after ${3 * IMAGE_WAITS} s`);
 });
