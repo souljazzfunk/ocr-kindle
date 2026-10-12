@@ -38,4 +38,4 @@ jobs:
       - run: python3 scripts/check_claude.py
       - run: python -m pytest -q
       - if: runner.os == 'Linux'
-        run: python3 scripts/rules.py CLAUDE.md
+        run: python3 scripts/rules.py RULES.md

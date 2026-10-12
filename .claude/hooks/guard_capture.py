@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PreToolUse hook for Bash: keep Kindle captures on the order Laiken set (see CLAUDE.md).
+"""PreToolUse hook for Bash: keep Kindle captures on the order Laiken set (see RULES.md).
 
 1. Pages come from the Cloud Reader extension in Chrome (Brave until 2026-10-11, when Laiken switched). The Kindle
    for Mac app is driven only when Laiken's own message asks for it; the command then carries KINDLE_APP_OK=1.
