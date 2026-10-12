@@ -21,7 +21,7 @@ class Mac:
         self.captures, self.converts, self.errors, self.log = {}, {}, {}, []
         monkeypatch.setattr(capture_book, 'capture', self.capture)
         monkeypatch.setattr(capture_book, 'convert_folder', self.convert_folder)
-        monkeypatch.setattr(capture_book, 'publish', lambda folder, title: self.log.append(('publish', title)))
+        monkeypatch.setattr(capture_book, 'publish', lambda folder, title, replaces=None: self.log.append(('publish', title)))
         monkeypatch.setattr(capture_book, 'start_wiki_ingest', lambda data: None)
 
     def capture(self, asin, title, domain, folder, recapture=False):
@@ -367,3 +367,20 @@ def test_each_convert_step_leaves_every_book_s_state_on_drive_for_the_cloud_to_r
     assert step(home, 'convert', config=config) == 'converted: B2'
     books = json.loads((home / 'Drive' / 'Kindle_reports' / '_books.json').read_text())
     assert books['books'][1]['state'] == 'ready to publish'
+
+
+def test_a_book_published_again_under_a_new_title_leaves_one_copy_on_drive(tmp_path):
+    # 2026-10-12: Drive held 11 books twice, the old copy under the short title of an earlier list ("Zero to Sold.md"
+    # beside "Zero to Sold: How to Start, Run, and Sell a Bootstrapped Business.md"). Another folder's file stays.
+    drive, folder = tmp_path / 'Kindle_md', tmp_path / 'B1'
+    drive.mkdir()
+    folder.mkdir()
+    (folder / 'Zero to Sold: How to Start.md').write_text('# Zero to Sold\n')
+    (drive / 'Zero to Sold.md').write_text('old\n')
+    (tmp_path / 'Elsewhere.md').write_text('keep\n')
+    config = {'GOOGLE_DRIVE_FOLDER': str(drive)}
+    copied = capture_book.publish(folder, 'Zero to Sold: How to Start', config, replaces=str(drive / 'Zero to Sold.md'))
+    assert sorted(p.name for p in drive.iterdir()) == ['Zero to Sold: How to Start.md'] and copied == drive / copied.name
+    capture_book.publish(folder, 'Zero to Sold: How to Start', config, replaces=str(tmp_path / 'Elsewhere.md'))
+    capture_book.publish(folder, 'Zero to Sold: How to Start', config, replaces=str(drive / 'Zero to Sold: How to Start.md'))
+    assert (tmp_path / 'Elsewhere.md').exists() and (drive / 'Zero to Sold: How to Start.md').exists()

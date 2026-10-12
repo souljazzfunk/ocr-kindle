@@ -38,6 +38,7 @@
 | 変換は、まだ公開していない本を先にし、公開済みの本の変換し直しは後にする | `kc_run.py` の `step`、`test_kc_run.py::test_a_new_book_is_converted_before_published_books_are_converted_again`（F112） |
 | 公開した本の report.json と時間を Drive に写し、結果の確認を Mac のセッションに頼まない | `test_kc_run.py::test_a_published_book_s_report_and_time_are_copied_to_drive_for_the_cloud_to_read`、`test_check_book.py::test_a_book_converted_by_hand_also_leaves_its_report_on_drive`（F090 F092） |
 | 変換の 1 歩ごとに全部の本の状態を Drive の `_books.json` に書き、一覧の様子を Mac に聞かない | `kc_run.py` の `step`・`describe`、`capture_book.py` の `publish_states`、`test_kc_run.py::test_each_convert_step_leaves_every_book_s_state_on_drive_for_the_cloud_to_read`（F115） |
+| 本を別の題名で公開し直したら、Drive の前の写しを消して 1 冊 1 ファイルにする | `capture_book.py` の `publish`、`test_kc_run.py::test_a_book_published_again_under_a_new_title_leaves_one_copy_on_drive`（F118） |
 | ページは画像でも canvas でも取り込み、画像がまだない画面は待ってから判断する | `extension/content.js` の `pageImage`、`extension/policy.js`、`extension/policy.test.js::a screen whose image is not there yet is observed again before the capture fails`（F067） |
 | サンプルに転送された本や読み込み直されたタブで止まらない | `extension/job.js`、`extension/job.test.js::a job tab that reloads before sending a page gets its job again; after a page it gets none`、`extension/job.test.js::the sample reader is told apart from the book`（F066） |
 | 全文版リーダーの画面が読めないときは、画面の記録から読む。当て推量で直さない | `extension/pagemeta.js`、`extension/pagemeta.test.js::the library list is read from the page JSON, authors without their trailing colon`、`test_channel.py::test_a_library_scan_writes_what_the_page_showed`（F067 F069） |
@@ -77,6 +78,7 @@
 | 目次に載った短い行は、Gemini が段落にしても章の見出しにする | `layout.py` の `listed`、`test_layout.py::test_titles_read_with_a_plus_lose_it_and_a_line_the_contents_lists_becomes_a_chapter`（F081） |
 | 目次に載った章が 1 つでも見出しになっていなければ、本を落とす | `check_book.py` の `contents_chapters`、`test_check_book.py::test_a_chapter_the_contents_lists_without_a_heading_is_caught`（F082） |
 | 1 行に読まれた目次の数項目や、読み違えた章番号（第山章）も、見出しと照らせば通す | `layout.py` の `contents_covered`、`test_check_book.py::test_contents_lines_read_as_one_and_chapter_numerals_misread_still_find_their_headings`（F116） |
+| 日本語の本の節番号とその下の題は見出しにする。文の上の番号は章の始まりと数えない | `proofread.py` の `numbered_title`、`test_proofread.py::test_a_numbered_section_title_of_a_japanese_book_becomes_a_heading`、`test_check_book.py::test_a_number_over_a_japanese_sentence_is_not_a_chapter_opening`（F117） |
 | 章の見出しの番号は目次の番号に揃え、段落とつながった見出しは段落に戻す | `layout.py` の `contents_spelling`、`test_layout.py::test_a_chapter_number_read_as_a_symbol_takes_the_contents_number_and_a_run_on_title_stays_a_paragraph`（F084） |
 | 変換し直すとき、配置済みの Live Text のページも新しいコードで書き直す | `img2txt.py`、`test_img2txt.py::test_live_text_pages_laid_out_before_are_written_again_without_a_request`（F079） |
 | Live Text のページは毎回 Live Text 自身の読みから組み直す。前の出力から組み直さない | `img2txt.py` の `LIVE`・`restore_live`、`test_layout.py::test_a_second_layout_starts_from_live_text_s_reading_not_from_the_first_layout_s_output`（F088） |

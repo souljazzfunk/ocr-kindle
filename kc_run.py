@@ -77,7 +77,7 @@ def convert(library, listed, book, ready, current, args):
 
 def publish(library, listed, book, ready, current, args):
     converted = book.record('convert')
-    copied = capture_book.publish(book.pages, book.title or book.asin)
+    copied = capture_book.publish(book.pages, book.title or book.asin, replaces=(book.record('publish') or {}).get('drive'))
     capture_book.start_wiki_ingest(read_json(converted['report']))
     # From the first capture to Drive, counted once: 英語教育幻想 took 66.7 minutes over six captures (2026-10-12).
     # A book published again after a converter change keeps the time of its first publish.

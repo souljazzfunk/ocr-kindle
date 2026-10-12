@@ -128,15 +128,21 @@ def report(folder, checks, extra):
     return data
 
 
-def publish(folder, title, config=None):
+def publish(folder, title, config=None, replaces=None):
     """Copy the checked Markdown to GOOGLE_DRIVE_FOLDER. Only this step writes there: on 2026-10-11 a comparison run of
-    img2txt.py on AI for Educators replaced the book on Drive."""
+    img2txt.py on AI for Educators replaced the book on Drive. replaces is the book's earlier copy there; under another
+    name it is removed, so Drive keeps one copy of each book (11 stale copies under old titles on 2026-10-12)."""
     drive = (config if config is not None else load_config()).get('GOOGLE_DRIVE_FOLDER')
     book = markdown_file(folder, title)
     if not drive or not Path(drive).is_dir() or not book.exists():
         return None
     print(f'Copied {book.name} to {drive}', flush=True)
-    return Path(shutil.copy2(book, drive))
+    copied = Path(shutil.copy2(book, drive))
+    old = Path(replaces) if replaces else None
+    if old and old.parent == copied.parent and old.name != copied.name and old.is_file():
+        old.unlink()
+        print(f'Removed the earlier copy {old.name}', flush=True)
+    return copied
 
 
 def reports_folder(config):

@@ -236,3 +236,15 @@ def test_prompts_in_code_blocks_are_mended_and_a_shift_is_not_a_prompt():
     pages = {'page_0001': prompts + '```\n>> > spam = int(spam)\n>>> y = x >> 2\n```\n\n' + BODY}
     fixed = apply(pages, find_all(Book(Path('/nonexistent'), pages)))['page_0001']
     assert '```\n>>> spam = int(spam)\n>>> y = x >> 2\n```' in fixed
+
+
+def test_a_numbered_section_title_of_a_japanese_book_becomes_a_heading():
+    # 2026-10-12: 代替医療解剖 was parked by chapter_titles for "3\n\n真実はこの両者のどこか中間にあるのかも？\n\n<body>": a
+    # section number over its title that nobody marked. A number over a sentence is not a title and stays as it is.
+    pages = {'page_0001': '# 第1章 鍼の真実\n\n本文です。',
+             'page_0002': '本文です。\n\n3\n\n真実はこの両者のどこか中間にあるのかも？\n\nいずれにせよ、われわれがこの本を書くことにしたのは、真実を知るためである。'
+                          '\n\n2\n\n「王様は裸だ」と言うことを許されない。それを言えば、効果が台無しになるからだ。'}
+    found = [f for f in find_all(Book(Path('/nonexistent'), pages)) if f.kind == 'numbered_title']
+    assert apply(pages, found) == {'page_0002': (
+        '本文です。\n\n## 3 真実はこの両者のどこか中間にあるのかも？\n\nいずれにせよ、われわれがこの本を書くことにしたのは、真実を知るためである。'
+        '\n\n2\n\n「王様は裸だ」と言うことを許されない。それを言えば、効果が台無しになるからだ。')}

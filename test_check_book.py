@@ -460,6 +460,14 @@ def test_contents_lines_read_as_one_and_chapter_numerals_misread_still_find_thei
     assert by_name(check_folder(folder))['contents_chapters'].ok
 
 
+def test_a_number_over_a_japanese_sentence_is_not_a_chapter_opening(tmp_path):
+    # 2026-10-12: 代替医療解剖 was parked for "2 / 「王様は裸だ」と言うことを許されない。それを言えば…": a title holds no 。.
+    body = '本文です。' * 30
+    md = f'# 第1章\n\n{body}\n\n2\n\n「王様は裸だ」と言うことを許されない。それを言えば、効果が台無しになる。\n\n{body}'
+    folder = book(tmp_path, [md], sources='livetext', md=md, name='代替医療解剖')
+    assert by_name(check_folder(folder))['chapter_titles'].ok
+
+
 def test_each_step_is_timed_in_the_report_and_a_slow_one_fails_the_speed_check(tmp_path, monkeypatch):
     # 2026-10-12: the redesign shipped with no step timed, so whether a book got faster could not be answered.
     drive = tmp_path / 'Kindle_md'
