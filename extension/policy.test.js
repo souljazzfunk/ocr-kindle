@@ -49,8 +49,28 @@ test('an end the footer does not confirm is still the end; check_book.py judges 
 
 test('a reader that will not go back to page 1 fails the capture where it stuck', () => {
   const c = screen('c', 3, 4);
-  assert.deepStrictEqual(replay([c, c, c, c, c, c, c]).actions, ['save', 'turn:prev', 'turn:prev', 'turn:prev',
-    'turn:prev-key', 'turn:prev-key', 'turn:prev-key', 'fail:could not page back past page 3 of 4 by button or key']);
+  assert.deepStrictEqual(replay([c, c, c, c, c, c, c, c, c, c]).actions, ['save', 'turn:prev', 'turn:prev', 'turn:prev',
+    'turn:prev-key', 'turn:prev-key', 'turn:prev-key', 'turn:prev-key-right', 'turn:prev-key-right',
+    'turn:prev-key-right', 'fail:could not page back past page 3 of 4 by button or key']);
+});
+
+test('a book read right to left, whose left arrow key turns forward, pages back by the right arrow key', () => {
+  // 2026-10-12: 英語教育幻想 stuck at 2037 of 2566 with the button; the left key took it forward to 2320 and the capture
+  // failed, saving four later screens again as earlier ones.
+  const a = screen('a', 1, 5), b = screen('b', 2, 5), c = screen('c', 3, 5);
+  const d = screen('d', 4, 5), e = screen('e', 5, 5);
+  const { actions, state } = replay([d, c, c, c, c, d, c, b, a, a, a, a, b, c, d, e, e, e, e]);
+  assert.deepStrictEqual(actions.slice(0, 12), ['save', 'turn:prev', 'save', 'turn:prev', 'turn:prev', 'turn:prev',
+    'turn:prev-key', 'turn:prev-key-right', 'turn:prev-key-right', 'save', 'turn:prev-key-right', 'save']);
+  assert.strictEqual(actions.at(-1), 'done:page 5 of 5');
+  assert.deepStrictEqual(order(state.saved), ['a', 'b', 'c', 'd', 'e']);
+  assert.strictEqual(state.start, 'opened at 4/5; 3 earlier screens saved back to page 1 (the last ones by the right arrow key)');
+});
+
+test('paging back that goes forward by the button and both keys fails instead of saving later screens', () => {
+  const b = screen('b', 2, 9), c = screen('c', 3, 9), d = screen('d', 4, 9), e = screen('e', 5, 9);
+  assert.deepStrictEqual(replay([b, c, d, e]).actions, ['save', 'turn:prev', 'turn:prev-key', 'turn:prev-key-right',
+    'fail:paging back went forward from page 4 to 5 by button and both keys']);
 });
 
 test('a reader stuck on Previous page pages back by the left arrow key', () => {

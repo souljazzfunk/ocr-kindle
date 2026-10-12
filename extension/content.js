@@ -118,8 +118,8 @@ async function capture(job) {
     } else if (action === 'wait') {
       await sleep(1000);
       seen = await observe();
-    } else if (action === 'turn:prev-key') {
-      pressKey('ArrowLeft');
+    } else if (action === 'turn:prev-key' || action === 'turn:prev-key-right') {
+      pressKey(action === 'turn:prev-key' ? 'ArrowLeft' : 'ArrowRight');
       await waitForTurn(seen.key, KEY_WAIT_MS);
       seen = await observe();
     } else if (action.startsWith('turn:')) {
