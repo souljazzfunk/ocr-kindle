@@ -1,5 +1,6 @@
 import os
 import subprocess
+import json
 import sys
 import zipfile
 
@@ -221,3 +222,22 @@ def test_join_pages_glues_nothing_to_code():
         body + '\n\n```\nprint("Hello")\n```\n\nand so on.\n\n' + body + '\n\n```\nHello\n```\n')
     assert vision_markdown([(0.08, 0.1, 'For example:'), (0.1, 0.13, '```\n>>> age = 18\nTrue\n```'),
                             (0.08, 0.2, 'that runs on')]) == 'For example:\n\n```\n>>> age = 18\nTrue\n```\n\nthat runs on'
+
+
+def test_live_text_pages_laid_out_before_are_written_again_without_a_request(tmp_path, monkeypatch):
+    # 2026-10-12: 英語教育幻想 was converted again after the contents fix, but its pages already in layout.json kept
+    # their old titles, because only pages without a layout were written.
+    import img2txt
+    import layout
+    book = tmp_path / '英語教育幻想'
+    book.mkdir()
+    (book / 'page_0001.png').write_bytes(b'png')
+    (book / 'page_0001.txt').write_text('# 目次\n\n## 幻想1 英語は世界の共通語である 13', encoding='utf-8')
+    img2txt.record_sources(book, [('page_0001', img2txt.LIVETEXT)])
+    (book / 'layout.json').write_text(json.dumps({'page_0001': {'titles': [{'line': 0, 'level': 1},
+                                                                           {'line': 1, 'level': 2}]}}))
+    monkeypatch.setattr(img2txt, 'load_config', lambda: {})
+    monkeypatch.setattr(layout, 'claude_cli', lambda: None)
+    monkeypatch.setattr(sys, 'argv', ['img2txt.py', str(book), '--model', 'vision'])
+    img2txt.main()
+    assert (book / 'page_0001.txt').read_text(encoding='utf-8') == '# 目次\n\n幻想1 英語は世界の共通語である 13'
