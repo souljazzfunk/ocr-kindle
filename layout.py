@@ -149,28 +149,33 @@ def livetext_markdown(lines, page, chapters=(), contents=False, mark=''):
     marks 「†」 read as 「十」 and the titles stayed paragraphs. Without boxes, only the titles are taken: the book's
     section mark is taken off them, the contents page gives their level, and a contents page's entries stay text."""
     levels = {t['line']: t['level'] for t in page.get('titles', []) if 0 <= t.get('line', -1) < len(lines)}
+    # 幻想5 and 幻想6 (2026-10-12) were left as paragraphs by Gemini; a short line the contents lists is a chapter title.
+    levels.update({i: 1 for i, line in enumerate(lines) if i not in levels and not contents and '。' not in line
+                   and len(line) <= LISTED_MAX and listed(line[1:] if mark and line[:1] in mark else line, chapters)})
     out = []
     for i, line in enumerate(lines):
         if i not in levels or contents and not CONTENTS.match(line.strip()):
             out.append(line)
             continue
-        title = line[len(mark):].lstrip() if mark and line.startswith(mark) else line
+        title = line[1:].lstrip() if mark and line[:1] in mark else line
         out.append(f'{"#" * chapter_level(title, levels[i], chapters)} {title}')
     return '\n\n'.join(out)
 
 
-SECTION_MARKS = '十†‡◆◇■□●○▼▽★☆※'
+# Each group is one mark with the characters Live Text reads it as: 英語教育幻想's 「†」 came out as 「十」, 「＋」 and 「+」.
+SECTION_MARKS = ('十＋+†‡', '◆◇', '■□', '●○', '▼▽', '★☆', '※')
+LISTED_MAX = 50
 MARK_MIN = 5
 MARK_SHARE = 0.3
 
 
 def section_mark(titles):
-    """The character a book sets before its section titles, when one of SECTION_MARKS starts at least MARK_MIN of them
-    and MARK_SHARE of all: 英語教育幻想's 73 titles that began with 「†」, which Live Text reads as 「十」."""
+    """The group of SECTION_MARKS a book sets before its section titles, when its characters start at least MARK_MIN of
+    them and MARK_SHARE of all: 英語教育幻想's 「†」, read as 「十」 on 73 titles and as 「＋」 or 「+」 on 29 more."""
     firsts = [t.strip()[:1] for t in titles if t.strip()]
-    counts = {c: firsts.count(c) for c in set(firsts) if c in SECTION_MARKS}
-    mark = max(counts, key=counts.get, default='')
-    return mark if mark and counts[mark] >= MARK_MIN and counts[mark] >= MARK_SHARE * len(firsts) else ''
+    counts = {group: sum(first in group for first in firsts) for group in SECTION_MARKS}
+    mark = max(counts, key=counts.get)
+    return mark if counts[mark] >= MARK_MIN and counts[mark] >= MARK_SHARE * len(firsts) else ''
 
 
 def livetext_contents(images):
@@ -669,8 +674,12 @@ def chapter_level(text, level, chapters):
     """
     if not chapters:
         return level
+    return 1 if CONTENTS.match(text.strip()) or listed(text, chapters) else max(level, 2)
+
+
+def listed(text, chapters):
+    """Whether the contents lists this title: the same letters, or one begins the other (an entry cut mid-line, or two
+    entries read as one line)."""
     key = comparable(re.sub(r'^(?:(?:chapter|part)\s+)?\d+\.?\s*', '', text, flags=re.I))
-    listed = CONTENTS.match(text.strip()) or any(
-        key and (key == entry or len(key) >= 8 and (entry.startswith(key) or key.startswith(entry)))
-        for entry in chapters)
-    return 1 if listed else max(level, 2)
+    return any(key and (key == entry or len(key) >= 8 and (entry.startswith(key) or key.startswith(entry)))
+               for entry in chapters)
