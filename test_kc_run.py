@@ -300,3 +300,17 @@ def test_a_published_book_s_report_and_time_are_copied_to_drive_for_the_cloud_to
         ('B1', 'One', 600, False)
     assert copied['report']['blocking_failures'] == []
     assert capture_book.publish_report('B1', 'One', {}, {}, {'GOOGLE_DRIVE_FOLDER': str(home / 'gone' / 'md')}) is None
+
+
+def test_a_book_parked_for_its_capture_by_the_checks_is_captured_again_once_the_extension_changes(home, mac):
+    # 2026-10-12: 英語教育幻想 failed start_position and capture_stop; parked under the converter's version, the fixed
+    # extension would never have captured it again.
+    mac.converts['B1'] = [['start_position', 'capture_stop']]
+    assert step(home, 'capture') == 'captured: B1'
+    assert step(home, 'convert') == 'parked: B1'
+    edit(home, 'layout.py')
+    assert step(home, 'capture') == 'captured: B2'
+    assert state(home, 'B1').failure['checks'] == ['start_position', 'capture_stop']
+    edit(home, 'extension/background.js')
+    assert step(home, 'capture') == 'captured: B1'
+    assert mac.log[-1] == ('capture', 'B1', True)

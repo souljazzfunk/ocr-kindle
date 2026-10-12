@@ -36,6 +36,7 @@
 | 全文版リーダーの画面が読めないときは、画面の記録から読む。当て推量で直さない | `extension/pagemeta.js`、`extension/pagemeta.test.js::the library list is read from the page JSON, authors without their trailing colon`、`test_channel.py::test_a_library_scan_writes_what_the_page_showed`（F067 F069） |
 | 拡張は main と同じもの。ブランチや書きかけを読み込ませず、変えたら版を上げる | `extension_state.py`、`test_extension_state.py::test_capture_refuses_before_offering_the_job`、`test_extension_state.py::test_ci_requires_a_version_bump_when_the_extension_changes`（F009） |
 | 拡張の変更が効いたと言うのは、実機の取り込みが通ったときだけ | 宿題（F012） |
+| 取り込みのせいで止めた本は、取り込みのコードが変わったら取り直す | `book.py` の `RULES`・`Book.state`、`test_kc_run.py::test_a_book_parked_for_its_capture_by_the_checks_is_captured_again_once_the_extension_changes`（F095） |
 | 同じ本を取り直すのは、取り込みが使えないと分かったときの 1 回だけ | `book.py` の `RULES`、`test_kc_run.py::test_an_unusable_capture_is_captured_once_more_then_the_book_is_parked`、`test_kc_run.py::test_a_stalled_capture_is_tried_once_more_then_parked`（F031） |
 | 取り込めない本（アプリ専用・サンプル）は、その本だけを失敗にして次へ進む | `book.py` の `RULES`、`test_kc_run.py::test_kindle_app_only_parks_only_that_book_and_new_extension_code_does_not_retry_it`、`test_check_book.py::test_a_book_the_reader_opens_as_its_sample_fails_as_sample_only`（F033 F066） |
 | 落ちた本だけを止め、一覧は人に聞かずに次の本へ進む | `book.py` の `RULES`、`kc_run.py`、`test_kc_run.py::test_a_book_that_fails_its_checks_is_parked_and_the_list_goes_on`（F005 F020） |
