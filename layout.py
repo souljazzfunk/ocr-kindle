@@ -144,21 +144,23 @@ def page_lines(image):
     return [re.sub(r'^#+ ', '', line) for line in text.splitlines() if line.strip()]
 
 
-def livetext_markdown(lines, page, chapters=(), contents=False, mark=''):
+def livetext_markdown(lines, page, chapters=(), contents=False, mark='', spelled=()):
     """A Live Text page with Gemini's titles marked. 英語教育幻想 (2026-10-12) came out with no headings: its section
     marks 「†」 read as 「十」 and the titles stayed paragraphs. Without boxes, only the titles are taken: the book's
-    section mark is taken off them, the contents page gives their level, and a contents page's entries stay text."""
+    section mark is taken off them, the contents page gives their level and its numbers (spelled), and a contents
+    page's entries stay text. A title Live Text ran into the next paragraph stays a paragraph, its words kept."""
     levels = {t['line']: t['level'] for t in page.get('titles', []) if 0 <= t.get('line', -1) < len(lines)}
     # 幻想5 and 幻想6 (2026-10-12) were left as paragraphs by Gemini; a short line the contents lists is a chapter title.
     levels.update({i: 1 for i, line in enumerate(lines) if i not in levels and not contents and '。' not in line
                    and len(line) <= LISTED_MAX and listed(line[1:] if mark and line[:1] in mark else line, chapters)})
     out = []
     for i, line in enumerate(lines):
-        if i not in levels or contents and not CONTENTS.match(line.strip()):
-            out.append(line)
+        title = line[1:].lstrip() if mark and line[:1] in mark and i in levels else line
+        if i not in levels or contents and not CONTENTS.match(line.strip()) or '。' in line and len(line) > LISTED_MAX:
+            out.append(title)
             continue
-        title = line[1:].lstrip() if mark and line[:1] in mark else line
-        out.append(f'{"#" * chapter_level(title, levels[i], chapters)} {title}')
+        level = chapter_level(title, levels[i], chapters)
+        out.append(f'{"#" * level} {contents_spelling(title, spelled) if level == 1 else title}')
     return '\n\n'.join(out)
 
 
@@ -178,8 +180,34 @@ def section_mark(titles):
     return mark if counts[mark] >= MARK_MIN and counts[mark] >= MARK_SHARE * len(firsts) else ''
 
 
+def contents_spelling(title, spelled):
+    """The title with the numbers its contents line has where Live Text read a symbol: 英語教育幻想's 「幻想8」 came out as
+    「幻想∞」 in the text and right in the contents. Everything else must match, at least 8 characters of it."""
+    for entry in spelled:
+        out, i, j, swapped = [], 0, 0, False
+        while i < len(title) and j < len(entry):
+            a, b = title[i], entry[j]
+            if a == b:
+                out.append(a)
+                i, j = i + 1, j + 1
+            elif a.isspace():
+                out.append(a)
+                i += 1
+            elif b.isspace():
+                j += 1
+            elif b.isdigit() and not comparable(a) and not a.isdigit():
+                out.append(b)
+                i, j, swapped = i + 1, j + 1, True
+            else:
+                break
+        else:
+            if swapped and i >= 8:
+                return ''.join(out) + title[i:]
+    return title
+
+
 def livetext_contents(images):
-    """(stems, entries) of a Live Text book's contents: the front-matter page with a 目次 line and the pages right after
+    """(stems, entries, spelled) of a Live Text book's contents: the front-matter page with a 目次 line and the pages right after
     it that hold no sentence (no 「。」). 英語教育幻想's contents ran over several pages, and each entry came out as a
     title, some cut mid-line."""
     pages = [image for image in images[:max(1, round(len(images) * CONTENTS_PAGES))]
@@ -196,8 +224,9 @@ def livetext_contents(images):
                 break
             stems.append(after.stem)
             entries += more
-        return set(stems), [e for e in (comparable(re.sub(r'\s*\d+$', '', x)) for x in entries) if len(e) >= 3]
-    return set(), []
+        spelled = [re.sub(r'\s*\d+$', '', x).strip() for x in entries]
+        return set(stems), [e for e in map(comparable, spelled) if len(e) >= 3], spelled
+    return set(), [], []
 
 
 def ask_layout(client, images):
@@ -308,7 +337,7 @@ def mark_layout(folder, client, images, cli=None):
             layout.update((stem, dict(page, code=code_groups(page.get('code')))) for stem, page in pages.items())
             (folder / LAYOUT).write_text(json.dumps(layout, ensure_ascii=False, indent=0), encoding='utf-8')
     every = page_images(folder)
-    contents, toc = livetext_contents(every)
+    contents, toc, spelled = livetext_contents(every)
     chapters = contents_entries(every) or toc
     live = [image for image in every if image.stem in layout and not image.with_suffix(LINES).exists()
             and image.with_suffix('.txt').exists()]
@@ -322,7 +351,7 @@ def mark_layout(folder, client, images, cli=None):
             text = page_markdown(boxes, page, chapters)
             image.with_suffix('.txt').write_text(text or ' ', encoding='utf-8')
         elif image.stem in layout and image.with_suffix('.txt').exists():
-            text = livetext_markdown(page_lines(image), layout[image.stem], chapters, image.stem in contents, mark)
+            text = livetext_markdown(page_lines(image), layout[image.stem], chapters, image.stem in contents, mark, spelled)
             image.with_suffix('.txt').write_text(text or ' ', encoding='utf-8')
     left = [image for image in images if image.stem not in layout]
     if first_error:
