@@ -182,6 +182,8 @@ def convert(asin, title=None, model='vision', domain='read.amazon.com', download
     data['total_seconds'] = round(time.time() - started)
     if not data['blocking_failures']:
         publish(Path(data['folder']), title)
+        # A book run by hand is published too: on 2026-10-12 英語教育幻想 went to Drive this way with no report beside it.
+        publish_report(asin, title, data, None, load_config())
     start_wiki_ingest(data)
     return data
 

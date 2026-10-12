@@ -244,6 +244,26 @@ def test_a_book_that_failed_its_checks_is_not_copied_to_drive(tmp_path, monkeypa
     assert [p.name for p in drive.iterdir()] == ['Book.md']
 
 
+def test_a_book_converted_by_hand_also_leaves_its_report_on_drive(tmp_path, monkeypatch):
+    # 2026-10-12: 英語教育幻想, converted with capture_book.py, reached Drive with no report for the cloud to read.
+    drive = tmp_path / 'Kindle_md'
+    drive.mkdir()
+    folder = tmp_path / 'Book'
+    folder.mkdir()
+    (folder / 'Book.md').write_text('# One\n\n' + BODY, encoding='utf-8')
+    monkeypatch.setattr(capture_book, 'load_config', lambda: {'GOOGLE_DRIVE_FOLDER': str(drive)})
+    monkeypatch.setattr(capture_book, 'run', lambda *a, **k: None)
+    monkeypatch.setattr(capture_book, 'start_wiki_ingest', lambda data: None)
+    monkeypatch.setattr(capture_book, 'correct', lambda f, t: ([Check('headings', False, '0 headings')], 1))
+    capture_book.convert('B0', 'Book', source=folder)
+    assert not (tmp_path / 'Kindle_reports').exists()
+    monkeypatch.setattr(capture_book, 'correct', lambda f, t: ([Check('headings', True, '1 heading')], 1))
+    capture_book.convert('B0', 'Book', source=folder)
+    copied = json.loads((tmp_path / 'Kindle_reports' / 'B0.json').read_text(encoding='utf-8'))
+    assert (copied['asin'], copied['title'], copied['publish'], copied['report']['blocking_failures']) == \
+        ('B0', 'Book', None, [])
+
+
 def test_index_letter_is_not_a_chapter_opening(tmp_path):
     # Python Crash Course: the index letter Z, read as 7, then an entry and the colophon.
     page = ('# INDEX\n\n7\n\nZen of Python, 30-31 ZeroDivisionError, 194\n\nPython Crash Course, 2nd Edition is set in '
