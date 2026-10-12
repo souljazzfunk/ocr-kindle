@@ -226,11 +226,19 @@ def vision_transcribe(image, read_lines=None, read_livetext=None):
 
 
 def restore_live(images, sources, read=None):
-    """Read again with Live Text the pages it read before LIVE was kept, so their layout starts from its reading."""
-    missing = [image for image in images if sources.get(image.stem) == LIVETEXT and not image.with_suffix(LIVE).exists()]
-    for image in missing:
-        image.with_suffix(LIVE).write_text((read or livetext)(image), encoding='utf-8')
-    return missing
+    """Read again with Live Text the pages it read before LIVE was kept, so their layout starts from its reading. A page
+    it cannot read now keeps its layout from the .txt."""
+    restored = []
+    for image in images:
+        if sources.get(image.stem) != LIVETEXT or image.with_suffix(LIVE).exists():
+            continue
+        try:
+            image.with_suffix(LIVE).write_text((read or livetext)(image), encoding='utf-8')
+        except RuntimeError as e:
+            print(f'{image.name}: {e}; laid out from its .txt', flush=True)
+            continue
+        restored.append(image)
+    return restored
 
 
 def chars(text):

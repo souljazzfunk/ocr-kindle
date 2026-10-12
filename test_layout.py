@@ -489,5 +489,11 @@ def test_pages_live_text_read_before_its_reading_was_kept_are_read_again(tmp_pat
     (tmp_path / f'page_0002{img2txt.LIVE}').write_text('kept', encoding='utf-8')
     sources = {'page_0001': img2txt.LIVETEXT, 'page_0002': img2txt.LIVETEXT, 'page_0003': img2txt.VISION}
     assert img2txt.restore_live(pages, sources, read=lambda image: f'read {image.stem}') == [pages[0]]
+
+    def unreadable(image):
+        raise RuntimeError(f'livetext: cannot read {image}')
+    (tmp_path / f'page_0001{img2txt.LIVE}').rename(tmp_path / 'kept.txt')
+    assert img2txt.restore_live(pages, sources, read=unreadable) == []
+    (tmp_path / 'kept.txt').rename(tmp_path / f'page_0001{img2txt.LIVE}')
     assert (tmp_path / f'page_0001{img2txt.LIVE}').read_text(encoding='utf-8') == 'read page_0001'
     assert (tmp_path / f'page_0002{img2txt.LIVE}').read_text(encoding='utf-8') == 'kept'
