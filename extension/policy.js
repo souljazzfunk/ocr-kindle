@@ -8,7 +8,7 @@
 // second), 'turn:prev', 'turn:prev-key' (the left arrow key instead of the button), 'turn:prev-key-right' (the right
 // arrow key, for a book read right to left), 'turn:next', 'turn:next-key' (the right arrow key), 'turn:next-key-left'
 // (the left arrow key, for a book read right to left),
-// 'jump:start' (the scrubber to the book's first page, then observe again), 'done:<proof>' or 'fail:<reason>'.
+// 'rest' (wait, then observe again), 'jump:start' (the scrubber to the book's first page, then observe again), 'done:<proof>' or 'fail:<reason>'.
 
 const NEXT_ATTEMPTS = 3; // Cloud Reader occasionally ignores a turn, so an edge is 3 turns that leave the image unchanged
 // Caps on page turns, each direction counted on its own. On 2026-10-10 Automate the Boring Stuff (552 pages, opened at
@@ -32,7 +32,7 @@ const APP_ONLY_REASON = 'kindle app required: Cloud Reader cannot open this book
 
 function initialState() {
   return { phase: 'back', saved: {}, low: 1, high: 0, n: null, last: null, pending: false, tries: 0, turns: 0, limit: 0,
-    page: null, pages: null, same: 0, waits: 0, keyed: false, jumped: null, opened: '', openedAt: null, start: '' };
+    page: null, pages: null, same: 0, waits: 0, rests: 0, savedPage: null, keyed: false, jumped: null, opened: '', openedAt: null, start: '' };
 }
 
 const limitFor = (position) => TURNS_PER_PAGE * (position?.m || UNKNOWN_LENGTH) + EXTRA_TURNS;
@@ -50,12 +50,17 @@ const turn = (state) => ({ state, action: KEY_ACTIONS[state.phase][state.keyed] 
 // a forward edge tries the keys before it ends the capture.
 const nearEnd = (position) => position.m - position.n <= Math.max(5, Math.ceil(position.m * 0.02));
 const fail = (state, reason) => ({ state, action: `fail:${reason}` });
+// A reader can stop turning both ways for a while: Facing the Mountain (2026-10-12) stuck at 275 of 540 by the button and
+// both keys, and History of Jazz ignored single turns more and more often before it stuck. Where every way has failed
+// mid-book, the capture rests (content.js waits REST_MS) and starts over with the button, this many times per book.
+const RESTS = 3;
+const rest = (state) => ({ state: { ...state, keyed: false, tries: 0, same: 0, rests: state.rests + 1, pending: true }, action: 'rest' });
 
 function save(state, sha) {
   const n = state.phase === 'back' ? state.low - 1 : state.high + 1;
   const low = Math.min(state.low, n);
   const high = Math.max(state.high, n);
-  return { state: { ...state, saved: { ...state.saved, [sha]: n }, n, low, high, last: sha, pending: true }, action: 'save' };
+  return { state: { ...state, saved: { ...state.saved, [sha]: n }, n, low, high, last: sha, pending: true, savedPage: state.page }, action: 'save' };
 }
 
 function edge(state, position) {
@@ -64,12 +69,14 @@ function edge(state, position) {
     // is not known yet; the left arrow key is tried before the capture fails, and dom-probe-stopped.json records the
     // reader's controls where it stuck.
     if (position && position.n !== 1 && nextWay(state)) return turn({ ...state, keyed: nextWay(state), tries: 0 });
+    if (position && position.n !== 1 && state.rests < RESTS) return rest(state);
     if (position && position.n !== 1) return fail(state, `could not page back past page ${position.n} of ${position.m} by button or key`);
     const start = `opened at ${state.opened}; ${-state.low} earlier screens saved back to ${position ? 'page 1' : 'the first screen'}`
       + (state.keyed ? ` (the last ones by the ${state.keyed} arrow key)` : '');
     return turn({ ...state, phase: 'fwd', keyed: false, tries: 0, turns: 0, same: 0, start });
   }
   if (position && !nearEnd(position) && nextWay(state)) return turn({ ...state, keyed: nextWay(state), tries: 0 });
+  if (position && !nearEnd(position) && state.rests < RESTS) return rest(state);
   const proof = position
     ? (position.n === position.m ? `page ${position.m} of ${position.m}` : `turns stopped at page ${position.n} of ${position.m}`)
     : 'turns stopped on an unnumbered screen';
@@ -101,6 +108,7 @@ function nextAction(state, observation) {
   const wrongWay = n !== null && state.page !== null && position.m === state.pages
     && (state.phase === 'back' ? n > state.page : n < state.page);
   if (wrongWay) {
+    if (!nextWay(state) && state.rests < RESTS) return rest({ ...next, last: sha });
     if (!nextWay(state)) return fail(state, `paging ${state.phase === 'back' ? 'back went forward' : 'forward went back'} from page ${state.page} to ${n} by button and both keys`);
     return turn({ ...next, keyed: nextWay(state), tries: 0, last: sha });
   }
@@ -113,9 +121,14 @@ function nextAction(state, observation) {
   // Forward from page 1, the screens before the opening one were all saved on the way back, though a canvas can draw
   // one again with other pixels: 英語教育幻想 (2026-10-12) saved 13 of them twice under new hashes.
   if (state.phase === 'fwd' && n !== null && state.openedAt !== null && n < state.openedAt) return turn({ ...next, tries: 0, last: sha });
+  // A turn the wrong way can carry the reader past screens never saved, and coming back through them they look fresh.
+  // A screen beyond the last saved page is not saved out of order: back past it, forward short of it.
+  if (n !== null && state.savedPage !== null && (state.phase === 'back' ? n > state.savedPage : n < state.savedPage)) {
+    return turn({ ...next, tries: 0, last: sha });
+  }
   return save({ ...next, tries: 0 }, sha);
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { initialState, nextAction, NEXT_ATTEMPTS, TURNS_PER_PAGE, EXTRA_TURNS, UNKNOWN_LENGTH, STUCK_TURNS, IMAGE_WAITS, APP_ONLY_REASON };
+  module.exports = { initialState, nextAction, RESTS, NEXT_ATTEMPTS, TURNS_PER_PAGE, EXTRA_TURNS, UNKNOWN_LENGTH, STUCK_TURNS, IMAGE_WAITS, APP_ONLY_REASON };
 }

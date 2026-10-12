@@ -27,6 +27,7 @@
 | 前のページのボタンで戻れなくなったら矢印キーで戻り、止まった画面を記録する | `extension/policy.js`、`extension/policy.test.js::a reader stuck on Previous page pages back by the left arrow key`、`test_channel.py::test_the_screen_where_a_capture_stopped_is_kept_beside_the_trace`（F076） |
 | 戻るはずのめくりで先のページに出たら、次の手（左キー、右キー）に替え、その画面は保存しない | `extension/policy.js` の `WAYS`、`extension/policy.test.js::a book read right to left, whose left arrow key turns forward, pages back by the right arrow key`（F093） |
 | 次のページのボタンで進めなくなったら、終わり近くでない限り矢印キーで進む | `extension/policy.js` の `WAYS`・`nearEnd`、`extension/policy.test.js::a reader stuck on Next page mid-book pages on by the right arrow key, then by the left in a book read right to left`（F105） |
+| どの手でもめくれなくなったら、2 分休んで最初の手からやり直す（1 冊 3 回まで） | `extension/policy.js` の `rest`、`extension/policy.test.js::a reader that stops turning mid-book both ways rests and starts over with the button before the capture gives up`（F108） |
 | 先頭から進み直すとき、開いた位置より前の画面を保存し直さない | `extension/policy.js`、`extension/policy.test.js::forward from page 1, a screen before the opening one is not saved again under a new hash`（F077） |
 | ページめくりは際限なく続けない。上限はページ数に合わせ、向きごとに数える | `extension/policy.js`、`extension/policy.test.js::turns past three per page stop the capture, each direction counted on its own`（F017 F019 F027） |
 | 止まった取り込みを 1 時間待たない。数分で理由を残して終える | `channel.py`、`test_channel.py::test_a_capture_with_no_page_and_no_event_for_the_stall_time_is_stalled`（F032 F039） |
