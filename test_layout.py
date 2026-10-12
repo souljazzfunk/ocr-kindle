@@ -320,7 +320,7 @@ def test_the_book_stops_when_sonnet_fails_too(tmp_path, monkeypatch):
     monkeypatch.setattr(layout.subprocess, 'run', run)
     monkeypatch.setattr(layout, 'WORKERS', 1)
     client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
-    with pytest.raises(layout.GeminiFailed, match='60 pages left: Gemini: 429.*Sonnet: .*usage limit.*midnight Pacific'):
+    with pytest.raises(layout.GeminiFailed, match='60 pages left: Sonnet: .*usage limit.*Gemini: 429.*midnight Pacific'):
         mark_layout(tmp_path, client, sorted(tmp_path.glob('page_*.png')), cli='claude')
     assert len(calls) == 1  # three batches, one call to each
 
@@ -389,8 +389,40 @@ def test_a_claude_call_without_json_schema_is_the_steve_jobs_reply():
     found = check.problems(STEVE_JOBS, 'layout.py')
     assert found == ['layout.py:11: ask_layout_claude calls claude -p without --json-schema; '
                      'call ask_claude, which passes the schema']
-    assert layout.as_json(layout.SCHEMA) == layout.LAYOUT_SCHEMA
+    assert layout.as_json(layout.SCHEMA) == layout.for_gemini(layout.LAYOUT_SCHEMA)
     assert check.main() == 0
+
+
+# gemini_schema as merged in 2282ee7. It copied additionalProperties onto Gemini's Schema, and the Developer
+# API answered 400 Unknown name "additional_properties" (B005J3IEZQ).
+_GEMINI_SCHEMA_2282EE7 = r'''
+def gemini_schema(schema):
+    kwargs = {'type': _GEMINI_TYPES[schema['type']]}
+    if 'properties' in schema:
+        kwargs['properties'] = {key: gemini_schema(value) for key, value in schema['properties'].items()}
+    if 'items' in schema:
+        kwargs['items'] = gemini_schema(schema['items'])
+    if 'required' in schema:
+        kwargs['required'] = list(schema['required'])
+    if 'additionalProperties' in schema:
+        kwargs['additional_properties'] = schema['additionalProperties']
+    return types.Schema(**kwargs)
+'''
+
+
+def test_the_schema_merged_in_2282ee7_is_rejected_by_gemini():
+    namespace = {'_GEMINI_TYPES': layout._GEMINI_TYPES, 'types': layout.types}
+    exec(_GEMINI_SCHEMA_2282EE7, namespace)
+    found = layout.gemini_rejected(namespace['gemini_schema'](layout.LAYOUT_SCHEMA))
+    assert [line.split(': ', 1)[0] for line in found] == [
+        'response_schema',
+        'response_schema.properties.pages.items',
+        'response_schema.properties.pages.items.properties.titles.items',
+        'response_schema.properties.pages.items.properties.figures.items',
+        'response_schema.properties.pages.items.properties.drop_cap']
+    assert 'omit it in gemini_schema' in found[0]
+    assert layout.gemini_rejected(layout.SCHEMA) == []
+    assert layout.LAYOUT_SCHEMA['additionalProperties'] is False
 
 # Line boxes shaped like Python Crash Course's pages (2026-10-11): body at 0.08, listings at 0.10, an indent 0.05.
 PCC = [(0.08, 0.10, 0.022, 'In Python, the hash mark (#) indicates a comment. Anything following a hash mark in your'),

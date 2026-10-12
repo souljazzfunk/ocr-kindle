@@ -85,6 +85,7 @@
 | Live Text のページも見出しを Gemini に読ませる。段落のままにしない | `layout.py` の `livetext_markdown`、`test_layout.py::test_a_live_text_page_takes_its_titles_from_gemini`（F075） |
 | Gemini が 1 回でも失敗したら、残りのページは Sonnet に回す | `layout.py`、`test_layout.py::test_any_failed_gemini_request_stops_the_book_without_sending_the_rest`、`test_layout.py::test_sonnet_lays_out_the_pages_gemini_could_not_and_the_book_goes_on`（F028） |
 | Sonnet には Gemini と同じスキーマを --json-schema で渡す。自由文の JSON は読まない | `scripts/check_claude.py`、`layout.py` の `ask_claude`・`LAYOUT_SCHEMA`、`test_layout.py::test_a_claude_call_without_json_schema_is_the_steve_jobs_reply`（F121） |
+| Gemini のスキーマに API が拒むキーを載せない。400 は変換コードが変わるまで待つ | `layout.py` の `gemini_schema`・`gemini_rejected`、`book.py` の `gemini_reset`、`test_layout.py::test_the_schema_merged_in_2282ee7_is_rejected_by_gemini`、`test_kc_run.py::test_a_gemini_400_waits_for_new_code`（F122） |
 | Sonnet も落ちたら、本を失敗にせず、変換の仕事を Gemini の枠が戻るまで止める | `book.py` の `RULES`、`test_kc_run.py::test_a_gemini_quota_failure_waits_for_the_reset_and_converts_the_same_pages_with_no_new_capture`（F028） |
 | ルール表の各行は決まりを確かめるテストを名前で挙げ、テストと共に CI で回す | `scripts/rules.py`、`.github/workflows/ci.yml`、`test_rules.py::test_a_named_test_that_does_not_exist_fails`（F071 F072） |
 

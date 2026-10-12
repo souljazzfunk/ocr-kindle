@@ -10,7 +10,8 @@ go in one request. The answers are kept in layout.json, so a re-run asks only fo
 
 When Gemini fails (its free tier ran out mid-list on 2026-10-10), Sonnet answers the same question through the
 Claude Code CLI on the Mac (`claude -p`), on Laiken's Claude plan, so the list does not wait a day for the quota.
-Both are given LAYOUT_SCHEMA. Sonnet's answer is the CLI's structured_output, not prose around a JSON array.
+Both are given LAYOUT_SCHEMA. Claude takes it as `--json-schema`. Gemini's response_schema is that shape
+without `additionalProperties`: the Developer API rejects the key with 400 Unknown name.
 """
 
 import json
@@ -92,8 +93,9 @@ printed line, top to bottom. Describe the page's structure by line number.
 
 Give every page; leave a list empty when nothing on the page belongs in it."""
 
-# One schema for a batch of pages. Gemini takes it as response_schema; Sonnet takes the same value as
-# `--json-schema`. Claude Code refuses a top-level array, so the pages sit under `pages`.
+# One schema for a batch of pages. Claude takes it as --json-schema (additionalProperties included).
+# Claude Code refuses a top-level array, so the pages sit under `pages`. Gemini gets for_gemini(): the
+# Developer API rejects additionalProperties with 400 Unknown name (B005J3IEZQ, 2026-10-12, 2282ee7).
 _INT = {'type': 'integer'}
 _LINE_NUMBERS = {'type': 'array', 'items': _INT}
 
@@ -117,8 +119,18 @@ _GEMINI_TYPES = {'integer': types.Type.INTEGER, 'string': types.Type.STRING, 'ar
                  'object': types.Type.OBJECT, 'boolean': types.Type.BOOLEAN, 'number': types.Type.NUMBER}
 
 
+def for_gemini(schema):
+    """LAYOUT_SCHEMA as Gemini's response_schema can carry it. additionalProperties is Claude's key."""
+    if isinstance(schema, list):
+        return [for_gemini(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    return {key: for_gemini(value) for key, value in schema.items() if key != 'additionalProperties'}
+
+
 def gemini_schema(schema):
-    """Gemini's Schema for a JSON Schema. LAYOUT_SCHEMA is the one both models are given."""
+    """Gemini's Schema for a JSON Schema. additionalProperties is not copied: the API rejects it."""
+    schema = for_gemini(schema)
     kwargs = {'type': _GEMINI_TYPES[schema['type']]}
     if 'properties' in schema:
         kwargs['properties'] = {key: gemini_schema(value) for key, value in schema['properties'].items()}
@@ -126,9 +138,24 @@ def gemini_schema(schema):
         kwargs['items'] = gemini_schema(schema['items'])
     if 'required' in schema:
         kwargs['required'] = list(schema['required'])
-    if 'additionalProperties' in schema:
-        kwargs['additional_properties'] = schema['additionalProperties']
     return types.Schema(**kwargs)
+
+
+def gemini_rejected(schema, path='response_schema'):
+    """Where a Gemini Schema payload carries additional_properties. The SDK model has the field; the Developer
+    API answers 400 Unknown name. The message names gemini_schema, which omits it."""
+    data = schema.model_dump(exclude_none=True) if isinstance(schema, types.Schema) else schema
+    found = []
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if key in ('additional_properties', 'additionalProperties'):
+                found.append(f'{path}: additional_properties is sent to Gemini, which returns 400 Unknown name; '
+                             f'omit it in gemini_schema (LAYOUT_SCHEMA keeps additionalProperties for Claude)')
+            found.extend(gemini_rejected(value, f'{path}.{key}'))
+    elif isinstance(data, list):
+        for i, item in enumerate(data):
+            found.extend(gemini_rejected(item, f'{path}[{i}]'))
+    return found
 
 
 def as_json(schema):
@@ -377,7 +404,9 @@ def mark_layout(folder, client, images, cli=None):
                 return ask_layout_claude(cli, batch), None
             except Exception as e:
                 claude_failed.set()
-                return {}, RuntimeError(f'Gemini: {str((gemini_error or ["no API key"])[0])[:300]}; Sonnet: {e}')
+                # Sonnet's outcome goes first: the 400 text is longer than the 300 characters kept below, and
+                # B005J3IEZQ's log lost the "; Sonnet:" that says the fallback ran.
+                return {}, RuntimeError(f'Sonnet: {e}; Gemini: {str((gemini_error or ["no API key"])[0])[:220]}')
 
     first_error = None
     with ThreadPoolExecutor(WORKERS) as pool:
