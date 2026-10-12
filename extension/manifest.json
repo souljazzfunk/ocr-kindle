@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Kindle Cloud Reader Capture",
-  "version": "2.6",
+  "version": "2.7",
   "description": "Pages through a Kindle Cloud Reader book for the ocr-kindle channel on 127.0.0.1 and sends every page image and text layer to it.",
   "permissions": ["storage", "alarms", "tabs"],
   "host_permissions": ["http://127.0.0.1/*"],
@@ -14,5 +14,14 @@
       "https://read.amazon.in/*", "https://read.amazon.com.br/*", "https://read.amazon.com.mx/*"
     ],
     "js": ["pagemeta.js", "policy.js", "content.js"]
+  }, {
+    "matches": [
+      "https://read.amazon.com/*", "https://read.amazon.co.jp/*", "https://read.amazon.co.uk/*",
+      "https://read.amazon.de/*", "https://read.amazon.fr/*", "https://read.amazon.es/*",
+      "https://read.amazon.it/*", "https://read.amazon.ca/*", "https://read.amazon.com.au/*",
+      "https://read.amazon.in/*", "https://read.amazon.com.br/*", "https://read.amazon.com.mx/*"
+    ],
+    "js": ["main.js"],
+    "world": "MAIN"
   }]
 }

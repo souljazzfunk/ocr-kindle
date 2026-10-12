@@ -139,9 +139,9 @@ test('a signed-out reader is refused', () => {
 test('a screen whose image is not there yet is observed again before the capture fails', () => {
   const blank = { sha: null, position: { n: 81, m: 2566 }, appOnly: false, signedOut: false };
   const b = screen('b', 92, 2566), a = screen('a', 82, 2566), c = screen('c', 81, 2566);
-  const { actions } = replay([b, a, blank, blank, c]);
-  assert.deepStrictEqual(actions.slice(0, 7), ['save', 'turn:prev', 'save', 'turn:prev', 'wait', 'wait', 'save']);
-  const stuck = replay([b, ...Array(IMAGE_WAITS + 1).fill(blank)]);
+  const { actions } = replay([b, b, a, blank, blank, c]); // the jump to the start does not move this reader
+  assert.deepStrictEqual(actions.slice(1, 8), ['save', 'turn:prev', 'save', 'turn:prev', 'wait', 'wait', 'save']);
+  const stuck = replay([b, b, ...Array(IMAGE_WAITS + 1).fill(blank)]);
   assert.strictEqual(stuck.actions.at(-1), `fail:no page image after ${IMAGE_WAITS} s`);
   assert.strictEqual(replay([blank]).actions[0], 'fail:no page image');
 });
@@ -153,4 +153,17 @@ test('forward from page 1, a screen before the opening one is not saved again un
   const { state, actions } = replay([c, b, a, a, a, a, b2, c, d, d, d, d]);
   assert.deepStrictEqual(order(state.saved), ['a', 'b', 'c', 'd']);
   assert.strictEqual(actions.at(-1), 'done:page 4 of 4');
+});
+
+test('a book opened far from its start jumps to the start before it saves anything, and pages back as before when the jump does not move it', () => {
+  const end = screen('end', 389, 389), a = screen('a', 1, 389), b = screen('b', 2, 389);
+  const jumped = replay([end, a, a, a, a, b, b, b, b]);
+  assert.deepStrictEqual(jumped.actions.slice(0, 6), ['jump:start', 'save', 'turn:prev', 'turn:prev', 'turn:prev', 'turn:next']);
+  assert.deepStrictEqual(jumped.state.saved, { a: 0, b: 1 });
+  assert.strictEqual(jumped.state.start, 'opened at 389/389, jumped to 1/389; 0 earlier screens saved back to page 1');
+  const y = screen('y', 388, 389);
+  const stayed = replay([end, end, y, y, y, y, y]);
+  assert.deepStrictEqual(stayed.actions.slice(0, 4), ['jump:start', 'save', 'turn:prev', 'save']);
+  assert.deepStrictEqual(stayed.state.saved, { end: 0, y: -1 });
+  assert.strictEqual(replay([screen('c', 3, 4)]).actions[0], 'save');
 });
