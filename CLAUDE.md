@@ -24,6 +24,7 @@
 | アプリのライブラリに戻るのは Close Book ボタンだけ。File > Close や Cmd+W は使わない | `capture_app.py`、`test_capture_app.py::test_a_reader_left_open_is_closed_with_its_close_book_button_never_file_close`（F059） |
 | 本は 1 ページ目から最後まで取り込む。開いた位置からそのまま取り込まない | `extension/policy.js`、`extension/policy.test.js::opened mid-book: pages back to page 1 saving each screen, then forward past them to the end`、`test_check_book.py::test_a_capture_that_began_mid_book_is_caught`（F007） |
 | 前のページのボタンで戻れなくなったら矢印キーで戻り、止まった画面を記録する | `extension/policy.js`、`extension/policy.test.js::a reader stuck on Previous page pages back by the left arrow key`、`test_channel.py::test_the_screen_where_a_capture_stopped_is_kept_beside_the_trace`（F076） |
+| 先頭から進み直すとき、開いた位置より前の画面を保存し直さない | `extension/policy.js`、`extension/policy.test.js::forward from page 1, a screen before the opening one is not saved again under a new hash`（F077） |
 | ページめくりは際限なく続けない。上限はページ数に合わせ、向きごとに数える | `extension/policy.js`、`extension/policy.test.js::turns past three per page stop the capture, each direction counted on its own`（F017 F019 F027） |
 | 止まった取り込みを 1 時間待たない。数分で理由を残して終える | `channel.py`、`test_channel.py::test_a_capture_with_no_page_and_no_event_for_the_stall_time_is_stalled`（F032 F039） |
 | ページは画像でも canvas でも取り込み、画像がまだない画面は待ってから判断する | `extension/content.js` の `pageImage`、`extension/policy.js`、`extension/policy.test.js::a screen whose image is not there yet is observed again before the capture fails`（F067） |
@@ -54,6 +55,8 @@
 | 縦書きの日本語は Live Text で読む。Vision が 1 行も返さないページを空で通さない | `img2txt.py`、`test_check_book.py::test_a_page_vision_finds_no_lines_on_is_read_by_live_text`（F068） |
 | Vision が短く読んだページは Live Text と比べ、多く読めたほうを使う | `img2txt.py` の `vision_transcribe`、`test_check_book.py::test_a_vertical_page_vision_reads_only_a_few_pieces_of_is_read_by_live_text`、`test_check_book.py::test_a_full_english_page_is_not_sent_to_live_text`（F073） |
 | 日本語の本の英語のページ（引用・参考文献）を、外国語のページとして消さない | `proofread.py` の `foreign_page`、`test_proofread.py::test_english_pages_of_a_japanese_book_are_kept`（F074） |
+| 同じ位置で同じ文のページは、離れていても重複として消す | `proofread.py` の `duplicate_page`、`test_proofread.py::test_a_screen_saved_twice_at_one_position_is_a_duplicate`（F077） |
+| Live Text の見出しから節の印を外し、目次の項目は見出しにせず、目次で階層を揃える | `layout.py` の `section_mark`・`livetext_contents`、`test_layout.py::test_live_text_titles_lose_the_section_mark_and_take_their_level_from_the_contents`（F078） |
 | Live Text のページも見出しを Gemini に読ませる。段落のままにしない | `layout.py` の `livetext_markdown`、`test_layout.py::test_a_live_text_page_takes_its_titles_from_gemini`（F075） |
 | Gemini が 1 回でも失敗したら、残りのページは Sonnet に回す | `layout.py`、`test_layout.py::test_any_failed_gemini_request_stops_the_book_without_sending_the_rest`、`test_layout.py::test_sonnet_lays_out_the_pages_gemini_could_not_and_the_book_goes_on`（F028） |
 | Sonnet も落ちたら、本を失敗にせず、変換の仕事を Gemini の枠が戻るまで止める | `book.py` の `RULES`、`test_kc_run.py::test_a_gemini_quota_failure_waits_for_the_reset_and_converts_the_same_pages_with_no_new_capture`（F028） |

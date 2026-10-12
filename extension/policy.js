@@ -25,7 +25,7 @@ const APP_ONLY_REASON = 'kindle app required: Cloud Reader cannot open this book
 
 function initialState() {
   return { phase: 'back', saved: {}, low: 1, high: 0, n: null, last: null, pending: false, tries: 0, turns: 0, limit: 0,
-    page: null, same: 0, waits: 0, keyed: false, opened: '', start: '' };
+    page: null, same: 0, waits: 0, keyed: false, opened: '', openedAt: null, start: '' };
 }
 
 const limitFor = (position) => TURNS_PER_PAGE * (position?.m || UNKNOWN_LENGTH) + EXTRA_TURNS;
@@ -64,7 +64,7 @@ function nextAction(state, observation) {
   if (!sha && (state.last === null || state.waits >= IMAGE_WAITS)) return fail(state, `no page image${state.waits ? ` after ${state.waits} s` : ''}`);
   if (!sha) return { state: { ...state, waits: state.waits + 1 }, action: 'wait' };
   if (state.waits) state = { ...state, waits: 0 };
-  if (state.last === null) return save({ ...state, opened: where(position), limit: limitFor(position) }, sha);
+  if (state.last === null) return save({ ...state, opened: where(position), openedAt: position ? position.n : null, limit: limitFor(position) }, sha);
   if (state.pending) return turn({ ...state, pending: false });
 
   const turns = state.turns + 1;
@@ -81,6 +81,9 @@ function nextAction(state, observation) {
     return tries < NEXT_ATTEMPTS ? turn({ ...next, tries }) : edge({ ...next, tries }, position);
   }
   if (sha in state.saved) return turn({ ...next, tries: 0, last: sha });
+  // Forward from page 1, the screens before the opening one were all saved on the way back, though a canvas can draw
+  // one again with other pixels: 英語教育幻想 (2026-10-12) saved 13 of them twice under new hashes.
+  if (state.phase === 'fwd' && n !== null && state.openedAt !== null && n < state.openedAt) return turn({ ...next, tries: 0, last: sha });
   return save({ ...next, tries: 0 }, sha);
 }
 

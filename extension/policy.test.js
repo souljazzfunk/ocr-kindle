@@ -107,3 +107,12 @@ test('a screen whose image is not there yet is observed again before the capture
   assert.strictEqual(stuck.actions.at(-1), `fail:no page image after ${IMAGE_WAITS} s`);
   assert.strictEqual(replay([blank]).actions[0], 'fail:no page image');
 });
+
+test('forward from page 1, a screen before the opening one is not saved again under a new hash', () => {
+  // 2026-10-12: 英語教育幻想 saved 13 screens twice; the canvas drew them again with other pixels.
+  const a = screen('a', 1, 4), b = screen('b', 2, 4), c = screen('c', 3, 4), d = screen('d', 4, 4);
+  const b2 = screen('b2', 2, 4);
+  const { state, actions } = replay([c, b, a, a, a, a, b2, c, d, d, d, d]);
+  assert.deepStrictEqual(order(state.saved), ['a', 'b', 'c', 'd']);
+  assert.strictEqual(actions.at(-1), 'done:page 4 of 4');
+});

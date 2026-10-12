@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -21,6 +22,17 @@ def test_english_pages_of_a_japanese_book_are_kept():
     pages = {'page_0001': japanese, 'page_0002': 'Ministry of Education. https://www.mext.go.jp/ English Education Reform Plan.',
              'page_0003': japanese}
     assert fixes(pages) == []
+
+
+def test_a_screen_saved_twice_at_one_position_is_a_duplicate(tmp_path):
+    # 2026-10-12: 英語教育幻想's page_0020 and page_0111 were both 129/2566 with the same text, a hundred pages apart.
+    text = 'グローバル化が進むにつれて、世界語としての英語の持つ役割が増していきます。' * 3
+    other = 'ここからは私見です。この文書で英語の位置がどう語られているかを見ていきます。' * 3
+    pages = {'page_0001': text, 'page_0002': other, 'page_0003': other + '続き', 'page_0004': text.replace('増', '僧')}
+    (tmp_path / 'positions.json').write_text(json.dumps({'page_0001': '129/2566', 'page_0002': '137/2566',
+                                                         'page_0003': '145/2566', 'page_0004': '129/2566'}))
+    found = sorted((f.kind, f.page) for f in find_all(Book(tmp_path, pages)) if f.kind == 'duplicate_page')
+    assert found == [('duplicate_page', 'page_0003'), ('duplicate_page', 'page_0004')]
 
 
 def test_page_level_errors():
