@@ -40,9 +40,13 @@ test('opened at page 1: three turns back that change nothing confirm the start',
   assert.deepStrictEqual(order(state.saved), ['a', 'b', 'c']);
 });
 
-test('an end the footer does not confirm is still the end; check_book.py judges how short it stopped', () => {
+test('an end the footer does not confirm is still the end once both keys fail; check_book.py judges how short it stopped', () => {
   const a = screen('a', 1, 300), b = screen('b', 2, 300);
-  assert.strictEqual(replay([a, a, a, a, b, b, b, b]).actions.at(-1), 'done:turns stopped at page 2 of 300');
+  assert.deepStrictEqual(replay([a, a, a, a, ...Array(10).fill(b)]).actions.slice(5), ['save', 'turn:next', 'turn:next',
+    'turn:next', 'turn:next-key', 'turn:next-key', 'turn:next-key', 'turn:next-key-left', 'turn:next-key-left',
+    'turn:next-key-left', 'done:turns stopped at page 2 of 300']);
+  const z = screen('z', 296, 300);
+  assert.strictEqual(replay([a, a, a, a, z, z, z, z]).actions.at(-1), 'done:turns stopped at page 296 of 300');
   const x = screen('x'), y = screen('y');
   assert.strictEqual(replay([x, x, x, x, y, y, y, y]).actions.at(-1), 'done:turns stopped on an unnumbered screen');
 });
@@ -83,6 +87,20 @@ test('a reader stuck on Previous page pages back by the left arrow key', () => {
   assert.strictEqual(state.start, 'opened at 3/4; 2 earlier screens saved back to page 1 (the last ones by the left arrow key)');
 });
 
+test('a reader stuck on Next page mid-book pages on by the right arrow key, then by the left in a book read right to left', () => {
+  // 2026-10-12: 代替医療解剖 stopped at 219 of 528 when Next page stopped moving the reader, and the capture ended there.
+  const a = screen('a', 1, 9), b = screen('b', 2, 9), c = screen('c', 3, 9), d = screen('d', 4, 9), i = screen('i', 9, 9);
+  const ltr = replay([a, a, a, a, b, c, c, c, c, d, i, i, i, i]);
+  assert.deepStrictEqual(ltr.actions.slice(7, 13), ['save', 'turn:next', 'turn:next', 'turn:next', 'turn:next-key', 'save']);
+  assert.strictEqual(ltr.actions.at(-1), 'done:page 9 of 9');
+  assert.deepStrictEqual(order(ltr.state.saved), ['a', 'b', 'c', 'd', 'i']);
+  // Right to left, the right arrow key turns back: that turn is not saved and the left key takes over.
+  const rtl = replay([a, a, a, a, b, c, c, c, c, b, d, i, i, i, i]);
+  assert.deepStrictEqual(rtl.actions.slice(7, 14), ['save', 'turn:next', 'turn:next', 'turn:next', 'turn:next-key',
+    'turn:next-key-left', 'save']);
+  assert.deepStrictEqual(order(rtl.state.saved), ['a', 'b', 'c', 'd', 'i']);
+});
+
 test('a reader flipping between screens it already showed on one page is stuck after 30 turns', () => {
   const a = screen('a', 1, 9), p = screen('p', 5, 9), q = screen('q', 5, 9);
   const flips = Array.from({ length: STUCK_TURNS }, (_, i) => (i % 2 ? q : p));
@@ -103,7 +121,7 @@ test('turns past three per page stop the capture, each direction counted on its 
   const pages = 10;
   const limit = TURNS_PER_PAGE * pages + EXTRA_TURNS;
   const start = screen('s', 1, pages);
-  const endless = Array.from({ length: limit + 5 }, (_, i) => screen(`f${i}`, 1 + (i % pages), pages));
+  const endless = Array.from({ length: limit + 5 }, (_, i) => screen(`f${i}`, 1 + Math.floor((i * pages) / (limit + 5)), pages));
   const { actions } = replay([start, start, start, start, ...endless]);
   assert.strictEqual(actions.at(-1), `fail:${limit + 1} turns forward, more than the ${limit} a book of ${pages} pages needs`);
 });
