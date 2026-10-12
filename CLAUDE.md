@@ -84,6 +84,7 @@
 | Live Text のページは毎回 Live Text 自身の読みから組み直す。前の出力から組み直さない | `img2txt.py` の `LIVE`・`restore_live`、`test_layout.py::test_a_second_layout_starts_from_live_text_s_reading_not_from_the_first_layout_s_output`（F088） |
 | Live Text のページも見出しを Gemini に読ませる。段落のままにしない | `layout.py` の `livetext_markdown`、`test_layout.py::test_a_live_text_page_takes_its_titles_from_gemini`（F075） |
 | Gemini が 1 回でも失敗したら、残りのページは Sonnet に回す | `layout.py`、`test_layout.py::test_any_failed_gemini_request_stops_the_book_without_sending_the_rest`、`test_layout.py::test_sonnet_lays_out_the_pages_gemini_could_not_and_the_book_goes_on`（F028） |
+| Sonnet の返事が 1 回読めなくても、そのバッチだけ聞き直し、残りのバッチは Sonnet に送り続ける | `layout.py` の `json_array`・`BadReply`、`test_layout.py::test_a_sonnet_reply_with_words_after_its_array_or_none_at_all_fails_no_other_batch`（F121） |
 | Sonnet も落ちたら、本を失敗にせず、変換の仕事を Gemini の枠が戻るまで止める | `book.py` の `RULES`、`test_kc_run.py::test_a_gemini_quota_failure_waits_for_the_reset_and_converts_the_same_pages_with_no_new_capture`（F028） |
 | ルール表の各行は決まりを確かめるテストを名前で挙げ、テストと共に CI で回す | `scripts/rules.py`、`.github/workflows/ci.yml`、`test_rules.py::test_a_named_test_that_does_not_exist_fails`（F071 F072） |
 

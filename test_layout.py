@@ -318,6 +318,35 @@ def test_the_book_stops_when_sonnet_fails_too(tmp_path, monkeypatch):
     assert len(calls) == 1  # three batches, one call to each
 
 
+
+def test_a_sonnet_reply_with_words_after_its_array_or_none_at_all_fails_no_other_batch(tmp_path, monkeypatch):
+    # 2026-10-12, Steve Jobs: one reply added a sentence after the array ("Extra data"), Sonnet was given up
+    # for the whole book, 1299 pages were left, and the convert job paused until Gemini's quota came back.
+    for n in range(1, 61):
+        (tmp_path / f'page_{n:04d}.png').write_bytes(b'png')
+        (tmp_path / f'page_{n:04d}.lines.json').write_text(json.dumps([[0.1, 0.1, 0.03, 'A TITLE']] + BODY))
+    calls = []
+
+    def run(command, input, **kwargs):
+        calls.append(1)
+        stems = [s for s, _ in re.findall(r'Page "([^"]+)": image (\S+)', input)]
+        answer = json.dumps([{'page': s, 'titles': [{'line': 0, 'level': 2}]} for s in stems])
+        result = {1: answer + '\n\nNote: on pages [1] and [2] the title is set [large].',
+                  2: 'I could not read these pages.'}.get(len(calls), answer)
+        reply = {'type': 'result', 'is_error': False, 'result': result}
+        return SimpleNamespace(returncode=0, stdout=json.dumps(reply), stderr='')
+
+    def generate_content(model, contents, config):
+        raise RuntimeError('429 RESOURCE_EXHAUSTED quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier')
+
+    monkeypatch.setattr(layout.types.Part, 'from_bytes', lambda data, mime_type: b'')
+    monkeypatch.setattr(layout.subprocess, 'run', run)
+    monkeypatch.setattr(layout, 'WORKERS', 1)
+    client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    assert mark_layout(tmp_path, client, sorted(tmp_path.glob('page_*.png')), cli='claude') == []
+    assert len(calls) == 4  # three batches, the second asked twice
+    assert len(read_layout(tmp_path)) == 60
+
 # Line boxes shaped like Python Crash Course's pages (2026-10-11): body at 0.08, listings at 0.10, an indent 0.05.
 PCC = [(0.08, 0.10, 0.022, 'In Python, the hash mark (#) indicates a comment. Anything following a hash mark in your'),
        (0.08, 0.135, 0.022, 'code is ignored by the Python interpreter. For example:'),
