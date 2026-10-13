@@ -138,3 +138,14 @@ def test_a_contents_park_is_retried_when_proofreading_stops_taking_titles_back(t
     (tmp_path / 'proofread.py').write_text((tmp_path / 'proofread.py').read_text().replace(
         'def not_a_title():\n    return 1\n', 'def not_a_title():\n    return 2\n', 1))
     assert book.versions(tmp_path)['touch']['contents_chapters'] != first['touch']['contents_chapters']
+
+
+def test_a_book_in_skip_tsv_is_never_captured_or_converted_even_with_its_folder_left(tmp_path):
+    # Laiken, 2026-10-13: "The Real R&B Book は楽譜なので変換しなくていいよ。無理だから". It was listed and had a folder,
+    # so every new capture code put it back in line.
+    (tmp_path / 'books.tsv').write_text('B1\tOne\nB2\tThe Real R&B Book\n')
+    (tmp_path / 'skip.tsv').write_text('# asin\treason\nB2\tsongbook: Laiken, 2026-10-13\n')
+    library = book.Library(tmp_path / 'kindle')
+    library.add([tmp_path / 'books.tsv'])
+    assert [b.asin for b in library.add([tmp_path / 'books.tsv'], skip=tmp_path / 'skip.tsv')] == ['B1']
+    assert [b.asin for b in library.add([], skip=tmp_path / 'skip.tsv')] == ['B1']  # its folder is left out too

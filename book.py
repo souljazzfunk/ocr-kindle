@@ -32,6 +32,7 @@ import cases
 
 HERE = Path(__file__).resolve().parent
 ROOT = Path.home() / 'Downloads' / 'kindle'
+SKIP = HERE / 'skip.tsv'  # books not to capture or convert, one `ASIN<TAB>reason` per line
 RECAPTURES = 1  # a capture found unusable is captured once more, then the book is parked
 
 
@@ -413,13 +414,18 @@ class Library:
     def book(self, asin):
         return Book(self.root / asin)
 
-    def add(self, lists, progress=None, write=True):
+    def add(self, lists, progress=None, write=True, skip=SKIP):
         """Make a folder for every listed book not yet here (and carry over its progress entry); with write False,
-        leave a book with no folder out instead. Returns the books in list order, then any other book folder by ASIN."""
+        leave a book with no folder out instead. Returns the books in list order, then any other book folder by ASIN.
+        A book in skip is left out, folder or not: The Real R&B Book, a songbook, came back with each new capture code
+        (Laiken, 2026-10-13: 楽譜なので変換しなくていい)."""
         progress = progress or {}
         current = versions()
+        skipped = {asin for asin, _, _ in read_tsv(skip)} if Path(skip).exists() else set()
         listed = []
         for asin, title, domain in read_lists(lists):
+            if asin in skipped:
+                continue
             book = self.book(asin)
             if not (book.folder / 'book.json').exists():
                 if not write:
@@ -427,7 +433,7 @@ class Library:
                 migrate(book, progress.get(asin), current)  # first: book.json marks the book as carried over
                 write_json(book.folder / 'book.json', {'asin': asin, 'title': title, 'domain': domain})
             listed.append(book)
-        names = {b.asin for b in listed}
+        names = {b.asin for b in listed} | skipped
         rest = sorted(p.parent.name for p in self.root.glob('*/book.json') if p.parent.name not in names)
         return listed + [self.book(asin) for asin in rest]
 
