@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { pickTitle, parsePosition, appOnly, parseLibrary } = require('./pagemeta.js');
+const { pickTitle, footerText, parsePosition, appOnly, parseLibrary } = require('./pagemeta.js');
 
 test('the title element wins when it has text', () => {
   assert.strictEqual(pickTitle(['How to Write a Lot', 'Kindle'], 'B07HNMJV57'), 'How to Write a Lot');
@@ -42,4 +42,12 @@ test('the library list is read from the page JSON, authors without their trailin
     { asin: 'B081F1JL1X', title: '自動車の社会的費用', authors: [], resourceType: 'EBOOK_SAMPLE', manga: false },
   ] });
   assert.deepStrictEqual(parseLibrary({ querySelector: () => null }), { books: [], paginationToken: null });
+});
+
+test('the reader footer is recorded as it reads, so a screen without a position shows what it held instead', () => {
+  // 2026-10-13: The History of Jazz and So You Want to Talk About Race saw no position on any screen.
+  const doc = (text) => ({ querySelector: (selector) => (selector === '.reader-footer' && text !== null ? { textContent: text } : null) });
+  assert.strictEqual(footerText(doc('\n  12 mins left in chapter \n ● 3%\n')), '12 mins left in chapter ● 3%');
+  assert.strictEqual(footerText(doc('')), '');
+  assert.strictEqual(footerText(doc(null)), null);
 });
