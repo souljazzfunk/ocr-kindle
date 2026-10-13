@@ -286,3 +286,21 @@ def test_a_japanese_title_written_again_is_not_taken_back_as_heading_noise(tmp_p
     noise = [f for f in find_all(Book(book, pages)) if f.kind == 'heading_noise']
     assert noise == []
     assert apply(pages, noise).get('page_0378', pages['page_0378']).startswith('# 参考文献\n')
+
+
+def test_a_blank_line_vision_reads_does_not_crash_the_page(tmp_path):
+    # 2026-10-13 11:42 JST: The Real R&B Book parked on a crash, "vision: string index out of range" on three pages.
+    # A line whose text is blank (a staff or chord mark read as a space) reached join_lines, which reads left[-1] and
+    # right[0]. Blank lines go before the page is laid out.
+    import img2txt
+    page = tmp_path / 'page_0007.png'
+    page.write_bytes(b'')
+    boxes = [(0.1, 0.10, 0.02, ' '), (0.1, 0.13, 0.02, 'Swing feel'), (0.1, 0.16, 0.02, '  ')]
+    text, reader = img2txt.vision_transcribe(page, read_lines=lambda image: boxes, read_livetext=lambda image: '')
+    assert (text, reader) == ('Swing feel', 'vision')
+    assert [box[3] for box in json.loads(page.with_suffix(img2txt.LINES).read_text())] == ['Swing feel']
+    try:
+        img2txt.vision_transcribe(page, read_lines=lambda image: [(0.1, 0.1, 0.02, ' ')], read_livetext=lambda image: '')
+        raise AssertionError('a page of blank lines was marked done')
+    except RuntimeError as e:
+        assert str(e) == img2txt.NO_TEXT
