@@ -50,7 +50,10 @@ test('an end the footer does not confirm is still the end once both keys fail; c
   const z = screen('z', 296, 300);
   assert.strictEqual(replay([a, a, a, a, z, z, z, z]).actions.at(-1), 'done:turns stopped at page 296 of 300');
   const x = screen('x'), y = screen('y');
-  assert.strictEqual(replay([x, x, x, x, y, y, y, y]).actions.at(-1), 'done:turns stopped on an unnumbered screen');
+  // The first unnumbered screen is observed three more times for a footer that comes late.
+  const unnumbered = replay([x, x, x, x, x, x, x, y, y, y, y]).actions;
+  assert.deepStrictEqual(unnumbered.slice(0, 4), ['wait', 'wait', 'wait', 'save']);
+  assert.strictEqual(unnumbered.at(-1), 'done:turns stopped on an unnumbered screen');
 });
 
 test('a reader that will not go back to page 1 fails the capture where it stuck', () => {
@@ -240,4 +243,23 @@ test('a reader stuck on an unnumbered screen far from the end pages on by the ar
   // Unnumbered last screens of a book whose last numbered page was near the end still end it.
   const a = screen('a', 1, 9), h = screen('h', 9, 9), u = screen('u');
   assert.strictEqual(replay([a, a, a, a, h, u, u, u, u]).actions.at(-1), 'done:turns stopped on an unnumbered screen');
+});
+
+test('a first screen without its footer yet waits for it, then jumps to the start from far in', () => {
+  // So You Want to Talk About Race (2026-10-13): no position on the first screen, 580 of 3301 a second later.
+  const late = { ...screen('a'), footer: '' };
+  const far = screen('a', 580, 3301);
+  assert.deepStrictEqual(replay([late, far]).actions, ['wait', 'jump:start']);
+});
+
+test('paging back, an unnumbered screen that stops turning far from page 1 is not taken for the start', () => {
+  // So You Want to Talk About Race (2026-10-13) froze on an unnumbered screen after page 197 and went forward from there.
+  const b = screen('b', 12, 400), c = screen('c', 13, 400), x = screen('x');
+  const { actions, state } = replay([c, b, ...Array(60).fill(x)]);
+  // Near page 1 it is the cover, as before.
+  const near = [screen('c', 3, 400), screen('b', 2, 400), x, x, x, x, screen('y')];
+  assert.strictEqual(replay(near).state.phase, 'fwd');
+  assert.ok(!actions.includes('turn:next'));
+  assert.strictEqual(state.phase, 'back');
+  assert.strictEqual(actions.at(-1), 'fail:could not page back past page 12 of 400 by button or key');
 });

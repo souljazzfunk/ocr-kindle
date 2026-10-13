@@ -34,4 +34,14 @@ function readerUrl(job) {
   return job.kind === 'library' ? `https://${job.domain}/kindle-library` : `https://${job.domain}/?asin=${job.asin}`;
 }
 
-if (typeof module !== 'undefined') module.exports = { pollStep, handOut, isSample, browserName, readerUrl, RELOAD_GAP_MS };
+// A reader window behind other windows is hidden, and Chrome then holds back the reader's own scripts: hidden, the 2.13
+// captures of The History of Jazz, So You Want to Talk About Race and Building a Second Brain (2026-10-13) froze about
+// 400 s in, both ways, while Automate the Boring Stuff, never hidden, ran its 552 pages. With nobody using the Mac the
+// window is brought to the front; while someone is using it, it stays where it is.
+async function showIfIdle(chrome, windowId, hidden) {
+  if (!hidden || (await chrome.idle.queryState(60)) !== 'idle') return false;
+  await chrome.windows.update(windowId, { focused: true }).catch(() => {});
+  return true;
+}
+
+if (typeof module !== 'undefined') module.exports = { pollStep, showIfIdle, handOut, isSample, browserName, readerUrl, RELOAD_GAP_MS };

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { pollStep, handOut, isSample, browserName, readerUrl, RELOAD_GAP_MS } = require('./job.js');
+const { pollStep, showIfIdle, handOut, isSample, browserName, readerUrl, RELOAD_GAP_MS } = require('./job.js');
 
 const job = { id: 'j1', kind: 'capture', asin: 'B07HNMJV57', domain: 'read.amazon.com', recapture: false };
 const running = { job, tabId: 7, windowId: 3, handed: true };
@@ -50,4 +50,15 @@ test('the worker names its browser so that only the chosen one gets jobs', () =>
   assert.strictEqual(browserName({ userAgentData: { brands: [{ brand: 'Google Chrome' }, { brand: 'Chromium' }] } }), 'chrome');
   assert.strictEqual(browserName({ userAgentData: { brands: [{ brand: 'Brave' }, { brand: 'Chromium' }] } }), 'brave');
   assert.strictEqual(browserName({ brave: {}, userAgentData: { brands: [{ brand: 'Chromium' }] } }), 'brave');
+});
+
+test('a hidden reader window comes to the front only while nobody is using the Mac', async () => {
+  const shown = [];
+  const chrome = (state) => ({ idle: { queryState: async () => state },
+    windows: { update: async (id, info) => { shown.push([id, info]); } } });
+  assert.strictEqual(await showIfIdle(chrome('idle'), 3, true), true);
+  assert.strictEqual(await showIfIdle(chrome('active'), 3, true), false);
+  assert.strictEqual(await showIfIdle(chrome('locked'), 3, true), false);
+  assert.strictEqual(await showIfIdle(chrome('idle'), 3, false), false);
+  assert.deepStrictEqual(shown, [[3, { focused: true }]]);
 });

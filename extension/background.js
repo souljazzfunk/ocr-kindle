@@ -90,6 +90,7 @@ async function forward(message, active) {
       'Content-Type': 'image/png', 'X-Position': message.position, 'X-Text': text, 'X-Sha': message.sha } });
     return;
   }
+  await showIfIdle(chrome, active.windowId, message.event.observation?.hidden);
   await post('/event', { body: JSON.stringify(message.event), headers: { 'Content-Type': 'application/json' } });
   if (['done', 'refused', 'library'].includes(message.event.type)) await endJob(active);
 }
