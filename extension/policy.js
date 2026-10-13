@@ -28,6 +28,10 @@ const IMAGE_WAITS = 10;
 // arrow key moved them. A book opened further in than this first jumps to its start with the reader's scrubber
 // (main.js); if the jump does not move it, it pages back as before.
 const JUMP_FROM = 10;
+// The footer can come a moment after the first page image: So You Want to Talk About Race (580 of 3301) and Building a
+// Second Brain (19 of 262) showed no position on their first screen and theirs a second later (2026-10-13), so they
+// paged back from there instead of jumping. The first screen is observed again, once a second, this many times for it.
+const FIRST_POSITION_WAITS = 3;
 const APP_ONLY_REASON = 'kindle app required: Cloud Reader cannot open this book';
 
 function initialState() {
@@ -71,6 +75,9 @@ function save(state, sha) {
 
 function edge(state, position) {
   if (state.phase === 'back') {
+    // An unnumbered screen that stops turning is not the start when the last numbered one was far from it: So You Want
+    // to Talk About Race (2026-10-13) froze on one after page 197 of 3301 and was taken back to page 1 from there.
+    position = position || (state.known?.n > JUMP_FROM ? state.known : null);
     // 英語教育幻想 (2026-10-12) opened at 2561 of 2566 and paged back to 784, where Previous page stopped moving it. Why
     // is not known yet; the left arrow key is tried before the capture fails, and dom-probe-stopped.json records the
     // reader's controls where it stuck.
@@ -100,6 +107,9 @@ function nextAction(state, observation) {
   const waits = state.jumped && state.last === null ? 3 * IMAGE_WAITS : IMAGE_WAITS;
   if (!sha && ((state.last === null && !state.jumped) || state.waits >= waits)) return fail(state, `no page image${state.waits ? ` after ${state.waits} s` : ''}`);
   if (!sha) return { state: { ...state, waits: state.waits + 1 }, action: 'wait' };
+  if (state.last === null && state.jumped === null && !position && !frontMatter(footer) && state.waits < FIRST_POSITION_WAITS) {
+    return { state: { ...state, waits: state.waits + 1 }, action: 'wait' };
+  }
   if (state.waits) state = { ...state, waits: 0 };
   if (state.last === null && state.jumped === null && position && position.n > JUMP_FROM) {
     return { state: { ...state, jumped: where(position) }, action: 'jump:start' };
