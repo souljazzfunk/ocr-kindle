@@ -33,7 +33,7 @@ MISSED_CHAPTER = re.compile(r'(?m)^(?:[1-9]|1\d|20|[Z&])\n\n(?![#\d])(?![^\n]*,\
 # Proofread kinds whose fix is safe without a look at samples; the others are reported for a human.
 AUTO_KINDS = ('duplicate_page', 'foreign_page', 'seam_overlap', 'dash_as_hyphen', 'stray_symbol', 'emphasis_dots', 'split_sentence',
               'homoglyph', 'decorative_digit', 'repl_prompt', 'section_number', 'numbered_title', 'l_for_i', 'digits_for_ll', 'binary_art',
-              'stray_colon')
+              'stray_colon', 'loose_code')
 REVIEW_KINDS = ('hyphen_break', 'odd_case')
 LOOSE_CODE = 0.25  # share of a programming book's code lines that may stand outside code blocks
 

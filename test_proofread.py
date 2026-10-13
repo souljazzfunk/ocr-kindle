@@ -248,3 +248,21 @@ def test_a_numbered_section_title_of_a_japanese_book_becomes_a_heading():
     assert apply(pages, found) == {'page_0002': (
         '本文です。\n\n## 3 真実はこの両者のどこか中間にあるのかも？\n\nいずれにせよ、われわれがこの本を書くことにしたのは、真実を知るためである。'
         '\n\n2\n\n「王様は裸だ」と言うことを許されない。それを言えば、効果が台無しになるからだ。')}
+
+
+def test_code_left_as_paragraphs_and_bullets_is_fenced_and_its_joined_prompts_split():
+    # Automate the Boring Stuff, 2026-10-13: the whole book captured, then parked on code_blocks: 524 of 1834 code lines
+    # were paragraphs or bullets the layout left outside code blocks, some with several prompts run into one line.
+    prompts = ''.join(f'>>> x{i} = {i}\n' for i in range(20))
+    page = ('A list holds values.\n\n'
+            ">>> spam[0] 'cat' >> > spam[1] 'bat'\n\n- >>> 'Hello, ' + spam[0]\n\n'Hello, cat'\n\n"
+            "- >>> mo1.group()\n\nThe group() method returns the match.\n\n```\n>>> fine()\n```\n")
+    pages = {'page_0001': page, 'page_0002': '```\n' + prompts + '```\n'}
+    found = [f for f in find_all(Book(Path('/nonexistent'), pages)) if f.kind == 'loose_code']
+    fixed = apply(pages, found)['page_0001']
+    assert fixed == ('A list holds values.\n\n'
+                     "```\n>>> spam[0] 'cat'\n>> > spam[1] 'bat'\n>>> 'Hello, ' + spam[0]\n'Hello, cat'\n>>> mo1.group()\n```\n\n"
+                     'The group() method returns the match.\n\n```\n>>> fine()\n```\n')
+    assert not [f for f in find_all(Book(Path('/nonexistent'), {**pages, 'page_0001': fixed})) if f.kind == 'loose_code']
+    prose = {'page_0001': BODY + '\n\nimport this\n'}  # a book without code keeps its paragraphs
+    assert not [f for f in find_all(Book(Path('/nonexistent'), prose)) if f.kind == 'loose_code']

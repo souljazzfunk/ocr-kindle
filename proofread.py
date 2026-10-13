@@ -20,6 +20,7 @@ from functools import cached_property
 from pathlib import Path
 
 import locks
+from layout import CODE_BOOK_LINES, CODE_LINE
 from img2txt import (LIVETEXT, TEXT_LAYER, VISION, page_images, read_sources, vision_lines, vision_transcribe,
                      write_book)
 
@@ -338,6 +339,39 @@ def repl_prompt(book):
                 yield Finding('repl_prompt', stem, line, '>>> ' + line.lstrip('>›» '), at=m.start())
 
 
+PARAGRAPH = re.compile(r'(?m)(?:^.+\n?)+')
+JOINED_PROMPT = re.compile(r' (?=(?:[>›»] ?){3}\S)')  # ">>> spam[0] 'cat' >> > spam[1]": two prompts read as one line
+SANDWICHED = 40  # a short line between code paragraphs is the session's output ('Hello, cat'), not prose
+
+
+def loose_code(book):
+    """Fence the code the layout left as paragraphs or bullets, in a book with code. Automate the Boring Stuff
+    (2026-10-13) was parked on code_blocks with 524 of 1834 code lines outside code blocks: ">>> mo1.group()" a
+    paragraph, "- >>> im2 = Image.new(...)" a bullet, several prompts run into one line. A run of such paragraphs, with
+    the short output lines between them, becomes one block, a prompt to a line."""
+    code = lambda line: not line.startswith('#') and CODE_LINE.match(line.removeprefix('- '))
+    if sum(bool(code(line)) for line in book.corpus.splitlines()) < CODE_BOOK_LINES:
+        return
+    for stem, text in book.pages.items():
+        blocks = [m.span() for m in CODE_BLOCK.finditer(text)]
+        paragraphs = [m for m in PARAGRAPH.finditer(text) if not any(a <= m.start() < b for a, b in blocks)]
+        run, pending = [], []
+        for m in paragraphs + [None]:
+            joined = m and run and not text[(pending or run)[-1].end():m.start()].strip()
+            if m and any(code(line) for line in m.group().splitlines()):
+                run = run + pending + [m] if joined else [m]
+                pending = []
+                continue
+            if joined and len(m.group().strip()) <= SANDWICHED and '\n' not in m.group().strip():
+                pending.append(m)
+                continue
+            if run:
+                lines = [JOINED_PROMPT.sub('\n', line.removeprefix('- ')) for p in run for line in p.group().splitlines()]
+                yield Finding('loose_code', stem, text[run[0].start():run[-1].end()],
+                              '```\n' + '\n'.join(lines) + '\n```\n', at=run[0].start())
+            run, pending = [], []
+
+
 def l_for_i(book):
     """Vision reads a capital I after a capital as a small l: "Al" for AI, "AlforEDUbook" for AIforEDUbook. A letter
     run is fixed when the book also spells it with the I (AI for Educators: AI 108 times, Al 265), unless a
@@ -472,7 +506,7 @@ def decorative_digit(book):
 
 DETECTORS = [duplicate_page, seam_overlap, foreign_page, hyphen_break, dash_as_hyphen, homoglyph, odd_case, stray_symbol,
              emphasis_dots, split_sentence, repl_prompt, section_number, numbered_title, decorative_digit, l_for_i, digits_for_ll, binary_art, stray_colon,
-             heading_noise]
+             heading_noise, loose_code]
 
 
 def cross_read(folder, pages, sources):
@@ -499,7 +533,7 @@ def load_pages(folder):
 
 # Detectors that judge whole pages, and repl_prompt, which mends prompts in code too; the others look at words, so they
 # see the pages without their code blocks.
-PAGE_DETECTORS = (duplicate_page, seam_overlap, foreign_page, repl_prompt)
+PAGE_DETECTORS = (duplicate_page, seam_overlap, foreign_page, repl_prompt, loose_code)
 
 
 def find_all(book):

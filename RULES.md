@@ -66,6 +66,7 @@
 | 校正が直すのは見つけた箇所だけ。コードの記号やプロンプトは消さない | `proofread.py`、`test_proofread.py::test_a_fix_lands_where_it_was_found_and_chevron_prompts_are_whole_again`、`test_proofread.py::test_stray_symbol_spares_code_and_fixes_the_one_it_found`（F041） |
 | 索引の文字や題辞の上の番号を、見出しのない章の始まりと数えない | `check_book.py`、`test_check_book.py::test_index_letter_is_not_a_chapter_opening`、`test_check_book.py::test_a_numbered_section_with_an_epigraph_is_not_a_missed_chapter`（F042 F043） |
 | コードの本でコードを見出し・箇条書き・地の文にしない | `layout.py`、`test_layout.py::test_code_is_fenced_line_by_line_and_never_a_title`、`test_check_book.py::test_a_code_book_without_code_blocks_is_caught_and_its_pages_read_again`（F044） |
+| 配置がコードを段落や箇条書きに残したら、校正がコードブロックに入れ、つながったプロンプトを 1 行ずつに分ける | `proofread.py` の `loose_code`、`book.py` の `TOUCH`、`test_proofread.py::test_code_left_as_paragraphs_and_bullets_is_fenced_and_its_joined_prompts_split`（F141） |
 | Vision のページの構造を、位置と大きさだけで当て推量しない | `layout.py`、`test_layout.py::test_titles_quotes_lists_and_art_take_their_place`（F016 F024） |
 | 同じ読み直しを修正として繰り返さない | `layout.py`、`test_layout.py::test_layout_is_asked_once_per_page_in_batches`（F021 F024） |
 | 縦書きの日本語は Live Text で読む。Vision が 1 行も返さないページを空で通さない | `img2txt.py`、`test_check_book.py::test_a_page_vision_finds_no_lines_on_is_read_by_live_text`（F068） |
