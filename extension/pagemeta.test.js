@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { pickTitle, footerText, readPosition, parsePosition, appOnly, parseLibrary } = require('./pagemeta.js');
+const { pickTitle, footerText, hiddenPage, readPosition, parsePosition, appOnly, parseLibrary } = require('./pagemeta.js');
 
 test('the title element wins when it has text', () => {
   assert.strictEqual(pickTitle(['How to Write a Lot', 'Kindle'], 'B07HNMJV57'), 'How to Write a Lot');
@@ -42,6 +42,12 @@ test('the library list is read from the page JSON, authors without their trailin
     { asin: 'B081F1JL1X', title: '自動車の社会的費用', authors: [], resourceType: 'EBOOK_SAMPLE', manga: false },
   ] });
   assert.deepStrictEqual(parseLibrary({ querySelector: () => null }), { books: [], paginationToken: null });
+});
+
+test('each trace line records whether Chrome counts the reader tab as hidden', () => {
+  // 2026-10-13: Automate the Boring Stuff took about 240 s per turn where content.js waits at most 13 s.
+  assert.strictEqual(hiddenPage({ visibilityState: 'hidden' }), true);
+  assert.strictEqual(hiddenPage({ visibilityState: 'visible' }), false);
 });
 
 test('the position is read from the footer the reader hides, then from the page text', () => {

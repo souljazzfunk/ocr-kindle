@@ -75,6 +75,13 @@ function readPosition(doc) {
   return parsePosition(footerText(doc)) || parsePosition(doc.body.innerText);
 }
 
+// Whether Chrome counts the reader tab as hidden. Automate the Boring Stuff (2026-10-13 14:00 JST) took about 240 s per
+// turn where content.js waits at most 13 s, as if the tab's timers were throttled; this records it on each trace line
+// so the slowness can be fixed from a recording rather than a guess.
+function hiddenPage(doc) {
+  return doc.visibilityState === 'hidden';
+}
+
 // "Page 75 of 120" (or 位置/ページ/Location) from the reader's footer as { n, m }, or null when it shows none.
 function parsePosition(text) {
   const m = (text || '').match(/(?:位置|ページ|Location|Page)\D{0,3}(\d+)\s*(?:\/|of)\s*(\d+)/);
@@ -113,4 +120,4 @@ function parseLibrary(doc) {
   return { books, paginationToken: data?.paginationToken ?? null };
 }
 
-if (typeof module !== 'undefined') module.exports = { pickTitle, probePage, footerText, readPosition, parsePosition, appOnly, signedOut, parseLibrary };
+if (typeof module !== 'undefined') module.exports = { pickTitle, probePage, footerText, hiddenPage, readPosition, parsePosition, appOnly, signedOut, parseLibrary };

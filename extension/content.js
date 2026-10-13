@@ -108,7 +108,8 @@ async function capture(job) {
     const { position, sha, appOnly: app, signedOut: out } = seen;
     // A screen without a position keeps what the footer showed instead (footerText).
     const footer = position ? {} : { footer: seen.footer };
-    await event({ type: 'trace', observation: { position, sha, appOnly: app, signedOut: out, ...footer }, action });
+    await event({ type: 'trace', observation: { position, sha, appOnly: app, signedOut: out, ...footer, hidden: hiddenPage(document) },
+      action });
     if (action === 'save') {
       if (!Object.keys(positions).length) {
         let probe;
