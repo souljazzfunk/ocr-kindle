@@ -150,6 +150,7 @@ TOUCH = {
         ('layout.py', '_tiles'),
         ('layout.py', 'livetext_contents'),
         ('layout.py', 'contents_entries'),
+        ('layout.py', 'before_prose'),
         ('layout.py', 'split_contents'),
         ('layout.py', 'listed'),
         ('layout.py', 'comparable'),

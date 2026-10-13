@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from img2txt import LIVETEXT, SOURCES, TEXT_LAYER, VISION, page_images, read_sources
-from layout import CODE_LINE, code_pages, code_rereads, contents_for_check, contents_covered, read_layout
+from layout import CODE_LINE, comparable, code_pages, code_rereads, contents_for_check, contents_covered, read_layout
 from proofread import CODE_BLOCK, DECORATIVE_REF, Book, find_all, load_pages
 
 PROBE = 'dom-probe.json'
@@ -36,6 +36,9 @@ AUTO_KINDS = ('duplicate_page', 'foreign_page', 'seam_overlap', 'dash_as_hyphen'
               'homoglyph', 'decorative_digit', 'repl_prompt', 'section_number', 'numbered_title', 'l_for_i', 'digits_for_ll', 'binary_art',
               'stray_colon')
 REVIEW_KINDS = ('hyphen_break', 'odd_case')
+# Contents entries of an ebook's front matter, which the book may print without a title (comparable spelling).
+FRONT_MATTER = {comparable(label) for label in ('About the Author', 'About the Authors', 'Praise', 'Dedication', 'Epigraph', 'Cover', 'Title Page',
+                                                  'Copyright Page', 'Begin Reading')}
 LOOSE_CODE = 0.25  # share of a programming book's code lines that may stand outside code blocks
 
 
@@ -109,9 +112,17 @@ def contents_unheaded(folder, text):
 
     The entries are the contents lines, subsections split on 「／」 and a line cut at the margin or a page break
     brought back to the headings (layout.contents_covered). 代替医療解剖 and 近代中国史 (2026-10-12) were parked
-    with every heading in place: several subsection titles had been read as one line."""
+    with every heading in place: several subsection titles had been read as one line.
+    Front-matter labels (FRONT_MATTER) need no heading: Steve Jobs's contents list About the Author, Praise and
+    Dedication, whose pages print no title. An English title wrapped over two lines (Zero to Sold, Japan Travel
+    Planner) is covered with its other half."""
     titles = [title for _, title in HEADING.findall(text)]
-    return [entry for entry in contents_for_check(page_images(folder)) if not contents_covered(entry, titles)]
+    entries = contents_for_check(page_images(folder))
+    # A title wrapped over two contents lines is two entries; either half is covered with the other.
+    def covered(i):
+        halves = [entries[i]] + [entries[i - 1] + entries[i]] * (i > 0) + [entries[i] + e for e in entries[i + 1:i + 2]]
+        return any(contents_covered(joined, titles) for joined in halves)
+    return [entry for i, entry in enumerate(entries) if entry not in FRONT_MATTER and not covered(i)]
 
 
 def check_folder(folder, title=None):

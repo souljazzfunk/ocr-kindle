@@ -115,6 +115,10 @@ BINARY = re.compile(r'[01\s]{3,}')  # zeros and ones are a picture of data, not 
 BULLET = re.compile(r'^[•►▪‣◦●■]\s*')
 CONTENTS = re.compile(r'^(?:(?:table of )?contents|目\s*次)$', re.I)
 CONTENTS_PAGES = 0.15  # the contents page is in the front matter
+# A sentence ends the contents: 「。」, or an English sentence's full stop after a word (Steve Jobs's cast list
+# "Pong and hired Jobs." after its contents, 2026-10-13). A title's trailing "..." is not one.
+ENGLISH_SENTENCE = re.compile(r'[a-z]{2}[.!?]["”’)]?(?:$|\s+[A-Z])')
+SENTENCE = re.compile(r'。|' + ENGLISH_SENTENCE.pattern)
 # A line that only code starts so: a prompt (Vision reads >>> as >>, ›> or >> >), a shell's $, a definition, an
 # import, a call to print, a comment, a block statement. A book with this many is a programming book.
 CODE_LINE = re.compile(r'^(?:(?:[>›»] ?){2,3}\S|\$ \w|(?:def|class) \w.*:$|import [\w.]+(?:, [\w.]+)*(?: as \w+)?$'
@@ -343,7 +347,7 @@ def livetext_contents(images):
         stems, entries = [image.stem], [piece for line in lines[start + 1:] for piece in split_contents(line)]
         for after in pages[k + 1:]:
             more = page_lines(after)
-            if not more or any('。' in line for line in more):
+            if not more or any(SENTENCE.search(line) for line in more):
                 break
             stems.append(after.stem)
             entries += [piece for line in more for piece in split_contents(line)]
@@ -1533,6 +1537,16 @@ def _vision_lines(image):
     return [line[3].strip() for line in sorted_boxes(image)] if image.with_suffix(LINES).exists() else None
 
 
+def before_prose(lines):
+    """The contents lines above the first English sentence on the page, and above the lines that sentence wraps from
+    (each ends in a lower-case word, as a title does not). Drive prints an epigraph under its first entries; Learn Like
+    a Pro's contents page ends in "Thank you for buying this / St. Martin's Press ebook." (2026-10-13)."""
+    end = next((i for i, line in enumerate(lines) if ENGLISH_SENTENCE.search(line)), len(lines))
+    while end < len(lines) and end > 0 and re.search(r'[a-z][,;:]?$', lines[end - 1]):
+        end -= 1
+    return lines[:end]
+
+
 def contents_entries(images):
     """The entries of the book's contents, as comparable strings: every line below a "Contents" line in the
     front matter, and the following contents pages (no sentence, so no 「。」), each subsection of a line with
@@ -1544,10 +1558,10 @@ def contents_entries(images):
         start = next((i for i, text in enumerate(lines) if CONTENTS.match(text)), None)
         if start is None:
             continue
-        pieces = [piece for text in lines[start + 1:] for piece in split_contents(text)]
+        pieces = [piece for text in before_prose(lines[start + 1:]) for piece in split_contents(text)]
         for after in front[k + 1:]:
             more = _vision_lines(after)
-            if not more or any('。' in line for line in more):
+            if not more or any(SENTENCE.search(line) for line in more):
                 break
             pieces += [piece for text in more for piece in split_contents(text)]
         return [entry for entry in map(comparable, pieces) if len(entry) >= 3]
@@ -1589,6 +1603,9 @@ def contents_for_check(images):
     return found
 
 
+CUT_TITLE = 16  # letters of a contents entry cut at the margin that still name one heading
+
+
 def _tiles(rest, keys):
     """Whether rest is headings from keys, joined, and cut at either end.
 
@@ -1622,8 +1639,9 @@ def _tiles(rest, keys):
             continue
         for key in keys:
             # The line ended before the title did. A whole entry may miss only a character or two
-            # (「天才の一」 for 「天才の一打」); a longer cut is the tail of a line that already matched.
-            if key.startswith(fragment) and (start > 0 or len(key) - len(fragment) <= 2):
+            # (「天才の一」 for 「天才の一打」), or any end when it is long enough to name one title (Japan Travel
+            # Planner's "Tokyo Sightseeing - Must-see sights in"); a longer cut is the tail of a line that already matched.
+            if key.startswith(fragment) and (start > 0 or len(key) - len(fragment) <= 2 or len(fragment) >= CUT_TITLE):
                 return True
             # 「品と村市」 for 「商品と村市」: the line lost the first character or two of the last title.
             if start > 0 and len(fragment) >= 4 and key.endswith(fragment) and len(key) - len(fragment) <= 2:

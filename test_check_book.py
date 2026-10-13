@@ -551,6 +551,26 @@ def test_a_cut_contents_line_matches_its_headings(tmp_path):
     assert not check.ok and check.blocking and '本文にない節の題' in check.detail
 
 
+def test_an_english_contents_ends_at_prose_and_its_front_matter_and_wrapped_titles_pass(tmp_path):
+    # 2026-10-13: after #118 read Vision contents, Steve Jobs failed contents_chapters with 3848 entries: the cast list
+    # after the contents ("Pong and hired Jobs.") was read as contents, and About the Author, Praise and Dedication
+    # print no title. Drive (an epigraph on the contents page), Zero to Sold (titles wrapped over two lines) and Japan
+    # Travel Planner (a title cut at the margin) had passed before and failed too.
+    contents = 'Contents\nAbout the Author\nPraise\nDedication\nCHAPTER ONE\nChildhood: Abandoned and Chosen\n' \
+               'You Probably Have It Backwards: Starting a\nBootstrapped Business\nTokyo Sightseeing - Must-see sights in\n' \
+               '"In scientific terms, it was akin to rolling a steel\nball down an inclined plane. It suggested more."'
+    more = 'CHAPTER TWO\nOdd Couple: The Two Steves\nIndex'
+    cast = 'CHARACTERS\nAL ALCORN. Chief engineer at Atari, who designed\nPong and hired Jobs.'
+    headings = ['Chapter One', 'Childhood: Abandoned and Chosen', 'You Probably Have It Backwards: Starting a Bootstrapped Business',
+                'Tokyo Sightseeing - Must-see sights in Tokyo', 'Chapter Two', 'Odd Couple: The Two Steves', 'Index']
+    folder = _japanese_contents_book(tmp_path, 'Steve Jobs', [contents, more, cast], headings, lines=True)
+    assert by_name(check_folder(folder))['contents_chapters'].ok
+    # A chapter the book does not heading still fails, after a wrapped title as well.
+    folder = _japanese_contents_book(tmp_path, 'Missing', [contents, more, cast], headings[:-2] + ['Index'], lines=True)
+    check = by_name(check_folder(folder))['contents_chapters']
+    assert not check.ok and check.detail == '1 contents entries without a heading: "oddcoupiethetwosteves"'
+
+
 def test_a_number_over_a_japanese_sentence_is_not_a_chapter_opening(tmp_path):
     # 2026-10-12: 代替医療解剖 was parked for "2 / 「王様は裸だ」と言うことを許されない。それを言えば…": a title holds no 。.
     body = '本文です。' * 30
