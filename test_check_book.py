@@ -130,6 +130,25 @@ def test_a_capture_that_began_mid_book_is_caught(tmp_path):
     assert checks['end_position'].ok and checks['positions'].ok
 
 
+def test_a_capture_from_the_start_numbered_by_location_before_page_1_passes(tmp_path):
+    # Steve Jobs (2026-10-12): cover, front matter by Kindle location (3 of 11824 on screen 2), then page 1 of 568.
+    folder = book(tmp_path, [BODY] * 5, md='# A\n\n' + BODY)
+    positions(folder, ['', '3/11824', '7/11824', '1/568', '568/568'])
+    checks = by_name(check_folder(folder))
+    assert checks['start_position'].ok and checks['end_position'].ok
+    # The trace alone also shows the start: the reader stood at position 1 and could turn back no further.
+    positions(folder, ['', '9/11824', '15/11824', '20/11824', '11824/11824'])
+    assert not by_name(check_folder(folder))['start_position'].ok
+    (folder / 'trace.jsonl').write_text('\n'.join(json.dumps(line) for line in [
+        {'observation': {'position': None}, 'action': 'save'},
+        {'observation': {'position': {'n': 1, 'm': 11824}}, 'action': 'turn:prev'}]) + '\n')
+    assert by_name(check_folder(folder))['start_position'].ok
+    # A location series far from 1 is still a late start, page series after it or not.
+    (folder / 'trace.jsonl').unlink()
+    positions(folder, ['', '400/11824', '1/568', '2/568', '568/568'])
+    assert not by_name(check_folder(folder))['start_position'].ok
+
+
 def test_a_capture_that_stopped_early_is_caught_but_end_matter_is_allowed(tmp_path):
     folder = book(tmp_path, [BODY] * 3, md='# A\n\n' + BODY)
     positions(folder, ['', '1/120', '60/120'])  # an unnumbered cover, then the book

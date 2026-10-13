@@ -21,6 +21,8 @@ from proofread import CODE_BLOCK, DECORATIVE_REF, Book, find_all, load_pages
 PROBE = 'dom-probe.json'
 CAPTURE = 'capture.json'
 POSITIONS = 'positions.json'
+TRACE = 'trace.jsonl'
+LOCATION_SLACK = 5  # locations before the first numbered screen that the cover and title pages may take
 POSITION = re.compile(r'(?:位置|ページ|Location|Page)\D{0,3}(\d+)\s*(?:/|of)\s*(\d+)')
 DEFAULT_TITLES = re.compile(r'^(kindle-book|[A-Z0-9]{10})$')
 DECORATIVE_HEADING = re.compile(r'(?m)^#+\s*(?:Chapter\s+|Part\s+)?[Z&]+(?:\s.*)?$', re.I)
@@ -76,6 +78,27 @@ def page_positions(folder):
     return sorted(found), False
 
 
+def reached_start(folder, positions):
+    """Whether the capture began at the book's start in a numbering the first numbered screen does not show.
+
+    Steve Jobs (2026-10-12) was captured from its cover, but the reader numbered the front matter by Kindle location
+    (3 of 11824 on screen 2, several locations a screen) and the body by printed page (1 of 568 from screen 58).
+    Either the trace shows the reader at position 1, or the first series is a location series that begins within
+    a few locations of 1 and a later series begins at page 1."""
+    trace = folder / TRACE
+    if trace.exists():
+        for line in trace.read_text(encoding='utf-8').splitlines():
+            try:
+                position = (json.loads(line).get('observation') or {}).get('position') or {}
+            except (json.JSONDecodeError, AttributeError):
+                continue
+            if position.get('n') == 1:
+                return True
+    first = positions[0]
+    later = next((p for p in positions if p[2] != first[2]), None)
+    return bool(later) and later[1] == 1 and first[1] - 1 <= first[0] + LOCATION_SLACK
+
+
 def end_tolerance(total):
     """Pages at the end the reader may not number (end matter), or the last turn may skip."""
     return max(2, round(total * 0.02))
@@ -110,7 +133,7 @@ def check_folder(folder, title=None):
     # A screen shows one page number or less, so page N cannot be reached in fewer than N - 1 screens.
     # No numbered screen is no evidence of the start: Steve Jobs (2026-10-12) was published from 52 of its pages
     # because a missing start and end passed.
-    late = not first or first[1] - 1 > first[0]
+    late = not first or (first[1] - 1 > first[0] and not reached_start(folder, positions))
     checks.append(Check('start_position', not late,
                         f'first numbered screen {first[0] + 1} shows page {first[1]} of {first[2]}' if first else 'start not recorded',
                         fix=None))

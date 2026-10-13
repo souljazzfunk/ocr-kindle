@@ -19,6 +19,7 @@
 | アプリの読み終わり画面は、最後の画像ごと捨てて Escape で閉じる | `capture_app.py` の `end_sheet_shown`、`test_capture_app.py::test_the_end_of_book_sheet_is_closed_and_its_image_dropped_after_a_capture`（F059） |
 | アプリのライブラリに戻るのは Close Book ボタンだけ。File > Close や Cmd+W は使わない | `capture_app.py`、`test_capture_app.py::test_a_reader_left_open_is_closed_with_its_close_book_button_never_file_close`（F059） |
 | 本は 1 ページ目から最後まで取り込む。開いた位置からそのまま取り込まない | `extension/policy.js`、`extension/policy.test.js::opened mid-book: pages back to page 1 saving each screen, then forward past them to the end`、`test_check_book.py::test_a_capture_that_began_mid_book_is_caught`（F007） |
+| 表紙から位置番号で数えた本は、位置 1 に着いたか、位置の列が 1 の近くから始まりページ 1 が続けば、先頭から取り込んだと認める | `check_book.py` の `reached_start`、`test_check_book.py::test_a_capture_from_the_start_numbered_by_location_before_page_1_passes`（F130） |
 | 始まりと終わりの位置が記録されていない取り込みは落とす。記録なしを通さない | `check_book.py` の `check_folder`、`test_check_book.py::test_a_capture_with_no_recorded_start_or_end_fails_both`（F128） |
 | 先頭から遠くで開いた本は、最初にスクラバーで先頭へ跳ぶ。本を丸ごと逆にめくらない | `policy.js` の `JUMP_FROM`、`extension/main.js`、`extension/policy.test.js::a book opened far from its start jumps to the start before it saves anything, and pages back as before when the jump does not move it`（F107） |
 | 前のページのボタンで戻れなくなったら矢印キーで戻り、止まった画面を記録する | `extension/policy.js`、`extension/policy.test.js::a reader stuck on Previous page pages back by the left arrow key`、`test_channel.py::test_the_screen_where_a_capture_stopped_is_kept_beside_the_trace`（F076） |
