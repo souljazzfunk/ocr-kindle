@@ -158,7 +158,8 @@ TOUCH = {
         ('img2txt.py', 'main'),  # which laid-out pages are written again (近代中国史, 2026-10-13)
         ('proofread.py', 'not_a_title'),  # which titles the runner's proofreading takes back (近代中国史, 2026-10-13)
     ),
-    'code_blocks': (('check_book.py', 'check_folder'), ('layout.py', 'code_pages')),
+    'code_blocks': (('check_book.py', 'check_folder'), ('layout.py', 'code_pages'),
+                    ('proofread.py', 'loose_code')),  # fences the code the layout left loose (Automate the Boring Stuff, 2026-10-13)
     'proofread': (('proofread.py', None),),
     'layout': (('layout.py', 'mark_layout'), ('check_book.py', 'check_folder')),
     'gemini': (
