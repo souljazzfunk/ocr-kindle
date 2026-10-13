@@ -8,6 +8,7 @@ config.env
 !.claude/settings.json
 !fixtures/kindle/expect.json
 !fixtures/cases/**/*.json
+!fixtures/contents/*.json
 service-account*.json
 credentials/
 

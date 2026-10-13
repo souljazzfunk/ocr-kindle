@@ -329,6 +329,18 @@ def contents_spelling(title, spelled):
     return title
 
 
+# A sentence ends a line, or a line goes on from the one above it (it begins in lower case).
+SENTENCE_END = re.compile(r'[.!?。][)"”’]?$')
+
+
+def holds_prose(lines):
+    """Whether a page after the contents is prose rather than more contents. A Japanese sentence has 「。」; an English
+    page has lines that end a sentence or go on from the line above. Facing the Mountain's foreword (2026-10-12) has no
+    「。」, and every line of it was taken for a contents entry."""
+    return (any('。' in line for line in lines) or any(SENTENCE_END.search(line.strip()) for line in lines)
+            or sum(1 for line in lines if line[:1].islower()) >= 3)
+
+
 def livetext_contents(images):
     """(stems, entries, spelled) of a Live Text book's contents: the front-matter page with a 目次 line and the pages right after
     it that hold no sentence (no 「。」). 英語教育幻想's contents ran over several pages, and each entry came out as a
@@ -343,7 +355,7 @@ def livetext_contents(images):
         stems, entries = [image.stem], [piece for line in lines[start + 1:] for piece in split_contents(line)]
         for after in pages[k + 1:]:
             more = page_lines(after)
-            if not more or any('。' in line for line in more):
+            if not more or holds_prose(more):
                 break
             stems.append(after.stem)
             entries += [piece for line in more for piece in split_contents(line)]
@@ -1547,7 +1559,7 @@ def contents_entries(images):
         pieces = [piece for text in lines[start + 1:] for piece in split_contents(text)]
         for after in front[k + 1:]:
             more = _vision_lines(after)
-            if not more or any('。' in line for line in more):
+            if not more or holds_prose(more):
                 break
             pieces += [piece for text in more for piece in split_contents(text)]
         return [entry for entry in map(comparable, pieces) if len(entry) >= 3]
@@ -1569,7 +1581,6 @@ CHAPTER_LABEL = re.compile(r'第[^章]{0,3}章')  # 第Ⅲ章, which Live Text r
 # A contents line's 「―」 read as the long-vowel mark, between a title and the next title or a kanji.
 # 「コーヒー」 keeps its ー: the mark there sits between kana.
 DASH_AS_CHOON = re.compile(r'ー(?=[\u4e00-\u9fff])|(?<=[\u4e00-\u9fff])ー')
-ROMAN = re.compile(r'^[ivx]+')  # Ⅰ read as i at the start of a contents line (近代中国史, 「iステージ」)
 
 
 def contents_key(text):
@@ -1589,61 +1600,29 @@ def contents_for_check(images):
     return found
 
 
-def _tiles(rest, keys):
-    """Whether rest is headings from keys, joined, and cut at either end.
-
-    The cut is a contents line that ends mid-title, or a page break that continues a title (近代中国史:
-    「…一四世紀まで人口」 then 「変動と時期区分―一五世紀以後」). A fragment covers a heading only when it is that
-    heading or, at the end of a line, the start of one. The start of an entry may be the tail of a heading the
-    previous line kept. Eight characters is the shortest such tail: a shorter one would let a different title through.
-    """
-    if not rest or not keys:
-        return False
-    n = len(rest)
-    reach = {0}
-    for key in keys:
-        for length in range(min(len(key) - 1, n), 7, -1):
-            if rest.startswith(key[-length:]):
-                reach.add(length)
-                break
-    for index in range(n + 1):
-        if index not in reach:
-            continue
-        for key in keys:
-            if rest.startswith(key, index):
-                reach.add(index + len(key))
-    if n in reach:
-        return True
-    for start in reach:
-        if start > n:
-            continue
-        fragment = rest[start:]
-        if len(fragment) < 2:
-            continue
-        for key in keys:
-            # The line ended before the title did. A whole entry may miss only a character or two
-            # (「天才の一」 for 「天才の一打」); a longer cut is the tail of a line that already matched.
-            if key.startswith(fragment) and (start > 0 or len(key) - len(fragment) <= 2):
-                return True
-            # 「品と村市」 for 「商品と村市」: the line lost the first character or two of the last title.
-            if start > 0 and len(fragment) >= 4 and key.endswith(fragment) and len(key) - len(fragment) <= 2:
-                return True
-    return False
+def _edits_to_fit(entry, text):
+    """The fewest edits that turn entry into some stretch of text (an approximate substring match)."""
+    row = [0] * (len(text) + 1)
+    for i, char in enumerate(entry, 1):
+        diagonal, row[0] = row[0], i
+        for j, other in enumerate(text, 1):
+            diagonal, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, diagonal + (char != other))
+    return min(row)
 
 
 def contents_covered(entry, titles):
-    """Whether the book's headings account for a contents entry.
+    """Whether the book's headings account for a contents entry: the entry is a stretch of the headings, in order,
+    with one edit in five allowed.
 
-    One heading, or several subsection titles read as one line (代替医療解剖 joins them with 「／」; when the slash
-    is already gone they still tile). The last title may be cut at the margin and the next line may begin in the
-    middle of a title, including across a page (近代中国史, 2026-10-12). An entry that is not those headings still
-    fails: the unmatched span is not a heading and not the cut end of one."""
-    keys = {k for k in (contents_key(t) for t in titles) if len(k) >= 2}
+    The stretch covers a title the line cut at the margin or that began on the line before, and several subsection
+    titles read as one line (代替医療解剖, 近代中国史). The edits cover what Live Text reads differently in the
+    contents than in the heading: 「邑」 as 品, 士 as 土, Ⅱ as m, ーー as ーーー (近代中国史, 2026-10-12, after
+    matching char for char had been fixed twice). A title the book does not head is far from every stretch."""
     rest = contents_key(entry)
-    if _tiles(rest, keys):
-        return True
-    bare = ROMAN.sub('', rest)
-    return bare != rest and _tiles(bare, keys)
+    if not rest:
+        return False
+    text = ''.join(contents_key(title) for title in titles)
+    return rest in text or _edits_to_fit(rest, text) <= max(1, len(rest) // 5)
 
 
 def listed(text, chapters):
