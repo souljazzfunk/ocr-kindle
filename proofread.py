@@ -418,7 +418,14 @@ def heading_noise(book):
                 yield Finding('heading_noise', stem, f'{marks} {title}', title)
 
 
+CJK = re.compile(r'[\u3040-\u30ff\u3400-\u9fff]')
+
+
 def not_a_title(text):
+    # Japanese has no capitals or Latin vowels to tell a title by: only a line cut mid-sentence is not one. 近代中国史
+    # (2026-10-13) lost its `# 参考文献` here and parked on contents_chapters.
+    if CJK.search(text):
+        return text.endswith(('、', '，', ',', ';', '-'))
     first = text.lstrip('"\'“‘(')[:1]
     return (not first or not (first.isupper() or first.isdigit()) or text.endswith((',', ';', '-'))
             or not re.search(r'[A-Za-z]*[AEIOUYaeiouy][A-Za-z]*', text))

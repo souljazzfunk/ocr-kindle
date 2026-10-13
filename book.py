@@ -156,6 +156,7 @@ TOUCH = {
         ('layout.py', 'comparable'),
         ('layout.py', 'page_lines'),
         ('img2txt.py', 'main'),  # which laid-out pages are written again (近代中国史, 2026-10-13)
+        ('proofread.py', 'not_a_title'),  # which titles the runner's proofreading takes back (近代中国史, 2026-10-13)
     ),
     'code_blocks': (('check_book.py', 'check_folder'), ('layout.py', 'code_pages')),
     'proofread': (('proofread.py', None),),

@@ -121,3 +121,20 @@ def test_a_contents_park_is_retried_when_the_rewriting_of_laid_out_pages_changes
     changed = book.versions(tmp_path)
     assert changed['touch']['contents_chapters'] != first['touch']['contents_chapters']
     assert changed['touch']['headings'] == first['touch']['headings']
+
+
+def test_a_contents_park_is_retried_when_proofreading_stops_taking_titles_back(tmp_path):
+    # 2026-10-13 11:19 JST: 近代中国史 parked again because proofread's not_a_title made `# 参考文献` plain text. A
+    # change there must retry the book parked on contents_chapters, as a change in img2txt.main does.
+    owners = {}
+    for pairs in book.TOUCH.values():
+        for file, name in pairs:
+            owners.setdefault(file, [])
+            if name and name not in owners[file]:
+                owners[file].append(name)
+    for file, names in owners.items():
+        (tmp_path / file).write_text('\n'.join(f'def {name}():\n    return 1\n' for name in names) or 'x = 1\n')
+    first = book.versions(tmp_path)
+    (tmp_path / 'proofread.py').write_text((tmp_path / 'proofread.py').read_text().replace(
+        'def not_a_title():\n    return 1\n', 'def not_a_title():\n    return 2\n', 1))
+    assert book.versions(tmp_path)['touch']['contents_chapters'] != first['touch']['contents_chapters']
