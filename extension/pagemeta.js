@@ -54,9 +54,18 @@ function probePage(doc) {
       return { label, present: !!button, disabled: !!button && (button.disabled === true || button.getAttribute('aria-disabled') === 'true'),
         shown: !!button && button.getBoundingClientRect().width > 0 };
     }),
+    readerFooter: footerText(doc),
     footer: (doc.body.innerText.match(/(?:位置|ページ|Location|Page)[^\n]{0,40}/g) || []).slice(0, 4),
     body: describe(doc.body, 0),
   };
+}
+
+// The reader footer's own text, whatever it shows. The position comes from body.innerText, and from 2026-10-12 13:00
+// JST some captures saw no position at all (The History of Jazz, So You Want to Talk About Race): this records what
+// the footer held instead, so the reading can be fixed from a recording rather than a guess.
+function footerText(doc) {
+  const footer = doc.querySelector('.reader-footer');
+  return footer ? (footer.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 120) : null;
 }
 
 // "Page 75 of 120" (or 位置/ページ/Location) from the reader's footer as { n, m }, or null when it shows none.
@@ -97,4 +106,4 @@ function parseLibrary(doc) {
   return { books, paginationToken: data?.paginationToken ?? null };
 }
 
-if (typeof module !== 'undefined') module.exports = { pickTitle, probePage, parsePosition, appOnly, signedOut, parseLibrary };
+if (typeof module !== 'undefined') module.exports = { pickTitle, probePage, footerText, parsePosition, appOnly, signedOut, parseLibrary };
