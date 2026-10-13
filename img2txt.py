@@ -526,10 +526,13 @@ def main():
               + (f'; {len(left)} left, run again to retry' if left else ''), flush=True)
     elif vision:
         print(f'No layout provider is available: {len(vision)} Vision pages keep titles guessed from layout')
-    # Live Text pages already laid out are written again from layout.json, with no request: a new livetext_markdown
-    # (section marks, contents pages) then reaches books converted before it.
-    kept = [img for img in images if sources.get(img.stem) == LIVETEXT and img.stem in done and img not in vision]
-    if kept and sys.platform == 'darwin' and restore_live(kept, sources):
+    # Pages already laid out are written again from layout.json, with no request: a new livetext_markdown or
+    # page_markdown then reaches books converted before it. A Vision page needs its line boxes for that; 近代中国史
+    # (2026-10-13) kept a page_0378 written by older code and parked again on its 「参考文献」.
+    kept = [img for img in images if img.stem in done and img not in vision
+            and (sources.get(img.stem) == LIVETEXT or img.with_suffix(LINES).exists())]
+    live = [img for img in kept if sources.get(img.stem) == LIVETEXT]
+    if live and sys.platform == 'darwin' and restore_live(live, sources):
         print('Live Text read again on the pages laid out before its reading was kept', flush=True)
     if kept:
         mark_layout(args.folder, None, kept)

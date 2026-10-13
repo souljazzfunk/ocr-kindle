@@ -79,7 +79,8 @@
 | 目次の続きは英語の文でも止める。目次の項目は見出しの並びと近似で照らす | `layout.py` の `holds_prose`・`contents_covered`、`check_book.py` の `contents_unheaded`、`test_check_book.py::test_the_recorded_contents_of_three_parked_books_find_their_headings`（F130） |
 | 日本語の本の節番号とその下の題は見出しにする。文の上の番号は章の始まりと数えない | `proofread.py` の `numbered_title`、`test_proofread.py::test_a_numbered_section_title_of_a_japanese_book_becomes_a_heading`、`test_check_book.py::test_a_number_over_a_japanese_sentence_is_not_a_chapter_opening`（F119） |
 | 章の見出しの番号は目次の番号に揃え、段落とつながった見出しは段落に戻す | `layout.py` の `contents_spelling`、`test_layout.py::test_a_chapter_number_read_as_a_symbol_takes_the_contents_number_and_a_run_on_title_stays_a_paragraph`（F084） |
-| 変換し直すとき、配置済みの Live Text のページも新しいコードで書き直す | `img2txt.py`、`test_img2txt.py::test_live_text_pages_laid_out_before_are_written_again_without_a_request`（F079） |
+| 変換し直すとき、配置済みのページ（Live Text と Vision）も新しいコードで書き直す | `img2txt.py`、`test_img2txt.py::test_live_text_pages_laid_out_before_are_written_again_without_a_request`、`test_img2txt.py::test_vision_pages_laid_out_before_are_written_again_without_a_request`（F079 F131） |
+| 配置済みのページの書き直しが変わったら、目次の検査で止まった本をやり直す | `book.py` の `TOUCH`、`test_book.py::test_a_contents_park_is_retried_when_the_rewriting_of_laid_out_pages_changes`（F131） |
 | Live Text のページは毎回 Live Text 自身の読みから組み直す。前の出力から組み直さない | `img2txt.py` の `LIVE`・`restore_live`、`test_layout.py::test_a_second_layout_starts_from_live_text_s_reading_not_from_the_first_layout_s_output`（F088） |
 | Live Text のページも見出しを Gemini に読ませる。段落のままにしない | `layout.py` の `livetext_markdown`、`test_layout.py::test_a_live_text_page_takes_its_titles_from_gemini`（F075） |
 | 配置は Sonnet から順に試し、後ろが残るうちは本を止めない | `layout.py` の `provider_order`、`test_layout.py::test_sonnet_is_asked_first_and_a_spent_one_gives_way_to_the_next`、`test_layout.py::test_any_failed_gemini_request_stops_the_book_without_sending_the_rest`（F028） |
