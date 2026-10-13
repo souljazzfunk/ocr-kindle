@@ -202,3 +202,24 @@ test('after the jump to the start, a screen without its image yet is waited for'
   assert.deepStrictEqual(replay([end, blank, blank, a]).actions.slice(0, 4), ['jump:start', 'wait', 'wait', 'save']);
   assert.strictEqual(replay([end, ...Array(3 * IMAGE_WAITS + 1).fill(blank)]).actions.at(-1), `fail:no page image after ${3 * IMAGE_WAITS} s`);
 });
+
+test('a reader stuck on an unnumbered screen far from the end pages on by the arrow key', () => {
+  // 2026-10-12: Automate the Boring Stuff jumped from 70 of 552 to location 1 of 15988, the footer then showed no
+  // position, and Next page stopped moving the reader on screen 18 (the contents). The capture ended there as done.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const trace = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'traces', 'B07VSXS4NK-2026-10-12.jsonl'), 'utf8')
+    .trim().split('\n').map((line) => JSON.parse(line));
+  let state = initialState();
+  const actions = trace.map(({ observation }) => {
+    const result = nextAction(state, observation);
+    state = result.state;
+    return result.action;
+  });
+  assert.deepStrictEqual(actions.slice(0, -1), trace.slice(0, -1).map((step) => step.action));
+  assert.strictEqual(trace.at(-1).action, 'done:turns stopped on an unnumbered screen');
+  assert.strictEqual(actions.at(-1), 'turn:next-key');
+  // Unnumbered last screens of a book whose last numbered page was near the end still end it.
+  const a = screen('a', 1, 9), h = screen('h', 9, 9), u = screen('u');
+  assert.strictEqual(replay([a, a, a, a, h, u, u, u, u]).actions.at(-1), 'done:turns stopped on an unnumbered screen');
+});
