@@ -9,8 +9,14 @@ const JOB_ASKS = 10; // the worker stores the tab's job right after the window o
 const LIBRARY_SETTLE_MS = 3000;
 const LIBRARY_WAIT_MS = 30000;
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const toWorker = (message) => chrome.runtime.sendMessage(message).catch((e) => ({ ok: false, reason: String(e) }));
+// Chrome counts the reader window as hidden behind other windows and, after 5 minutes hidden, wakes this page's timers
+// about once a minute (the 2.12 trace: hidden true, each turn ~240 s). The worker's timers are not held back, so every
+// wait runs there; the page's own timer is only for a worker that does not answer.
+async function sleep(ms) {
+  const slept = await toWorker({ kc: 'sleep', ms });
+  if (!slept?.ok) await new Promise((r) => setTimeout(r, ms));
+}
 
 // The full-book reader draws a page as a blob <img> or, on other openings of the same book, into the one <canvas> under
 // .kg-full-page-img (英語教育幻想 on read.amazon.com, 2026-10-12: img at positions 92 and 82, canvas at 81; toDataURL works).

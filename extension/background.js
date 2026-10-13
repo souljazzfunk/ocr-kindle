@@ -95,6 +95,10 @@ async function forward(message, active) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
+  if (message.kc === 'sleep') { // content.js waits here: its own timers are held back while the window is hidden
+    setTimeout(() => reply({ ok: true }), message.ms);
+    return true;
+  }
   (async () => {
     const active = await loadActive();
     const mine = active && active.tabId === sender.tab?.id;
