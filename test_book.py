@@ -102,3 +102,22 @@ def test_gemini_waits_for_its_daily_reset_at_midnight_pacific_and_other_errors_h
     assert book.gemini_reset('429 RESOURCE_EXHAUSTED PerDay', late) == datetime(2026, 10, 12, tzinfo=pacific).timestamp()
     assert book.gemini_reset('connection reset', late) == late + 1800
     assert book.gemini_reset('Layout failed. Resets at 123. 429 PerDay', late) == 123
+
+
+def test_a_contents_park_is_retried_when_the_rewriting_of_laid_out_pages_changes(tmp_path):
+    # 2026-10-13: 近代中国史 stayed parked on 「参考文献」 because img2txt.main did not write its laid-out Vision
+    # page again. The fix is in img2txt.main, so that function is part of what decides contents_chapters.
+    owners = {}
+    for pairs in book.TOUCH.values():
+        for file, name in pairs:
+            owners.setdefault(file, [])
+            if name and name not in owners[file]:
+                owners[file].append(name)
+    for file, names in owners.items():
+        (tmp_path / file).write_text('\n'.join(f'def {name}():\n    return 1\n' for name in names) or 'x = 1\n')
+    first = book.versions(tmp_path)
+    (tmp_path / 'img2txt.py').write_text((tmp_path / 'img2txt.py').read_text().replace(
+        'def main():\n    return 1\n', 'def main():\n    return 2\n', 1))
+    changed = book.versions(tmp_path)
+    assert changed['touch']['contents_chapters'] != first['touch']['contents_chapters']
+    assert changed['touch']['headings'] == first['touch']['headings']

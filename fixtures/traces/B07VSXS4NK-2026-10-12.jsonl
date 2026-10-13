@@ -1,0 +1,44 @@
+{"t": 2.73, "observation": {"position": {"n": 70, "m": 552}, "sha": "1ec7442a9f80b0d14c629bfeb1c8c4f13c4350e3b58f4e3855695a5fa2c0d3fc", "appOnly": false, "signedOut": false}, "action": "jump:start"}
+{"t": 4.04, "observation": {"position": null, "sha": null, "appOnly": false, "signedOut": false}, "action": "wait"}
+{"t": 5.12, "observation": {"position": {"n": 1, "m": 15988}, "sha": "920856d338c2e0006b4122aae8ca21fd4b3fbd13ecf7e87d7b9abf9a8ceaa0c7", "appOnly": false, "signedOut": false}, "action": "save"}
+{"t": 5.26, "observation": {"position": {"n": 1, "m": 15988}, "sha": "920856d338c2e0006b4122aae8ca21fd4b3fbd13ecf7e87d7b9abf9a8ceaa0c7", "appOnly": false, "signedOut": false}, "action": "turn:prev"}
+{"t": 8.44, "observation": {"position": {"n": 1, "m": 15988}, "sha": "920856d338c2e0006b4122aae8ca21fd4b3fbd13ecf7e87d7b9abf9a8ceaa0c7", "appOnly": false, "signedOut": false}, "action": "turn:prev"}
+{"t": 11.72, "observation": {"position": {"n": 1, "m": 15988}, "sha": "920856d338c2e0006b4122aae8ca21fd4b3fbd13ecf7e87d7b9abf9a8ceaa0c7", "appOnly": false, "signedOut": false}, "action": "turn:prev"}
+{"t": 14.85, "observation": {"position": {"n": 1, "m": 15988}, "sha": "920856d338c2e0006b4122aae8ca21fd4b3fbd13ecf7e87d7b9abf9a8ceaa0c7", "appOnly": false, "signedOut": false}, "action": "turn:next"}
+{"t": 15.2, "observation": {"position": null, "sha": "e3964ea2f9552072e72d8f09bc1b053912b3b2ff9d0623bab3564e42682c60d8", "appOnly": false, "signedOut": false}, "action": "save"}
+{"t": 15.21, "observation": {"position": null, "sha": "e3964ea2f9552072e72d8f09bc1b053912b3b2ff9d0623bab3564e42682c60d8", "appOnly": false, "signedOut": false}, "action": "turn:next"}
+{"t": 15.55, "observation": {"position": null, "sha": "69659119e82d82f29388926a06d10295317faf6e954f2d3dc403e624816df0a8", "appOnly": false, "signedOut": false}, "action": "save"}
+{"t": 15.58, "observation": {"position": null, "sha": "69659119e82d82f29388926a06d10295317faf6e954f2d3dc403e624816df0a8", "appOnly": false, "signedOut": false}, "action": "turn:next"}
+{"t": 15.92, "observation": {"position": null, "sha": "2293fed5fc2e20474bcde7cd22c5f7c62b560036297ec5c4fe6481c142d4714c", "appOnly": false, "signedOut": false}, "action": "save"}
+{"t": 16.04, "observation": {"position": null, "sha": "2293fed5fc2e20474bcde7cd22c5f7c62b560036297ec5c4fe6481c142d4714c", "appOnly": false, "signedOut": false}, "action": "turn:next"}
+{"t": 16.4, "observation": {"position": null, "sha": "bb915d3c2b9420597a7407123bccc02675f3c2c32d3729ae6fe8e578d31fca2f", "appOnly": false, "signedOut": false}, "action": "save"}
+{"t": 16.42, "observation": {"position": null, "sha": "bb915d3c2b9420597a7407123bccc02675f3c2c32d3729ae6fe8e578d31fca2f", "appOnly": false, "signedOut": false}, "action": "turn:next"}
+{"t": 16.76, "observation": {"position": null, "sha": "8a1af727711634b40440cbcf37fbf672ed836825175df67298978e125864b633", "appOnly": false, "signedOut": false}, "action": "save"}
+{"t": 16.8, "observation": {"position": null, "sha": "8a1af727711634b40440cbcf37fbf672ed836825175df67298978e125864b633", "appOnly": false, "signedOut": false}, "action": "turn:next"}
+{"t": 17.14, "observation": {"position": null, "sha": "2774acb2cec32f2273781d00e06f2bf6809f7126be7e21c2309e4c30cc0cd1b7", "appOnly": false, "signedOut": false}, "action": "save"}
+{"t": 17.15, "observation": {"position": null, "sha": "2774acb2cec32f2273781d00e06f2bf6809f7126be7e21c2309e4c30cc0cd1b7", "appOnly": false, "signedOut": false}, "action": "turn:next"}
+{"t": 17.48, "observation": {"position": null, "sha": "2c34d02ea4d1c6af5a9c0c5e0a3e2fc97ce3b15d6f79588d5308b4a4380757f0", "appOnly": false, "signedOut": false}, "action": "save"}
+{"t": 17.5, "observation": {"position": null, "sha": "2c34d02ea4d1c6af5a9c0c5e0a3e2fc97ce3b15d6f79588d5308b4a4380757f0", "appOnly": false, "signedOut": false}, "action": "turn:next"}
+{"t": 17.84, "observation": {"position": null, "sha": "c75cbc74c220d49b27ad41cdf3fe5fa4b9370072273a3682ab4a13d1643355cf", "appOnly": false, "signedOut": false}, "action": "save"}
+{"t": 17.85, "observation": {"position": null, "sha": "c75cbc74c220d49b27ad41cdf3fe5fa4b9370072273a3682ab4a13d1643355cf", "appOnly": false, "signedOut": false}, "action": "turn:next"}
+{"t": 18.19, "observation": {"position": null, "sha": "f63c5451e602aa895b7e23fcd8d1fed07823a8cd5bdc6ba5149600b5f082cbd3", "appOnly": false, "signedOut": false}, "action": "save"}
+{"t": 18.21, "observation": {"position": null, "sha": "f63c5451e602aa895b7e23fcd8d1fed07823a8cd5bdc6ba5149600b5f082cbd3", "appOnly": false, "signedOut": false}, "action": "turn:next"}
+{"t": 18.55, "observation": {"position": null, "sha": "b7b08db2c3e7f60bce385a018a3146e506937f0bd3f6ab8d245ecfa473a54a48", "appOnly": false, "signedOut": false}, "action": "save"}
+{"t": 18.66, "observation": {"position": null, "sha": "b7b08db2c3e7f60bce385a018a3146e506937f0bd3f6ab8d245ecfa473a54a48", "appOnly": false, "signedOut": false}, "action": "turn:next"}
+{"t": 18.99, "observation": {"position": null, "sha": "0140c31c03822d4fc9011e80cd445ea2d5bd3ee769de9c7da3334349e56e24d3", "appOnly": false, "signedOut": false}, "action": "save"}
+{"t": 19.06, "observation": {"position": null, "sha": "0140c31c03822d4fc9011e80cd445ea2d5bd3ee769de9c7da3334349e56e24d3", "appOnly": false, "signedOut": false}, "action": "turn:next"}
+{"t": 19.39, "observation": {"position": null, "sha": "291db0a4a831ad6137070e3d10592505a030d37e2427cf541de256aed696c2c7", "appOnly": false, "signedOut": false}, "action": "save"}
+{"t": 19.44, "observation": {"position": null, "sha": "291db0a4a831ad6137070e3d10592505a030d37e2427cf541de256aed696c2c7", "appOnly": false, "signedOut": false}, "action": "turn:next"}
+{"t": 19.77, "observation": {"position": null, "sha": "ab4fb664d32dfbd56d2ec335ffb31a6b6bfd521c5384fbdb41efc94c4ef49b1f", "appOnly": false, "signedOut": false}, "action": "save"}
+{"t": 19.8, "observation": {"position": null, "sha": "ab4fb664d32dfbd56d2ec335ffb31a6b6bfd521c5384fbdb41efc94c4ef49b1f", "appOnly": false, "signedOut": false}, "action": "turn:next"}
+{"t": 20.14, "observation": {"position": null, "sha": "10cb310b62923849528a69fae7a38bf01041815ecef156d9e534d72357895c73", "appOnly": false, "signedOut": false}, "action": "save"}
+{"t": 20.18, "observation": {"position": null, "sha": "10cb310b62923849528a69fae7a38bf01041815ecef156d9e534d72357895c73", "appOnly": false, "signedOut": false}, "action": "turn:next"}
+{"t": 20.51, "observation": {"position": null, "sha": "a0e30132d4c6dc47ab86ee9d27ad76b90f6e95e7394799a3ebfeda867251378c", "appOnly": false, "signedOut": false}, "action": "save"}
+{"t": 20.59, "observation": {"position": null, "sha": "a0e30132d4c6dc47ab86ee9d27ad76b90f6e95e7394799a3ebfeda867251378c", "appOnly": false, "signedOut": false}, "action": "turn:next"}
+{"t": 20.92, "observation": {"position": null, "sha": "a61fa58ecd74930c27324273ab4291e6a5a50ec869a73f80f1355320ae11804e", "appOnly": false, "signedOut": false}, "action": "save"}
+{"t": 20.93, "observation": {"position": null, "sha": "a61fa58ecd74930c27324273ab4291e6a5a50ec869a73f80f1355320ae11804e", "appOnly": false, "signedOut": false}, "action": "turn:next"}
+{"t": 21.26, "observation": {"position": null, "sha": "ca688b8134b218f138af8390c7d4c8d67b0011a86048480580501c97e7c8c191", "appOnly": false, "signedOut": false}, "action": "save"}
+{"t": 21.28, "observation": {"position": null, "sha": "ca688b8134b218f138af8390c7d4c8d67b0011a86048480580501c97e7c8c191", "appOnly": false, "signedOut": false}, "action": "turn:next"}
+{"t": 24.47, "observation": {"position": null, "sha": "ca688b8134b218f138af8390c7d4c8d67b0011a86048480580501c97e7c8c191", "appOnly": false, "signedOut": false}, "action": "turn:next"}
+{"t": 27.57, "observation": {"position": null, "sha": "ca688b8134b218f138af8390c7d4c8d67b0011a86048480580501c97e7c8c191", "appOnly": false, "signedOut": false}, "action": "turn:next"}
+{"t": 30.74, "observation": {"position": null, "sha": "ca688b8134b218f138af8390c7d4c8d67b0011a86048480580501c97e7c8c191", "appOnly": false, "signedOut": false}, "action": "done:turns stopped on an unnumbered screen"}

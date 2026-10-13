@@ -24,6 +24,7 @@
 | 前のページのボタンで戻れなくなったら矢印キーで戻り、止まった画面を記録する | `extension/policy.js`、`extension/policy.test.js::a reader stuck on Previous page pages back by the left arrow key`、`test_channel.py::test_the_screen_where_a_capture_stopped_is_kept_beside_the_trace`（F076） |
 | 戻るはずのめくりで先のページに出たら、次の手（左キー、右キー）に替え、その画面は保存しない | `extension/policy.js` の `WAYS`、`extension/policy.test.js::a book read right to left, whose left arrow key turns forward, pages back by the right arrow key`（F093） |
 | 次のページのボタンで進めなくなったら、終わり近くでない限り矢印キーで進む | `extension/policy.js` の `WAYS`・`nearEnd`、`extension/policy.test.js::a reader stuck on Next page mid-book pages on by the right arrow key, then by the left in a book read right to left`（F105） |
+| 番号のない画面で進めなくなったら、最後に読めた番号で終わり近くかを決める | `extension/policy.js` の `edge`・`known`、`extension/policy.test.js::a reader stuck on an unnumbered screen far from the end pages on by the arrow key`（F132） |
 | 先頭へ跳んだ直後は、ページの画像が出るまで長めに待つ | `extension/policy.js`、`extension/policy.test.js::after the jump to the start, a screen without its image yet is waited for`（F110） |
 | どの手でもめくれなくなったら、2 分休んで最初の手からやり直す（1 冊 3 回まで） | `extension/policy.js` の `rest`、`extension/policy.test.js::a reader that stops turning mid-book both ways rests and starts over with the button before the capture gives up`（F108） |
 | 先頭から進み直すとき、開いた位置より前の画面を保存し直さない | `extension/policy.js`、`extension/policy.test.js::forward from page 1, a screen before the opening one is not saved again under a new hash`（F077） |
@@ -79,7 +80,8 @@
 | 目次の続きは英語の文でも止める。目次の項目は見出しの並びと近似で照らす | `layout.py` の `holds_prose`・`contents_covered`、`check_book.py` の `contents_unheaded`、`test_check_book.py::test_the_recorded_contents_of_three_parked_books_find_their_headings`（F130） |
 | 日本語の本の節番号とその下の題は見出しにする。文の上の番号は章の始まりと数えない | `proofread.py` の `numbered_title`、`test_proofread.py::test_a_numbered_section_title_of_a_japanese_book_becomes_a_heading`、`test_check_book.py::test_a_number_over_a_japanese_sentence_is_not_a_chapter_opening`（F119） |
 | 章の見出しの番号は目次の番号に揃え、段落とつながった見出しは段落に戻す | `layout.py` の `contents_spelling`、`test_layout.py::test_a_chapter_number_read_as_a_symbol_takes_the_contents_number_and_a_run_on_title_stays_a_paragraph`（F084） |
-| 変換し直すとき、配置済みの Live Text のページも新しいコードで書き直す | `img2txt.py`、`test_img2txt.py::test_live_text_pages_laid_out_before_are_written_again_without_a_request`（F079） |
+| 変換し直すとき、配置済みのページ（Live Text と Vision）も新しいコードで書き直す | `img2txt.py`、`test_img2txt.py::test_live_text_pages_laid_out_before_are_written_again_without_a_request`、`test_img2txt.py::test_vision_pages_laid_out_before_are_written_again_without_a_request`（F079 F131） |
+| 配置済みのページの書き直しが変わったら、目次の検査で止まった本をやり直す | `book.py` の `TOUCH`、`test_book.py::test_a_contents_park_is_retried_when_the_rewriting_of_laid_out_pages_changes`（F131） |
 | Live Text のページは毎回 Live Text 自身の読みから組み直す。前の出力から組み直さない | `img2txt.py` の `LIVE`・`restore_live`、`test_layout.py::test_a_second_layout_starts_from_live_text_s_reading_not_from_the_first_layout_s_output`（F088） |
 | Live Text のページも見出しを Gemini に読ませる。段落のままにしない | `layout.py` の `livetext_markdown`、`test_layout.py::test_a_live_text_page_takes_its_titles_from_gemini`（F075） |
 | 配置は Sonnet から順に試し、後ろが残るうちは本を止めない | `layout.py` の `provider_order`、`test_layout.py::test_sonnet_is_asked_first_and_a_spent_one_gives_way_to_the_next`、`test_layout.py::test_any_failed_gemini_request_stops_the_book_without_sending_the_rest`（F028） |

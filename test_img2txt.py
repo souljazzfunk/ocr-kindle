@@ -241,3 +241,24 @@ def test_live_text_pages_laid_out_before_are_written_again_without_a_request(tmp
     monkeypatch.setattr(sys, 'argv', ['img2txt.py', str(book), '--model', 'vision'])
     img2txt.main()
     assert (book / 'page_0001.txt').read_text(encoding='utf-8') == '# 目次\n\n幻想1 英語は世界の共通語である 13'
+
+
+def test_vision_pages_laid_out_before_are_written_again_without_a_request(tmp_path, monkeypatch):
+    # 2026-10-13: 近代中国史 was converted again after the contents fix (#122) and parked once more on 「参考文献」.
+    # layout.json made line 0 of page_0378 a title, but the page's .txt was written by older code and only Live Text
+    # pages were written again. fixtures/rerender/ holds the page as the Mac had it.
+    import shutil
+    import img2txt
+    import layout
+    book = tmp_path / '近代中国史'
+    shutil.copytree(Path(__file__).parent / 'fixtures/rerender/B00WJBK92W', book)
+    assert not (book / 'page_0378.txt').read_text(encoding='utf-8').startswith('# ')
+    img2txt.record_sources(book, [('page_0378', img2txt.VISION)])
+    (book / 'layout.json').write_text(json.dumps({'page_0378': {'titles': [{'line': 0, 'level': 1}], 'quotes': [],
+                                                                'figures': [], 'art': [], 'code': [], 'drop_cap': None,
+                                                                'model': 'claude'}}))
+    monkeypatch.setattr(img2txt, 'load_config', lambda: {})
+    monkeypatch.setattr(layout, 'claude_cli', lambda: None)
+    monkeypatch.setattr(sys, 'argv', ['img2txt.py', str(book), '--model', 'vision'])
+    img2txt.main()
+    assert (book / 'page_0378.txt').read_text(encoding='utf-8').startswith('# 参考文献\n')

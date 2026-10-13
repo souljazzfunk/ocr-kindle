@@ -32,7 +32,7 @@ const APP_ONLY_REASON = 'kindle app required: Cloud Reader cannot open this book
 
 function initialState() {
   return { phase: 'back', saved: {}, low: 1, high: 0, n: null, last: null, pending: false, tries: 0, turns: 0, limit: 0,
-    page: null, pages: null, same: 0, waits: 0, rests: 0, savedPage: null, keyed: false, jumped: null, opened: '', openedAt: null, start: '' };
+    page: null, pages: null, same: 0, waits: 0, rests: 0, savedPage: null, keyed: false, jumped: null, opened: '', openedAt: null, start: '', known: null };
 }
 
 const limitFor = (position) => TURNS_PER_PAGE * (position?.m || UNKNOWN_LENGTH) + EXTRA_TURNS;
@@ -75,8 +75,11 @@ function edge(state, position) {
       + (state.keyed ? ` (the last ones by the ${state.keyed} arrow key)` : '');
     return turn({ ...state, phase: 'fwd', keyed: false, tries: 0, turns: 0, same: 0, start });
   }
-  if (position && !nearEnd(position) && nextWay(state)) return turn({ ...state, keyed: nextWay(state), tries: 0 });
-  if (position && !nearEnd(position) && state.rests < RESTS) return rest(state);
+  // An unnumbered screen is judged by the last numbered one: Automate the Boring Stuff (2026-10-12) showed no position
+  // after the jump to location 1 of 15988 and stuck on its contents, 18 screens in.
+  const at = position || state.known;
+  if (at && !nearEnd(at) && nextWay(state)) return turn({ ...state, keyed: nextWay(state), tries: 0 });
+  if (at && !nearEnd(at) && state.rests < RESTS) return rest(state);
   const proof = position
     ? (position.n === position.m ? `page ${position.m} of ${position.m}` : `turns stopped at page ${position.n} of ${position.m}`)
     : 'turns stopped on an unnumbered screen';
@@ -96,7 +99,7 @@ function nextAction(state, observation) {
     return { state: { ...state, jumped: where(position) }, action: 'jump:start' };
   }
   const opened = state.jumped && state.jumped !== where(position) ? `${state.jumped}, jumped to ${where(position)}` : where(position);
-  if (state.last === null) return save({ ...state, opened, openedAt: position ? position.n : null, page: position ? position.n : null, pages: position ? position.m : null, limit: limitFor(position) }, sha);
+  if (state.last === null) return save({ ...state, opened, openedAt: position ? position.n : null, page: position ? position.n : null, pages: position ? position.m : null, known: position, limit: limitFor(position) }, sha);
   if (state.pending) return turn({ ...state, pending: false });
 
   const turns = state.turns + 1;
@@ -106,7 +109,7 @@ function nextAction(state, observation) {
   const n = position ? position.n : null;
   const same = n !== null && n === state.page && !fresh ? state.same + 1 : 0;
   if (same >= STUCK_TURNS) return fail(state, `the reader stayed on page ${n} for ${STUCK_TURNS} turns`);
-  const next = { ...state, turns, same, page: n, pages: position ? position.m : null };
+  const next = { ...state, turns, same, page: n, pages: position ? position.m : null, known: position || state.known };
   const wrongWay = n !== null && state.page !== null && position.m === state.pages
     && (state.phase === 'back' ? n > state.page : n < state.page);
   if (wrongWay) {

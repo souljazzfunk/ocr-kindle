@@ -9,6 +9,7 @@ config.env
 !fixtures/kindle/expect.json
 !fixtures/cases/**/*.json
 !fixtures/contents/*.json
+!fixtures/rerender/**/*.json
 service-account*.json
 credentials/
 
