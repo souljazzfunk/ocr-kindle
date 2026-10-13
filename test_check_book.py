@@ -564,3 +564,44 @@ def test_each_step_is_timed_in_the_report_and_a_slow_one_fails_the_speed_check(t
     # A slow book is still a correct one: it goes to Drive, with speed among its warnings.
     assert data['warnings'] == ['speed'] and (drive / 'Book.md').exists()
     assert capture_book.speed({'reach': 3, 'capture': 10, 'screens': 10, 'pages': 10, 'ocr': 5, 'checks': 1}).ok
+
+
+def _recorded_contents_book(tmp_path, asin):
+    """A book folder rebuilt from fixtures/contents/<asin>.json: the contents pages and the page after them as the
+    Mac read them (Vision line boxes or a Live Text transcript), padded so they sit in the front matter, and a
+    Markdown file with the converted book's headings."""
+    record = json.loads((Path(__file__).parent / 'fixtures' / 'contents' / f'{asin}.json').read_text())
+    pages = record['pages']
+    padding = -(-len(pages) * 100 // 15) - len(pages)
+    texts = ['\n'.join(page['lines']) for page in pages] + ['ここからは本文です。' * 3] * padding
+    md = '\n\n'.join([f'# {heading}\n\nここからは本文です。' for heading in record['headings']] +
+                     [f'![{title}: Figure]()' for title in record.get('figures', [])])
+    folder = book(tmp_path, texts, sources='livetext', md=md, name=asin)
+    (folder / SOURCES).write_text(''.join(f'page_{n:04d}\t{page["source"]}\n' for n, page in enumerate(pages, 1)) +
+                                  ''.join(f'page_{n:04d}\tlivetext\n' for n in range(len(pages) + 1, len(texts) + 1)))
+    for n, page in enumerate(pages, 1):
+        if page['vision_boxes']:
+            boxes = [[0.1, 0.05 * (i + 1), 0.02, line] for i, line in enumerate(page['lines'])]
+            (folder / f'page_{n:04d}.lines.json').write_text(json.dumps(boxes, ensure_ascii=False))
+    return folder, record
+
+
+def test_the_recorded_contents_of_three_parked_books_find_their_headings(tmp_path):
+    # 2026-10-12 23:39 JST: contents_chapters parked Facing the Mountain (2790 entries: the foreword after its
+    # contents pages has no 「。」, so every prose line became an entry), 近代中国史 (18) and 代替医療解剖 (5)
+    # (Live Text read 「邑」 as 品, 士 as 土, Ⅱ as m, ーー as ーーー, and dropped the first characters of a title),
+    # and the convert job paused. The pages and headings are the ones the Mac recorded.
+    for asin in ('B08N9MT6HJ', 'B00WJBK92W', 'B01N2WEPWB'):
+        where = tmp_path / asin
+        where.mkdir()
+        folder, record = _recorded_contents_book(where, asin)
+        if asin == 'B00WJBK92W':
+            # Its 参考文献 page (page_0378) was laid out before today's layout, which heads it: Gemini's title on line 0.
+            md = folder / f'{asin}.md'
+            md.write_text(md.read_text() + '\n\n# 参考文献\n\n小著を書くにあたって参照した著述を逐一あげだすと、')
+        check = by_name(check_folder(folder))['contents_chapters']
+        assert check.ok, (asin, check.detail)
+        # A chapter of those contents that the book does not head still fails.
+        dropped = [heading for heading in record['headings'] if heading not in ('PART TWO', 'EXILE', '日中の対比', '代替医療の未来')]
+        (folder / f'{asin}.md').write_text('\n\n'.join(f'# {h}\n\nここからは本文です。' for h in dropped + ['参考文献']))
+        assert not by_name(check_folder(folder))['contents_chapters'].ok, asin

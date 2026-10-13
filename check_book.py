@@ -25,6 +25,7 @@ POSITION = re.compile(r'(?:位置|ページ|Location|Page)\D{0,3}(\d+)\s*(?:/|of
 DEFAULT_TITLES = re.compile(r'^(kindle-book|[A-Z0-9]{10})$')
 DECORATIVE_HEADING = re.compile(r'(?m)^#+\s*(?:Chapter\s+|Part\s+)?[Z&]+(?:\s.*)?$', re.I)
 HEADING = re.compile(r'(?m)^(#+) (.*)$')
+FIGURE_TITLE = re.compile(r'(?m)^!\[([^\]\n]+?): [^\]\n]*\]\(\)$')  # ![関連年表【BC221~2008: Figure]()
 # A bare chapter number on its own line, then a short title, then body text: a chapter opening with no heading.
 # An index entry ("Zen of Python, 30-31") is not a title: Python Crash Course's index letter Z, read as 7, came before one.
 MISSED_CHAPTER = re.compile(r'(?m)^(?:[1-9]|1\d|20|[Z&])\n\n(?![#\d])(?![^\n]*,\s*\d+(?:[-–]\d+)?\s*\n)[^\n]{1,80}\n\n'
@@ -86,8 +87,10 @@ def contents_unheaded(folder, text):
 
     The entries are the contents lines, subsections split on 「／」 and a line cut at the margin or a page break
     brought back to the headings (layout.contents_covered). 代替医療解剖 and 近代中国史 (2026-10-12) were parked
-    with every heading in place: several subsection titles had been read as one line."""
-    titles = [title for _, title in HEADING.findall(text)]
+    with every heading in place: several subsection titles had been read as one line. A chapter that is one picture
+    (近代中国史's 関連年表, a table) is accounted for by the title of its figure note."""
+    found = [(m.start(), m.group(2)) for m in HEADING.finditer(text)] + [(m.start(), m.group(1)) for m in FIGURE_TITLE.finditer(text)]
+    titles = [title for _, title in sorted(found)]
     return [entry for entry in contents_for_check(page_images(folder)) if not contents_covered(entry, titles)]
 
 
