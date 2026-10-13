@@ -262,3 +262,27 @@ def test_vision_pages_laid_out_before_are_written_again_without_a_request(tmp_pa
     monkeypatch.setattr(sys, 'argv', ['img2txt.py', str(book), '--model', 'vision'])
     img2txt.main()
     assert (book / 'page_0378.txt').read_text(encoding='utf-8').startswith('# 参考文献\n')
+
+
+def test_a_japanese_title_written_again_is_not_taken_back_as_heading_noise(tmp_path, monkeypatch):
+    # 2026-10-13 11:19 JST: after #123, 近代中国史 was converted again and page_0378 was written as `# 参考文献`, but the
+    # runner's next step, proofread --apply heading_noise, made it plain text again: not_a_title judged a title by its
+    # capital letter and Latin vowels, which no Japanese title has. The book parked once more on 「参考文献」.
+    import shutil
+    import img2txt
+    import layout
+    from proofread import Book, apply, find_all, load_pages
+    book = tmp_path / '近代中国史'
+    shutil.copytree(Path(__file__).parent / 'fixtures/rerender/B00WJBK92W', book)
+    img2txt.record_sources(book, [('page_0378', img2txt.VISION)])
+    (book / 'layout.json').write_text(json.dumps({'page_0378': {'titles': [{'line': 0, 'level': 1}], 'quotes': [],
+                                                                'figures': [], 'art': [], 'code': [], 'drop_cap': None,
+                                                                'model': 'claude'}}))
+    monkeypatch.setattr(img2txt, 'load_config', lambda: {})
+    monkeypatch.setattr(layout, 'claude_cli', lambda: None)
+    monkeypatch.setattr(sys, 'argv', ['img2txt.py', str(book), '--model', 'vision'])
+    img2txt.main()
+    pages = load_pages(book)
+    noise = [f for f in find_all(Book(book, pages)) if f.kind == 'heading_noise']
+    assert noise == []
+    assert apply(pages, noise).get('page_0378', pages['page_0378']).startswith('# 参考文献\n')

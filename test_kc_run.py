@@ -407,6 +407,9 @@ def test_a_parked_check_and_its_pause_rerun_only_when_that_check_s_code_changes(
     # Two contents_chapters failures pause the convert job ("waiting for new convert code"). A change to some other
     # check's code leaves them parked. A change to the contents check's code releases the pause and converts them,
     # while a book parked on headings stays parked, and a book that already passed stays done.
+    # proofread.py holds heading_noise's find_all and contents_chapters' not_a_title (F133): only the first changes.
+    proofread = home / 'checkout' / 'proofread.py'
+    proofread.write_text('def find_all():\n    return 1\n\n\ndef not_a_title():\n    return 1\n')
     step(home, 'capture'), step(home, 'convert'), step(home, 'convert')
     assert state(home, 'B1') == book.Done()
     mac.converts.update({'B2': [['headings']], 'B3': [['contents_chapters']], 'B4': [['contents_chapters']]})
@@ -416,7 +419,7 @@ def test_a_parked_check_and_its_pause_rerun_only_when_that_check_s_code_changes(
     assert step(home, 'convert') == 'parked: B3'
     assert step(home, 'convert') == 'paused: B4'
     assert step(home, 'convert') == 'paused: contents_chapters failed on B3 and B4 in a row; waiting for new convert code'
-    edit(home, 'proofread.py')
+    proofread.write_text(proofread.read_text().replace('return 1', 'return 2', 1))
     assert state(home, 'B1') == book.Done()
     assert state(home, 'B2').failure['checks'] == ['headings']
     assert step(home, 'convert') == 'paused: contents_chapters failed on B3 and B4 in a row; waiting for new convert code'
