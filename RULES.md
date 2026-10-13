@@ -66,6 +66,7 @@
 | Vision のページの構造を、位置と大きさだけで当て推量しない | `layout.py`、`test_layout.py::test_titles_quotes_lists_and_art_take_their_place`（F016 F024） |
 | 同じ読み直しを修正として繰り返さない | `layout.py`、`test_layout.py::test_layout_is_asked_once_per_page_in_batches`（F021 F024） |
 | 縦書きの日本語は Live Text で読む。Vision が 1 行も返さないページを空で通さない | `img2txt.py`、`test_check_book.py::test_a_page_vision_finds_no_lines_on_is_read_by_live_text`（F068） |
+| Vision が空白だけで読んだ行は捨て、ページの変換を止めない | `img2txt.py` の `vision_transcribe`、`test_img2txt.py::test_a_blank_line_vision_reads_does_not_crash_the_page`（F136） |
 | Vision が短く読んだページは Live Text と比べ、多く読めたほうを使う | `img2txt.py` の `vision_transcribe`、`test_check_book.py::test_a_vertical_page_vision_reads_only_a_few_pieces_of_is_read_by_live_text`、`test_check_book.py::test_a_full_english_page_is_not_sent_to_live_text`（F073） |
 | 日本語の本の英語のページ（引用・参考文献）を、外国語のページとして消さない | `proofread.py` の `foreign_page`、`test_proofread.py::test_english_pages_of_a_japanese_book_are_kept`（F074） |
 | 記号だけの段落（傍点を読んだ読点やバックスラッシュ）は消し、切れた文をつなぐ | `proofread.py` の `emphasis_dots`、`test_proofread.py::test_emphasis_dots_read_as_commas_on_their_own_lines_are_removed_and_the_sentence_joined`（F106 F109） |
@@ -82,7 +83,7 @@
 | 章の見出しの番号は目次の番号に揃え、段落とつながった見出しは段落に戻す | `layout.py` の `contents_spelling`、`test_layout.py::test_a_chapter_number_read_as_a_symbol_takes_the_contents_number_and_a_run_on_title_stays_a_paragraph`（F084） |
 | 変換し直すとき、配置済みのページ（Live Text と Vision）も新しいコードで書き直す | `img2txt.py`、`test_img2txt.py::test_live_text_pages_laid_out_before_are_written_again_without_a_request`、`test_img2txt.py::test_vision_pages_laid_out_before_are_written_again_without_a_request`（F079 F131） |
 | 配置済みのページの書き直しが変わったら、目次の検査で止まった本をやり直す | `book.py` の `TOUCH`、`test_book.py::test_a_contents_park_is_retried_when_the_rewriting_of_laid_out_pages_changes`（F131） |
-| 校正は日本語の見出しを、文の途中で切れたものだけ外す | `proofread.py` の `not_a_title`、`test_img2txt.py::test_a_japanese_title_written_again_is_not_taken_back_as_heading_noise`、`test_book.py::test_a_contents_park_is_retried_when_proofreading_stops_taking_titles_back`（F133） |
+| 校正は日本語の見出しを、文の途中で切れたものだけ外す | `proofread.py` の `not_a_title`、`test_img2txt.py::test_a_japanese_title_written_again_is_not_taken_back_as_heading_noise`、`test_book.py::test_a_contents_park_is_retried_when_proofreading_stops_taking_titles_back`（F134） |
 | Live Text のページは毎回 Live Text 自身の読みから組み直す。前の出力から組み直さない | `img2txt.py` の `LIVE`・`restore_live`、`test_layout.py::test_a_second_layout_starts_from_live_text_s_reading_not_from_the_first_layout_s_output`（F088） |
 | Live Text のページも見出しを Gemini に読ませる。段落のままにしない | `layout.py` の `livetext_markdown`、`test_layout.py::test_a_live_text_page_takes_its_titles_from_gemini`（F075） |
 | 配置は Sonnet から順に試し、後ろが残るうちは本を止めない | `layout.py` の `provider_order`、`test_layout.py::test_sonnet_is_asked_first_and_a_spent_one_gives_way_to_the_next`、`test_layout.py::test_any_failed_gemini_request_stops_the_book_without_sending_the_rest`（F028） |

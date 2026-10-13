@@ -211,7 +211,8 @@ def vision_transcribe(image, read_lines=None, read_livetext=None):
     (2026-10-12) it read one 「ジ」 of a full vertical page, and an English quote of 6 lines above vertical body text.
     So Live Text also reads every page whose Vision text is short or Japanese, and wins when it reads clearly more.
     Live Text gives no line boxes, so its pages get no layout from layout.py."""
-    boxes = (read_lines or vision_lines)(image)
+    # A blank line (a staff or chord mark read as a space, The Real R&B Book) has no text to join or lay out.
+    boxes = [box for box in (read_lines or vision_lines)(image) if box[3].strip()]
     text = vision_markdown(vision_headings(boxes)) if boxes else ''
     live = ''
     if (sys.platform == 'darwin' or read_livetext) and (len(text) < LIVETEXT_CHECK or CJK.search(text)):
