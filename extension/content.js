@@ -108,7 +108,7 @@ async function capture(job) {
   let state = initialState();
   let seen = await observe();
   for (;;) {
-    const decided = nextAction(state, seen);
+    const decided = nextAction(state, { ...seen, hidden: hiddenPage(document) });
     state = decided.state;
     const { action } = decided;
     const { position, sha, appOnly: app, signedOut: out } = seen;

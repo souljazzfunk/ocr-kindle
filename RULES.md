@@ -29,6 +29,7 @@
 | ローマ数字の前付けのページは先頭近くと数え、その後で止まっても終わりにしない | `extension/policy.js` の `frontMatter`、`extension/policy.test.js::a reader stuck after Roman-numbered front matter pages on by the arrow key`（F138） |
 | 取り込み中の待ちはワーカーのタイマーで数え、隠れた窓で抑えられるページのタイマーに頼らない | `extension/content.js` の `sleep`、`extension/background.js` の `sleep` 受け口、`extension/manifest.test.js::content.js waits on the worker timer, which Chrome does not hold back in a hidden window`（F140） |
 | 隠れた取り込みの窓は、Mac が使われていない間は前に出す。使われている間は動かさない | `extension/job.js` の `showIfIdle`、`extension/background.js`、`extension/job.test.js::a hidden reader window comes to the front only while nobody is using the Mac`（F143） |
+| 隠れた窓で固まった取り込みは、休みの回数を数えずに窓が前に出るまで休む | `extension/policy.js` の `canRest`、`extension/policy.test.js::a reader that froze in a hidden window rests until the window comes to the front`（F144） |
 | 最初の画面に位置がまだ出ていなければ数秒待ってから、先頭へ跳ぶかを決める | `extension/policy.js` の `FIRST_POSITION_WAITS`、`extension/policy.test.js::a first screen without its footer yet waits for it, then jumps to the start from far in`（F143） |
 | 戻る途中、先頭から遠くで止まった番号のない画面を本の先頭と見なさない | `extension/policy.js` の `edge`、`extension/policy.test.js::paging back, an unnumbered screen that stops turning far from page 1 is not taken for the start`（F143） |
 | 先頭へ跳んだ直後は、ページの画像が出るまで長めに待つ | `extension/policy.js`、`extension/policy.test.js::after the jump to the start, a screen without its image yet is waited for`（F110） |
