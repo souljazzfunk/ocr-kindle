@@ -3,7 +3,7 @@
 // one, then pages forward to the end, skipping screens it already saved. Screens are numbered by where they sit from
 // the opening screen (0): earlier ones -1, -2, ... and later ones 1, 2, ..., so reading order is the numeric order.
 //
-// observation: { position: {n, m} | null, sha: string | null, appOnly: bool, signedOut: bool }
+// observation: { position: {n, m} | null, sha: string | null, appOnly: bool, signedOut: bool, footer?: string }
 // action: 'save' (state.n is the screen's number; call again with the same observation), 'wait' (observe again after a
 // second), 'turn:prev', 'turn:prev-key' (the left arrow key instead of the button), 'turn:prev-key-right' (the right
 // arrow key, for a book read right to left), 'turn:next', 'turn:next-key' (the right arrow key), 'turn:next-key-left'
@@ -48,6 +48,12 @@ const KEY_ACTIONS = { back: { left: 'turn:prev-key', right: 'turn:prev-key-right
 const turn = (state) => ({ state, action: KEY_ACTIONS[state.phase][state.keyed] || (state.phase === 'back' ? 'turn:prev' : 'turn:next') });
 // The last pages a footer counts can be blank or the back matter's: 英語教育幻想 ended at 2561 of 2566. Short of them,
 // a forward edge tries the keys before it ends the capture.
+// A front-matter page numbered in Roman ("Page xx of 552 ● 2%", Automate the Boring Stuff 2026-10-13) has no position,
+// but it is near the start: the screen after it that stops turning is judged as page 0, far from the end.
+const frontMatter = (footer) => {
+  const m = (footer || '').match(/Page [ivxlcdm]+ of (\d+)/i);
+  return m ? { n: 0, m: Number(m[1]) } : null;
+};
 const nearEnd = (position) => position.m - position.n <= Math.max(5, Math.ceil(position.m * 0.02));
 const fail = (state, reason) => ({ state, action: `fail:${reason}` });
 // A reader can stop turning both ways for a while: Facing the Mountain (2026-10-12) stuck at 275 of 540 by the button and
@@ -87,7 +93,7 @@ function edge(state, position) {
 }
 
 function nextAction(state, observation) {
-  const { position, sha, appOnly, signedOut } = observation;
+  const { position, sha, appOnly, signedOut, footer } = observation;
   if (appOnly) return fail(state, APP_ONLY_REASON);
   if (signedOut) return fail(state, 'signed out of Cloud Reader');
   // Right after the jump to the start the reader shows no page for a while (History of Jazz, 2026-10-12), so it gets longer.
@@ -99,7 +105,7 @@ function nextAction(state, observation) {
     return { state: { ...state, jumped: where(position) }, action: 'jump:start' };
   }
   const opened = state.jumped && state.jumped !== where(position) ? `${state.jumped}, jumped to ${where(position)}` : where(position);
-  if (state.last === null) return save({ ...state, opened, openedAt: position ? position.n : null, page: position ? position.n : null, pages: position ? position.m : null, known: position, limit: limitFor(position) }, sha);
+  if (state.last === null) return save({ ...state, opened, openedAt: position ? position.n : null, page: position ? position.n : null, pages: position ? position.m : null, known: position || frontMatter(footer), limit: limitFor(position) }, sha);
   if (state.pending) return turn({ ...state, pending: false });
 
   const turns = state.turns + 1;
@@ -109,7 +115,7 @@ function nextAction(state, observation) {
   const n = position ? position.n : null;
   const same = n !== null && n === state.page && !fresh ? state.same + 1 : 0;
   if (same >= STUCK_TURNS) return fail(state, `the reader stayed on page ${n} for ${STUCK_TURNS} turns`);
-  const next = { ...state, turns, same, page: n, pages: position ? position.m : null, known: position || state.known };
+  const next = { ...state, turns, same, page: n, pages: position ? position.m : null, known: position || frontMatter(footer) || state.known };
   const wrongWay = n !== null && state.page !== null && position.m === state.pages
     && (state.phase === 'back' ? n > state.page : n < state.page);
   if (wrongWay) {

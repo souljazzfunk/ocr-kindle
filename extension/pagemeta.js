@@ -68,6 +68,13 @@ function footerText(doc) {
   return footer ? (footer.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 120) : null;
 }
 
+// The position on screen. From 2026-10-12 13:00 JST the reader hides its footer, so body.innerText no longer holds
+// "Page N of M": Automate the Boring Stuff (2026-10-13) had "Page x of 552 ● 1%" in the footer's textContent while
+// innerText showed no Page line (dom-probe readerFooter and footer). The footer is read first, the body as before.
+function readPosition(doc) {
+  return parsePosition(footerText(doc)) || parsePosition(doc.body.innerText);
+}
+
 // "Page 75 of 120" (or 位置/ページ/Location) from the reader's footer as { n, m }, or null when it shows none.
 function parsePosition(text) {
   const m = (text || '').match(/(?:位置|ページ|Location|Page)\D{0,3}(\d+)\s*(?:\/|of)\s*(\d+)/);
@@ -106,4 +113,4 @@ function parseLibrary(doc) {
   return { books, paginationToken: data?.paginationToken ?? null };
 }
 
-if (typeof module !== 'undefined') module.exports = { pickTitle, probePage, footerText, parsePosition, appOnly, signedOut, parseLibrary };
+if (typeof module !== 'undefined') module.exports = { pickTitle, probePage, footerText, readPosition, parsePosition, appOnly, signedOut, parseLibrary };

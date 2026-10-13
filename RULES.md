@@ -25,6 +25,8 @@
 | 戻るはずのめくりで先のページに出たら、次の手（左キー、右キー）に替え、その画面は保存しない | `extension/policy.js` の `WAYS`、`extension/policy.test.js::a book read right to left, whose left arrow key turns forward, pages back by the right arrow key`（F093） |
 | 次のページのボタンで進めなくなったら、終わり近くでない限り矢印キーで進む | `extension/policy.js` の `WAYS`・`nearEnd`、`extension/policy.test.js::a reader stuck on Next page mid-book pages on by the right arrow key, then by the left in a book read right to left`（F105） |
 | 番号のない画面で進めなくなったら、最後に読めた番号で終わり近くかを決める | `extension/policy.js` の `edge`・`known`、`extension/policy.test.js::a reader stuck on an unnumbered screen far from the end pages on by the arrow key`（F132） |
+| 位置は隠れたフッターの文字から先に読み、ページの本文はその次に読む | `extension/pagemeta.js` の `readPosition`、`extension/pagemeta.test.js::the position is read from the footer the reader hides, then from the page text`（F138） |
+| ローマ数字の前付けのページは先頭近くと数え、その後で止まっても終わりにしない | `extension/policy.js` の `frontMatter`、`extension/policy.test.js::a reader stuck after Roman-numbered front matter pages on by the arrow key`（F138） |
 | 先頭へ跳んだ直後は、ページの画像が出るまで長めに待つ | `extension/policy.js`、`extension/policy.test.js::after the jump to the start, a screen without its image yet is waited for`（F110） |
 | どの手でもめくれなくなったら、2 分休んで最初の手からやり直す（1 冊 3 回まで） | `extension/policy.js` の `rest`、`extension/policy.test.js::a reader that stops turning mid-book both ways rests and starts over with the button before the capture gives up`（F108） |
 | 先頭から進み直すとき、開いた位置より前の画面を保存し直さない | `extension/policy.js`、`extension/policy.test.js::forward from page 1, a screen before the opening one is not saved again under a new hash`（F077） |

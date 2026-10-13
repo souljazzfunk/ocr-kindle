@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { pickTitle, footerText, parsePosition, appOnly, parseLibrary } = require('./pagemeta.js');
+const { pickTitle, footerText, readPosition, parsePosition, appOnly, parseLibrary } = require('./pagemeta.js');
 
 test('the title element wins when it has text', () => {
   assert.strictEqual(pickTitle(['How to Write a Lot', 'Kindle'], 'B07HNMJV57'), 'How to Write a Lot');
@@ -42,6 +42,16 @@ test('the library list is read from the page JSON, authors without their trailin
     { asin: 'B081F1JL1X', title: '自動車の社会的費用', authors: [], resourceType: 'EBOOK_SAMPLE', manga: false },
   ] });
   assert.deepStrictEqual(parseLibrary({ querySelector: () => null }), { books: [], paginationToken: null });
+});
+
+test('the position is read from the footer the reader hides, then from the page text', () => {
+  // 2026-10-13: Automate the Boring Stuff's footer held "Page x of 552 ● 1%" while body.innerText had no Page line.
+  const doc = (footer, body) => ({ body: { innerText: body },
+    querySelector: (selector) => (selector === '.reader-footer' && footer !== null ? { textContent: footer } : null) });
+  assert.deepStrictEqual(readPosition(doc('Page 12 of 552 ● 3%', 'Chapter 1')), { n: 12, m: 552 });
+  assert.strictEqual(readPosition(doc('Page x of 552 ● 1%', 'Introduction')), null);
+  assert.deepStrictEqual(readPosition(doc(null, 'Location 70 of 552')), { n: 70, m: 552 });
+  assert.deepStrictEqual(readPosition(doc('', 'Page 9 of 10')), { n: 9, m: 10 });
 });
 
 test('the reader footer is recorded as it reads, so a screen without a position shows what it held instead', () => {

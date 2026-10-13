@@ -79,8 +79,8 @@ async function observe() {
   const img = pageImage();
   const text = document.body.innerText;
   const png = img ? await pngOf(img) : null;
-  return { position: parsePosition(text), sha: png ? await sha256(png) : null, appOnly: appOnly(text),
-    signedOut: signedOut(document), key: surfaceKey(img), png };
+  return { position: readPosition(document), footer: footerText(document), sha: png ? await sha256(png) : null,
+    appOnly: appOnly(text), signedOut: signedOut(document), key: surfaceKey(img), png };
 }
 
 async function waitForTurn(prevKey, ms = PAGE_WAIT_MS) {
@@ -107,7 +107,7 @@ async function capture(job) {
     const { action } = decided;
     const { position, sha, appOnly: app, signedOut: out } = seen;
     // A screen without a position keeps what the footer showed instead (footerText).
-    const footer = position ? {} : { footer: footerText(document) };
+    const footer = position ? {} : { footer: seen.footer };
     await event({ type: 'trace', observation: { position, sha, appOnly: app, signedOut: out, ...footer }, action });
     if (action === 'save') {
       if (!Object.keys(positions).length) {
