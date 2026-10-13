@@ -263,3 +263,13 @@ test('paging back, an unnumbered screen that stops turning far from page 1 is no
   assert.strictEqual(state.phase, 'back');
   assert.strictEqual(actions.at(-1), 'fail:could not page back past page 12 of 400 by button or key');
 });
+
+test('a reader that froze in a hidden window rests until the window comes to the front', () => {
+  // So You Want to Talk About Race (2026-10-13, 2.14): hidden throughout while the Mac was in use, it froze at 178 of 3301.
+  const a = screen('a', 1, 540), c = screen('c', 275, 540), d = screen('d', 276, 540);
+  const hidden = (s) => ({ ...s, hidden: true });
+  const { actions, state } = replay([a, a, a, a, ...Array(60).fill(hidden(c)), c, d]);
+  assert.ok(actions.filter((x) => x === 'rest').length > RESTS);
+  assert.ok(!actions.some((x) => x.startsWith('done:') && x.includes('275')));
+  assert.ok('d' in state.saved);
+});

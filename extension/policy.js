@@ -3,7 +3,7 @@
 // one, then pages forward to the end, skipping screens it already saved. Screens are numbered by where they sit from
 // the opening screen (0): earlier ones -1, -2, ... and later ones 1, 2, ..., so reading order is the numeric order.
 //
-// observation: { position: {n, m} | null, sha: string | null, appOnly: bool, signedOut: bool, footer?: string }
+// observation: { position: {n, m} | null, sha: string | null, appOnly: bool, signedOut: bool, footer?: string, hidden?: bool }
 // action: 'save' (state.n is the screen's number; call again with the same observation), 'wait' (observe again after a
 // second), 'turn:prev', 'turn:prev-key' (the left arrow key instead of the button), 'turn:prev-key-right' (the right
 // arrow key, for a book read right to left), 'turn:next', 'turn:next-key' (the right arrow key), 'turn:next-key-left'
@@ -64,6 +64,10 @@ const fail = (state, reason) => ({ state, action: `fail:${reason}` });
 // both keys, and History of Jazz ignored single turns more and more often before it stuck. Where every way has failed
 // mid-book, the capture rests (content.js waits REST_MS) and starts over with the button, this many times per book.
 const RESTS = 3;
+// A hidden window is brought to the front only while nobody uses the Mac (job.js showIfIdle), so a reader that froze
+// hidden rests until then, however many times: on 2026-10-13 2.14 ran The History of Jazz to 389 of 389 once its window
+// came to the front, while So You Want to Talk About Race, hidden throughout, froze again at 178 of 3301.
+const canRest = (state) => state.rests < RESTS || state.hidden;
 const rest = (state) => ({ state: { ...state, keyed: false, tries: 0, same: 0, rests: state.rests + 1, pending: true }, action: 'rest' });
 
 function save(state, sha) {
@@ -82,7 +86,7 @@ function edge(state, position) {
     // is not known yet; the left arrow key is tried before the capture fails, and dom-probe-stopped.json records the
     // reader's controls where it stuck.
     if (position && position.n !== 1 && nextWay(state)) return turn({ ...state, keyed: nextWay(state), tries: 0 });
-    if (position && position.n !== 1 && state.rests < RESTS) return rest(state);
+    if (position && position.n !== 1 && canRest(state)) return rest(state);
     if (position && position.n !== 1) return fail(state, `could not page back past page ${position.n} of ${position.m} by button or key`);
     const start = `opened at ${state.opened}; ${-state.low} earlier screens saved back to ${position ? 'page 1' : 'the first screen'}`
       + (state.keyed ? ` (the last ones by the ${state.keyed} arrow key)` : '');
@@ -92,7 +96,7 @@ function edge(state, position) {
   // after the jump to location 1 of 15988 and stuck on its contents, 18 screens in.
   const at = position || state.known;
   if (at && !nearEnd(at) && nextWay(state)) return turn({ ...state, keyed: nextWay(state), tries: 0 });
-  if (at && !nearEnd(at) && state.rests < RESTS) return rest(state);
+  if (at && !nearEnd(at) && canRest(state)) return rest(state);
   const proof = position
     ? (position.n === position.m ? `page ${position.m} of ${position.m}` : `turns stopped at page ${position.n} of ${position.m}`)
     : 'turns stopped on an unnumbered screen';
@@ -101,6 +105,7 @@ function edge(state, position) {
 
 function nextAction(state, observation) {
   const { position, sha, appOnly, signedOut, footer } = observation;
+  state = { ...state, hidden: Boolean(observation.hidden) };
   if (appOnly) return fail(state, APP_ONLY_REASON);
   if (signedOut) return fail(state, 'signed out of Cloud Reader');
   // Right after the jump to the start the reader shows no page for a while (History of Jazz, 2026-10-12), so it gets longer.
@@ -129,7 +134,7 @@ function nextAction(state, observation) {
   const wrongWay = n !== null && state.page !== null && position.m === state.pages
     && (state.phase === 'back' ? n > state.page : n < state.page);
   if (wrongWay) {
-    if (!nextWay(state) && state.rests < RESTS) return rest({ ...next, last: sha });
+    if (!nextWay(state) && canRest(state)) return rest({ ...next, last: sha });
     if (!nextWay(state)) return fail(state, `paging ${state.phase === 'back' ? 'back went forward' : 'forward went back'} from page ${state.page} to ${n} by button and both keys`);
     return turn({ ...next, keyed: nextWay(state), tries: 0, last: sha });
   }
