@@ -18,15 +18,20 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 HERE = Path(__file__).resolve().parent
+# A display that sleeps hides every window, and a hidden reader stops turning (2026-10-13: The History of Jazz ended
+# at the minute the display went off, 23:10 JST, and So You Want to Talk About Race stayed hidden until 09:02).
+AWAKE = ['caffeinate', '-d', '-i']
 PORT = int(os.environ.get('KC_PORT', 8765))
 REACH_S = 90  # an offered job no worker asked for in this long: Chrome is closed or the extension is not loaded
 STALL_S = 300
@@ -118,6 +123,18 @@ def make_room(folder):
     (folder / STAGING).mkdir(parents=True, exist_ok=True)
 
 
+
+@contextmanager
+def awake():
+    """Keep the display and the Mac awake while the block runs (caffeinate, macOS only)."""
+    keeper = subprocess.Popen(AWAKE) if shutil.which(AWAKE[0]) else None
+    try:
+        yield
+    finally:
+        if keeper:
+            keeper.terminate()
+            keeper.wait()
+
 class Channel:
     def __init__(self, port=PORT, root=HERE, downloads=Path.home() / 'Downloads', clock=time.monotonic, browser=BROWSER):
         self.port, self.root, self.downloads, self.clock, self.browser = port, Path(root), Path(downloads), clock, browser
@@ -144,8 +161,10 @@ class Channel:
             self.server.server_close()
 
     def capture(self, asin, domain, folder, recapture=False, *, stall_s=STALL_S, reach_s=REACH_S):
-        """Offer one capture and block until the extension says done or refused, or it stalls or never comes."""
-        job = self._run(Job('capture', domain, Path(folder), asin=asin, recapture=recapture), stall_s, reach_s)
+        """Offer one capture and block until the extension says done or refused, or it stalls or never comes. The
+        display stays on meanwhile, so the reader's window is not hidden by the display going to sleep."""
+        with awake():
+            job = self._run(Job('capture', domain, Path(folder), asin=asin, recapture=recapture), stall_s, reach_s)
         return job.outcome
 
     def library(self, domain, *, stall_s=STALL_S, reach_s=REACH_S):
