@@ -131,6 +131,9 @@ RULES = {
     'extension_version': Rule(SYSTEMIC, resume=after(600)),
     'extension_folder': Rule(SYSTEMIC, resume=after(600)),
     'gemini': Rule(SYSTEMIC, resume=gemini_reset),
+    # Each book's own: a capture that ended early, headings laid out wrong, or the check's matching. Two books in a row
+    # are two books, not one broken stage (F151): Jazz, Snow Crash and Second Brain paused converting for every book.
+    'contents_chapters': Rule(BOOK, breaker=False),
     'crash': Rule(BOOK, waits_on='code'),  # an exception can come from any module, so any fix retries it
 }
 BOOK_FAULT = Rule(BOOK)
@@ -448,16 +451,17 @@ class Library:
 
     def active_pause(self, job, current, now=None):
         """The job's pause while it holds; a pause whose time has come, whose stage has new code, or whose checks the
-        RULES now blame on another job's stage is removed."""
+        RULES now blame on another job's stage or no longer count as a breaker is removed."""
         pause = self.pause(job)
         if not pause:
             return None
         now = time.time() if now is None else now
         due = pause.get('until') is not None and now >= pause['until']
         new_code = pause.get('version') is not None and not same_block(pause, current, pause.get('stage') or job)
-        elsewhere = any(STAGE[rule.blame].job != job for rule in (RULES.get(c, BOOK_FAULT) for c in pause.get('checks', []))
-                        if rule.blame)
-        if due or new_code or elsewhere:
+        rules = [RULES.get(c, BOOK_FAULT) for c in pause.get('checks', [])]
+        elsewhere = any(STAGE[rule.blame].job != job for rule in rules if rule.blame)
+        no_breaker = bool(rules) and all(rule.kind == BOOK and not rule.breaker for rule in rules)
+        if due or new_code or elsewhere or no_breaker:
             self.clear_pause(job)
             return None
         return pause

@@ -59,6 +59,7 @@
 | 落ちた本だけを止め、一覧は人に聞かずに次の本へ進む | `book.py` の `RULES`、`kc_run.py`、`test_kc_run.py::test_a_book_that_fails_its_checks_is_parked_and_the_list_goes_on`（F005 F020） |
 | どの本でも落ちる失敗は、その仕事だけを止めて自分で再開する | `book.py` の `record_failure`、`test_kc_run.py::test_an_unreachable_extension_pauses_captures_for_every_book_and_resumes_by_itself`（F014） |
 | 同じチェックが 2 冊続けて落ちたら、その仕事を新しいコードまで止める | `book.py` の `record_failure`、`test_kc_run.py::test_the_same_check_on_two_books_in_a_row_pauses_the_job_until_its_code_changes`（F023） |
+| 目次の検査は 2 冊続けて落ちても本だけを止め、変換の仕事は止めない | `book.py` の `RULES`・`Library.active_pause`、`test_kc_run.py::test_contents_chapters_on_two_books_in_a_row_parks_each_book_and_the_convert_job_goes_on`（F151） |
 | 別の工程のせいの検査で止めた仕事は、次の 1 歩で再開する | `book.py` の `Library.active_pause`、`test_kc_run.py::test_a_convert_pause_left_by_capture_failures_under_older_rules_is_lifted_on_the_next_step`（F096） |
 | 本や仕事を止めた失敗は、Mac なしで再生できる記録を Drive に残す | `cases.py`、`test_cases.py::test_every_capture_case_replays_through_policy_js_to_the_actions_it_recorded`、`test_kc_run.py::test_a_parked_book_leaves_a_case_on_drive_with_its_report_and_pages`（F059） |
 | 同じ本・同じチェック・同じ版の失敗の記録は 1 つだけ | `cases.py`、`test_cases.py::test_the_same_failure_with_the_same_versions_leaves_one_case_and_new_code_leaves_another`（F059） |
