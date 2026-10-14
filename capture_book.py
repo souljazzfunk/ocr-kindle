@@ -15,6 +15,7 @@ every listed book, from the book folders (book.py). `--zip` skips the capture an
 """
 
 import argparse
+import collections
 import os
 import shutil
 import subprocess
@@ -43,6 +44,7 @@ EXTENSION_FOLDER = 'extension_folder'
 # The extension's reason for a refusal, by its start; any other refusal is capture_refused (extension/policy.js).
 REFUSALS = (('kindle app required', APP_ONLY), ('signed out', SIGNED_OUT), ('sample', 'sample_only'))
 GEMINI_CHECK = 'gemini'
+STDERR_LINES = 20  # of a failed command, kept in its failure
 # The longest each step of one book may take, per screen or page so a long book keeps the same pace as a short one.
 # 2026-10-12: the redesign was planned and shipped without timing a single step, so nobody could say it got faster.
 # About twice 英語教育幻想's pace on extension 2.3: 0.37 to 0.47 s a screen, OCR 0.39 s and the checks 0.23 s a page.
@@ -65,8 +67,24 @@ def channel():
 
 
 def run(command, **kwargs):
+    """Run command, its stderr passed on to ours line by line. A failure keeps the last STDERR_LINES of it on the
+    CalledProcessError: on 2026-10-14 two cases on Drive said only that img2txt.py exited 1 (F154)."""
     print('$', ' '.join(map(str, command)), flush=True)
-    return subprocess.run(command, check=True, **kwargs)
+    tail = collections.deque(maxlen=STDERR_LINES)
+    with subprocess.Popen(command, stderr=subprocess.PIPE, text=True, errors='replace', **kwargs) as process:
+        for line in process.stderr:
+            sys.stderr.write(line)
+            tail.append(line)
+    sys.stderr.flush()
+    if process.returncode:
+        raise subprocess.CalledProcessError(process.returncode, command, stderr=''.join(tail))
+    return subprocess.CompletedProcess(command, 0)
+
+
+def failure_text(e):
+    """An exception as a failure's error: its message, and the end of a failed command's stderr."""
+    text = f'{type(e).__name__}: {e}'
+    return text + '\n' + e.stderr.rstrip() if isinstance(e, subprocess.CalledProcessError) and e.stderr else text
 
 
 def plan_fixes(checks):

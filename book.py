@@ -134,7 +134,9 @@ RULES = {
     # Each book's own: a capture that ended early, headings laid out wrong, or the check's matching. Two books in a row
     # are two books, not one broken stage (F151): Jazz, Snow Crash and Second Brain paused converting for every book.
     'contents_chapters': Rule(BOOK, breaker=False),
-    'crash': Rule(BOOK, waits_on='code'),  # an exception can come from any module, so any fix retries it
+    # An exception can come from any module, so any fix retries it. Two in a row are two books: on 2026-10-14
+    # img2txt.py exited 1 on Effortless Mastery and 数学者たちの楽園 with Race converted between them (F154).
+    'crash': Rule(BOOK, breaker=False, waits_on='code'),
 }
 BOOK_FAULT = Rule(BOOK)
 

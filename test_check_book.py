@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 import capture_book
 import layout
 from check_book import Check, check_folder
@@ -633,3 +635,14 @@ def test_the_publisher_s_newsletter_page_under_a_table_of_contents_link_is_not_t
     # Contents entries that end in a question mark are still entries: only a sentence cut into lines is skipped.
     assert not layout.reads_as_sentence(['Introduction', 'One', 'What Is Racism?', 'Two', 'What If I Talk About Race Wrong?'])
     assert layout.reads_as_sentence(record['pages'][0]['lines'][2:])
+
+
+def test_a_command_that_fails_keeps_the_end_of_what_it_wrote_to_stderr(capsys):
+    # 2026-10-14: img2txt.py exited 1 on two books and the cases on Drive held only "returned non-zero exit status 1",
+    # so the cloud could not tell why without the Mac's log (F154).
+    script = "import sys\nfor i in range(30): print(f'line {i}', file=sys.stderr)\nsys.exit(1)"
+    with pytest.raises(subprocess.CalledProcessError) as e:
+        capture_book.run([sys.executable, '-c', script])
+    assert e.value.stderr.splitlines() == [f'line {i}' for i in range(30 - capture_book.STDERR_LINES, 30)]
+    assert 'line 0' in capsys.readouterr().err  # the log still gets all of it
+    assert 'line 29' in capture_book.failure_text(e.value)

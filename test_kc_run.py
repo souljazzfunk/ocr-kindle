@@ -267,6 +267,25 @@ def test_a_crash_parks_the_book_with_its_reason(home, mac):
     assert step(home, 'convert') == 'converted: B1'
 
 
+def test_a_crash_on_two_books_in_a_row_parks_each_book_and_the_convert_job_goes_on(home, mac):
+    # 2026-10-14 12:28 and 12:34 JST: img2txt.py exited 1 on Effortless Mastery and then on 数学者たちの楽園, and the
+    # convert job waited for new code for nine hours, though So You Want to Talk About Race had converted between
+    # them on the same code and Effortless Mastery had crashed alone on older code at 10:17 (F154).
+    mac.converts.update({'B1': ['crash'], 'B2': ['crash']})
+    for _ in range(2):
+        step(home, 'capture')
+    assert [step(home, 'convert') for _ in range(2)] == ['parked: B1', 'parked: B2']
+    assert step(home, 'capture') == 'captured: B3'
+    assert step(home, 'convert') == 'converted: B3'
+    # A pause the older rules left for it is lifted on the next step.
+    book.write_json(home / 'kindle' / 'pause.convert.json', {
+        'stage': 'convert', 'checks': ['crash'], 'book': 'B2', 'waits_on': 'code',
+        'version': book.versions(home / 'checkout')['code'], 'until': None, 'at': NOON,
+        'reason': 'crash failed on B1 and B2 in a row; waiting for new code'})
+    assert step(home, 'convert') == 'published: B3'
+    assert not (home / 'kindle' / 'pause.convert.json').exists()
+
+
 def test_the_convert_job_makes_no_book_folders(home, mac):
     assert step(home, 'convert') == 'nothing to do'
     assert not (home / 'kindle' / 'B1').exists()
