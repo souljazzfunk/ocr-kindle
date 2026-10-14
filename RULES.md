@@ -30,6 +30,7 @@
 | 取り込み中の待ちはワーカーのタイマーで数え、隠れた窓で抑えられるページのタイマーに頼らない | `extension/content.js` の `sleep`、`extension/background.js` の `sleep` 受け口、`extension/manifest.test.js::content.js waits on the worker timer, which Chrome does not hold back in a hidden window`（F140） |
 | 隠れた取り込みの窓は、Mac が使われていない間は前に出す。使われている間は動かさない | `extension/job.js` の `showIfIdle`、`extension/background.js`、`extension/job.test.js::a hidden reader window comes to the front only while nobody is using the Mac`（F143） |
 | 隠れた窓で固まった取り込みは、休みの回数を数えずに窓が前に出るまで休む | `extension/policy.js` の `canRest`、`extension/policy.test.js::a reader that froze in a hidden window rests until the window comes to the front`（F144） |
+| 窓が隠れている間は、めくれなくなっても本の終わりと決めない | `extension/policy.js` の `edge`、`extension/policy.test.js::a hidden reader that stops turning near the end rests instead of ending the capture`（F146） |
 | 取り込みの間は画面を消さない。画面が消えると窓が隠れてめくれなくなる | `channel.py` の `awake`、`test_channel.py::test_the_display_is_kept_awake_for_the_whole_capture_and_let_go_after`（F145） |
 | 最初の画面に位置がまだ出ていなければ数秒待ってから、先頭へ跳ぶかを決める | `extension/policy.js` の `FIRST_POSITION_WAITS`、`extension/policy.test.js::a first screen without its footer yet waits for it, then jumps to the start from far in`（F143） |
 | 戻る途中、先頭から遠くで止まった番号のない画面を本の先頭と見なさない | `extension/policy.js` の `edge`、`extension/policy.test.js::paging back, an unnumbered screen that stops turning far from page 1 is not taken for the start`（F143） |

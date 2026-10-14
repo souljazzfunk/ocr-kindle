@@ -97,6 +97,10 @@ function edge(state, position) {
   const at = position || state.known;
   if (at && !nearEnd(at) && nextWay(state)) return turn({ ...state, keyed: nextWay(state), tries: 0 });
   if (at && !nearEnd(at) && canRest(state)) return rest(state);
+  // A hidden reader is no proof of the end: The History of Jazz (2026-10-13) stopped on an unnumbered screen after
+  // 389 of 389 once the display went off, and the capture ended without its Acknowledgments and Index.
+  if (state.hidden && nextWay(state)) return turn({ ...state, keyed: nextWay(state), tries: 0 });
+  if (state.hidden) return rest(state);
   const proof = position
     ? (position.n === position.m ? `page ${position.m} of ${position.m}` : `turns stopped at page ${position.n} of ${position.m}`)
     : 'turns stopped on an unnumbered screen';
