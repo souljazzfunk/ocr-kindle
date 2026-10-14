@@ -1529,6 +1529,17 @@ def comparable(text):
 ENTRY_SPLIT = re.compile(r'\s*[／/｜|]\s*')
 
 
+def reads_as_sentence(lines):
+    """Whether the lines under a "Contents" line are a sentence cut into lines rather than contents entries: one line
+    ends with a comma or a full stop and two go on from the line above. Dilla Time's page 5 (2026-10-14) is the
+    publisher's newsletter page, whose "Table of Contents" is a link above "Thank you for buying this / Farrar, Straus
+    and Giroux ebook. / To receive special offers, bonus content, / and info on new releases and other great reads, /
+    sign up for our newsletters."; its lines were taken for the book's contents. A contents title may end with "?"
+    (Race's "What Is Racism?"), so a question mark does not count."""
+    return (any(re.search(r'[.,]$', line.strip()) for line in lines)
+            and sum(1 for line in lines if line.strip()[:1].islower()) >= 2)
+
+
 def split_contents(text):
     """The subsection titles printed on one contents line. A slash between them is not part of either title.
     A leading item number and a trailing page number are not part of the title."""
@@ -1554,7 +1565,7 @@ def contents_entries(images):
     for k, image in enumerate(front):
         lines = _vision_lines(image)
         start = next((i for i, text in enumerate(lines) if CONTENTS.match(text)), None)
-        if start is None:
+        if start is None or reads_as_sentence(lines[start + 1:]):
             continue
         pieces = [piece for text in lines[start + 1:] for piece in split_contents(text)]
         for after in front[k + 1:]:

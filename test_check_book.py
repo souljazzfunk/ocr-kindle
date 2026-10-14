@@ -620,3 +620,16 @@ def test_the_landmarks_and_the_introduction_label_of_race_s_contents_need_no_hea
     dropped = [heading for heading in record['headings'] if heading not in ('So you want to talk about race', 'What is racism?')]
     assert [entry for entry in entries if not layout.contents_covered(entry, dropped)] == [
         'introductionsoyouwanttotaikaboutrace', 'twowhatisracism']
+
+
+def test_the_publisher_s_newsletter_page_under_a_table_of_contents_link_is_not_the_book_s_contents(tmp_path):
+    # Dilla Time (2026-10-14 10:35 JST) was parked by contents_chapters and, after The History of Jazz, paused the
+    # convert job: its page 5 is Farrar, Straus and Giroux's newsletter page, a "Table of Contents" link above "Thank
+    # you for buying this / Farrar, Straus and Giroux ebook. / ...", and those lines were taken for the book's
+    # contents. The book's own contents is a diagram at the back. Pages and headings are the ones the Mac recorded.
+    folder, record = _recorded_contents_book(tmp_path, 'B092T8M4KB')
+    check = by_name(check_folder(folder))['contents_chapters']
+    assert check.ok, check.detail
+    # Contents entries that end in a question mark are still entries: only a sentence cut into lines is skipped.
+    assert not layout.reads_as_sentence(['Introduction', 'One', 'What Is Racism?', 'Two', 'What If I Talk About Race Wrong?'])
+    assert layout.reads_as_sentence(record['pages'][0]['lines'][2:])
