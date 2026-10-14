@@ -149,3 +149,27 @@ def test_a_book_in_skip_tsv_is_never_captured_or_converted_even_with_its_folder_
     library.add([tmp_path / 'books.tsv'])
     assert [b.asin for b in library.add([tmp_path / 'books.tsv'], skip=tmp_path / 'skip.tsv')] == ['B1']
     assert [b.asin for b in library.add([], skip=tmp_path / 'skip.tsv')] == ['B1']  # its folder is left out too
+
+
+def test_a_parked_book_listed_in_recapture_tsv_after_its_failure_is_captured_once_more(tmp_path, monkeypatch):
+    # Laiken, 2026-10-14 21:11 JST: "取り直していいよ" for The History of Jazz, parked on contents_chapters because its
+    # capture ended before Acknowledgments. Setting retry in failure.convert.json on the Mac was refused by the Mac
+    # session's auto mode; a line in recapture.tsv reaches the Mac through main instead.
+    (tmp_path / 'books.tsv').write_text('B1\tOne\n')
+    [one] = book.Library(tmp_path / 'kindle').add([tmp_path / 'books.tsv'])
+    current = {'capture': 'c1', 'convert': 'v1', 'publish': 'v1'}
+    captured = one.succeed('capture', {'pages': str(one.folder / 'pages'), 'attempt': 1, 'version': 'c1'})
+    failure = one.fail('convert', {'checks': ['contents_chapters'], 'retry': False, 'version': 'v1'},
+                       upstream=captured['at'])
+    assert isinstance(one.state(current), book.Parked)
+    asks = tmp_path / 'recapture.tsv'
+    monkeypatch.setattr(book, 'RECAPTURE', asks)
+    asks.write_text('# asin\tasked at\treason\nB1\t2000-01-01T00:00:00\tan ask older than the failure\n')
+    assert isinstance(one.state(current), book.Parked)
+    asks.write_text(f'B1\t{failure["at"]}Z\tLaiken: 取り直していいよ\n')
+    assert one.state(current) == book.Ready('capture', recapture=True)
+    # The new capture answers the ask: a failure after it parks the book again.
+    captured = one.succeed('capture', {'pages': str(one.folder / 'pages'), 'attempt': 2, 'version': 'c1'})
+    assert one.state(current) == book.Ready('convert')
+    one.fail('convert', {'checks': ['contents_chapters'], 'retry': False, 'version': 'v1'}, upstream=captured['at'])
+    assert isinstance(one.state(current), book.Parked)
