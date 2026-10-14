@@ -158,6 +158,28 @@ def test_a_convert_pause_left_by_capture_failures_under_older_rules_is_lifted_on
     assert not (home / 'kindle' / 'pause.convert.json').exists()
 
 
+def test_contents_chapters_on_two_books_in_a_row_parks_each_book_and_the_convert_job_goes_on(home, mac):
+    # 2026-10-14: contents_chapters paused converting three times in two days (F149 F150), though its failures were
+    # each book's own: The History of Jazz's capture ended before Acknowledgments and Snow Crash's chapter headings
+    # were laid out as "T E R". Race and every other book waited behind the pause.
+    mac.converts.update({'B1': [['contents_chapters']], 'B2': [['contents_chapters']]})
+    for _ in range(2):
+        step(home, 'capture')
+    assert [step(home, 'convert') for _ in range(2)] == ['parked: B1', 'parked: B2']
+    assert step(home, 'capture') == 'captured: B3'
+    assert step(home, 'convert') == 'converted: B3'
+    # A pause the older rules left for it is lifted on the next step.
+    book.write_json(home / 'kindle' / 'pause.convert.json', {
+        'stage': 'convert', 'checks': ['contents_chapters'], 'book': 'B2', 'waits_on': 'convert',
+        'version': book.versions(home / 'checkout')['convert'], 'until': None, 'at': NOON,
+        'reason': 'contents_chapters failed on B1 and B2 in a row; waiting for new convert code'})
+    assert step(home, 'convert') == 'published: B3'
+    assert not (home / 'kindle' / 'pause.convert.json').exists()
+    # The parked books are converted again once the contents check changes.
+    edit(home, 'layout.py')
+    assert step(home, 'convert') == 'converted: B1'
+
+
 def test_kindle_app_only_parks_only_that_book_and_new_extension_code_does_not_retry_it(home, mac):
     mac.captures.update({'B1': [['kindle_app_only']], 'B2': [['kindle_app_only']]})
     # Two app-only books in a row are two books, not a broken browser: the job goes on.
@@ -374,13 +396,14 @@ def test_a_paused_convert_job_does_not_hold_the_capture_job(home, mac):
     # 2026-10-14 11:2x JST: contents_chapters on Building a Second Brain and Snow Crash paused the convert job, and the
     # capture job then waited for it ("waiting for the convert job") with the new capture of So You Want to Talk
     # About Race still to do. A paused convert job catches up only with new code; the capture job goes on meanwhile.
+    # contents_chapters no longer pauses the job (F151), so headings stands in for a check that does.
     (home / 'books.tsv').write_text((home / 'books.tsv').read_text() + 'B5\tFive\nB6\tSix\n')
-    mac.converts.update({'B1': [['contents_chapters']], 'B2': [['contents_chapters']]})
+    mac.converts.update({'B1': [['headings']], 'B2': [['headings']]})
     assert [step(home, 'capture') for _ in range(2)] == ['captured: B1', 'captured: B2']
     assert step(home, 'convert') == 'parked: B1'
     assert step(home, 'convert') == 'paused: B2'
     assert [step(home, 'capture') for _ in range(3)] == ['captured: B3', 'captured: B4', 'captured: B5']
-    edit(home, 'layout.py')
+    edit(home, 'check_book.py')
     assert step(home, 'capture') == 'waiting for the convert job'
 
 
@@ -418,8 +441,8 @@ def test_each_convert_step_leaves_every_book_s_state_on_drive_for_the_cloud_to_r
 
 
 def test_a_parked_check_and_its_pause_rerun_only_when_that_check_s_code_changes(home, mac):
-    # Two contents_chapters failures pause the convert job ("waiting for new convert code"). A change to some other
-    # check's code leaves them parked. A change to the contents check's code releases the pause and converts them,
+    # Two contents_chapters failures park their books (F151: the check does not pause the job). A change to some other
+    # check's code leaves them parked. A change to the contents check's code converts them again,
     # while a book parked on headings stays parked, and a book that already passed stays done.
     # proofread.py holds heading_noise's find_all and contents_chapters' not_a_title (F134): only the first changes.
     proofread = home / 'checkout' / 'proofread.py'
@@ -431,12 +454,11 @@ def test_a_parked_check_and_its_pause_rerun_only_when_that_check_s_code_changes(
     assert step(home, 'convert') == 'parked: B2'
     assert step(home, 'capture') == 'captured: B4'
     assert step(home, 'convert') == 'parked: B3'
-    assert step(home, 'convert') == 'paused: B4'
-    assert step(home, 'convert') == 'paused: contents_chapters failed on B3 and B4 in a row; waiting for new convert code'
+    assert step(home, 'convert') == 'parked: B4'
     proofread.write_text(proofread.read_text().replace('return 1', 'return 2', 1))
     assert state(home, 'B1') == book.Done()
     assert state(home, 'B2').failure['checks'] == ['headings']
-    assert step(home, 'convert') == 'paused: contents_chapters failed on B3 and B4 in a row; waiting for new convert code'
+    assert [state(home, b).failure['checks'] for b in ('B3', 'B4')] == [['contents_chapters']] * 2
     edit(home, 'layout.py')
     assert state(home, 'B1') == book.Done()
     assert state(home, 'B2').failure['checks'] == ['headings']
