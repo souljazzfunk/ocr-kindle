@@ -36,7 +36,7 @@ const APP_ONLY_REASON = 'kindle app required: Cloud Reader cannot open this book
 
 function initialState() {
   return { phase: 'back', saved: {}, low: 1, high: 0, n: null, last: null, pending: false, tries: 0, turns: 0, limit: 0,
-    page: null, pages: null, same: 0, waits: 0, rests: 0, savedPage: null, keyed: false, jumped: null, opened: '', openedAt: null, start: '', known: null };
+    page: null, pages: null, same: 0, waits: 0, rests: 0, savedPage: null, savedPages: null, keyed: false, jumped: null, opened: '', openedAt: null, start: '', known: null };
 }
 
 const limitFor = (position) => TURNS_PER_PAGE * (position?.m || UNKNOWN_LENGTH) + EXTRA_TURNS;
@@ -74,7 +74,7 @@ function save(state, sha) {
   const n = state.phase === 'back' ? state.low - 1 : state.high + 1;
   const low = Math.min(state.low, n);
   const high = Math.max(state.high, n);
-  return { state: { ...state, saved: { ...state.saved, [sha]: n }, n, low, high, last: sha, pending: true, savedPage: state.page }, action: 'save' };
+  return { state: { ...state, saved: { ...state.saved, [sha]: n }, n, low, high, last: sha, pending: true, savedPage: state.page, savedPages: state.pages }, action: 'save' };
 }
 
 function edge(state, position) {
@@ -152,8 +152,9 @@ function nextAction(state, observation) {
   // one again with other pixels: 英語教育幻想 (2026-10-12) saved 13 of them twice under new hashes.
   if (state.phase === 'fwd' && n !== null && state.openedAt !== null && n < state.openedAt) return turn({ ...next, tries: 0, last: sha });
   // A turn the wrong way can carry the reader past screens never saved, and coming back through them they look fresh.
-  // A screen beyond the last saved page is not saved out of order: back past it, forward short of it.
-  if (n !== null && state.savedPage !== null && (state.phase === 'back' ? n > state.savedPage : n < state.savedPage)) {
+  // A screen beyond the last saved page is not saved out of order: back past it, forward short of it. Only a page in the
+  // same unit compares: Race (2026-10-14) went from location 3080 of 3301 to "256 of 256" for its last 34 screens.
+  if (n !== null && state.savedPage !== null && position.m === state.savedPages && (state.phase === 'back' ? n > state.savedPage : n < state.savedPage)) {
     return turn({ ...next, tries: 0, last: sha });
   }
   return save({ ...next, tries: 0 }, sha);

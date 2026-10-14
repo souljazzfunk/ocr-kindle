@@ -36,6 +36,7 @@
 | 戻る途中、先頭から遠くで止まった番号のない画面を本の先頭と見なさない | `extension/policy.js` の `edge`、`extension/policy.test.js::paging back, an unnumbered screen that stops turning far from page 1 is not taken for the start`（F143） |
 | 先頭へ跳んだ直後は、ページの画像が出るまで長めに待つ | `extension/policy.js`、`extension/policy.test.js::after the jump to the start, a screen without its image yet is waited for`（F110） |
 | どの手でもめくれなくなったら、2 分休んで最初の手からやり直す（1 冊 3 回まで） | `extension/policy.js` の `rest`、`extension/policy.test.js::a reader that stops turning mid-book both ways rests and starts over with the button before the capture gives up`（F108） |
+| フッターの単位が途中で変わったら、前の単位の番号と比べずに画面を保存する | `extension/policy.js` の `savedPages`、`extension/policy.test.js::screens past a change of the footer unit are saved, not taken for screens before the last saved page`（F147） |
 | 先頭から進み直すとき、開いた位置より前の画面を保存し直さない | `extension/policy.js`、`extension/policy.test.js::forward from page 1, a screen before the opening one is not saved again under a new hash`（F077） |
 | ページめくりは際限なく続けない。上限はページ数に合わせ、向きごとに数える | `extension/policy.js`、`extension/policy.test.js::turns past three per page stop the capture, each direction counted on its own`（F017 F019 F027） |
 | 止まった取り込みを 1 時間待たない。数分で理由を残して終える | `channel.py`、`test_channel.py::test_a_capture_with_no_page_and_no_event_for_the_stall_time_is_stalled`（F032 F039） |
