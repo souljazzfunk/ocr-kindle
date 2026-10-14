@@ -219,3 +219,28 @@ def test_the_screen_where_a_capture_stopped_is_kept_beside_the_trace(served, tmp
           extension_version='2.0', positions={'0': '784/2566'})
     thread.join(5)
     assert json.loads((folder / 'dom-probe-stopped.json').read_text()) == probe
+
+
+def test_the_display_is_kept_awake_for_the_whole_capture_and_let_go_after(served, tmp_path, monkeypatch):
+    held = []
+
+    class Keeper:
+        def __init__(self, args):
+            held.append(['on', args])
+
+        def terminate(self):
+            held.append(['off'])
+
+        def wait(self):
+            pass
+
+    monkeypatch.setattr(channel.shutil, 'which', lambda name: '/usr/bin/' + name)
+    monkeypatch.setattr(channel.subprocess, 'Popen', Keeper)
+    folder = tmp_path / 'Downloads' / 'Awake'
+    thread, out = in_background(lambda: served.capture('B0', 'read.amazon.com', folder))
+    job = take(served)
+    page(served, job, 0, b'png', '1/1')
+    assert held == [['on', ['caffeinate', '-d', '-i']]]  # on while the pages come
+    event(served, job, type='done', start='', stopped='', extension_version='2.0', positions={'0': '1/1'})
+    thread.join(5)
+    assert out['result'].status == 'done' and held[-1] == ['off']
