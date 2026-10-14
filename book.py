@@ -33,6 +33,7 @@ import cases
 HERE = Path(__file__).resolve().parent
 ROOT = Path.home() / 'Downloads' / 'kindle'
 SKIP = HERE / 'skip.tsv'  # books not to capture or convert, one `ASIN<TAB>reason` per line
+RECAPTURE = HERE / 'recapture.tsv'  # parked books to capture once more, one `ASIN<TAB>asked at<TAB>reason` per line
 RECAPTURES = 1  # a capture found unusable is captured once more, then the book is parked
 
 
@@ -353,7 +354,8 @@ class Book:
             rule = classify((failure or {}).get('checks', []))
             if failure and failure.get('upstream') == upstream:
                 if rule.final or same_block(failure, current, stage.name):
-                    return Ready('capture', recapture=True) if failure.get('retry') else Parked(stage.name, failure)
+                    again = failure.get('retry') or failure.get('at', '') < asked(self.asin)
+                    return Ready('capture', recapture=True) if again else Parked(stage.name, failure)
                 if rule.blame == 'capture' and stage.name != 'capture':
                     return Ready('capture', recapture=True)  # new capture code: the pages are what failed
             record = self.record(stage.name)
@@ -361,6 +363,15 @@ class Book:
                 return Ready(stage.name)
             upstream = record['at']
         return Done()
+
+
+def asked(asin):
+    """When recapture.tsv last asked for a new capture of asin ('' if never): a failure older than the ask is captured
+    once more, and the new capture answers it. Laiken's word for The History of Jazz (2026-10-14) reaches the Mac
+    through main, with no edit in the book folder."""
+    if not Path(RECAPTURE).exists():
+        return ''
+    return max((at for a, at, _ in read_tsv(RECAPTURE) if a == asin), default='')
 
 
 def read_tsv(path):
