@@ -392,6 +392,20 @@ def test_the_capture_job_stays_at_most_two_new_books_ahead_of_the_convert_job(ho
     assert step(home, 'capture') == 'captured: B3'
 
 
+def test_a_paused_convert_job_does_not_hold_the_capture_job(home, mac):
+    # 2026-10-14 11:2x JST: contents_chapters on Building a Second Brain and Snow Crash paused the convert job, and the
+    # capture job then waited for it ("waiting for the convert job") with the new capture of So You Want to Talk
+    # About Race still to do. A paused convert job catches up only with new code; the capture job goes on meanwhile.
+    (home / 'books.tsv').write_text((home / 'books.tsv').read_text() + 'B5\tFive\nB6\tSix\n')
+    mac.converts.update({'B1': [['contents_chapters']], 'B2': [['contents_chapters']]})
+    assert [step(home, 'capture') for _ in range(2)] == ['captured: B1', 'captured: B2']
+    assert step(home, 'convert') == 'parked: B1'
+    assert step(home, 'convert') == 'paused: B2'
+    assert [step(home, 'capture') for _ in range(3)] == ['captured: B3', 'captured: B4', 'captured: B5']
+    edit(home, 'layout.py')
+    assert step(home, 'capture') == 'waiting for the convert job'
+
+
 def test_a_new_book_is_converted_before_published_books_are_converted_again(home, mac):
     # 2026-10-12: after #107 changed the converter, the convert job converted and published again Japan Travel Planner,
     # For 91 Days in Sri Lanka, Zero to Sold and others (07:44-07:45Z) before How to Write a Lot, a new book (07:47Z).
