@@ -1583,19 +1583,29 @@ CHAPTER_LABEL = re.compile(r'第[^章]{0,3}章')  # 第Ⅲ章, which Live Text r
 DASH_AS_CHOON = re.compile(r'ー(?=[\u4e00-\u9fff])|(?<=[\u4e00-\u9fff])ー')
 
 
+# A part label before an English title: the contents list "Introduction So you want to talk about race" where the book
+# heads only "So you want to talk about race" and leaves "introduction" a line above it (So You Want to Talk About
+# Race, 2026-10-14). Comparable spelling, so l is i.
+SECTION_LABEL = re.compile('^(?:' + '|'.join(comparable(word) for word in (
+    'Introduction', 'Prologue', 'Foreword', 'Epilogue', 'Afterword', 'Conclusion')) + r')(?=.{3})')
+# Contents entries for pages that carry no heading of their own: Race's "Cover" and "Title Page".
+LANDMARKS = {comparable(name) for name in ('Cover', 'Title Page', 'Half Title', 'Dedication', 'Epigraph')}
+
+
 def contents_key(text):
-    """A contents entry or a heading, comparable, with the chapter label and a dash read as ー taken off."""
-    return DASH_AS_CHOON.sub('', CHAPTER_LABEL.sub('', comparable(text)))
+    """A contents entry or a heading, comparable, with the chapter or part label and a dash read as ー taken off."""
+    return DASH_AS_CHOON.sub('', SECTION_LABEL.sub('', CHAPTER_LABEL.sub('', comparable(text))))
 
 
 def contents_for_check(images):
     """Every contents entry a heading must account for.
 
     Live Text pages (no line boxes: a Japanese page the vision pipeline read with Live Text) and Vision's own
-    line boxes. One printed line may hold several titles; split_contents separates them before either list is used."""
+    line boxes. One printed line may hold several titles; split_contents separates them before either list is used.
+    A landmark (cover, title page) has no heading to find."""
     found = []
     for entry in [*livetext_contents(images)[1], *contents_entries(images)]:
-        if entry not in found:
+        if entry not in found and entry not in LANDMARKS:
             found.append(entry)
     return found
 
