@@ -285,3 +285,34 @@ test('a hidden reader that stops turning near the end rests instead of ending th
   assert.ok('ix' in state.saved);
   assert.ok(actions[ended].startsWith('done:'));
 });
+
+test('screens past a change of the footer unit are saved, not taken for screens before the last saved page', () => {
+  // So You Want to Talk About Race (2026-10-14): after location 3080 of 3301 the footer showed "256 of 256" for the
+  // last 34 screens. They were compared with location 3080, taken for screens already passed and not saved, and the
+  // capture ended as done short of its end.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const trace = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'traces', 'B07QBQF4GS-2026-10-14.jsonl'), 'utf8')
+    .trim().split('\n').map((line) => JSON.parse(line));
+  const switched = trace.findIndex((step, i) => i > 0 && step.observation.position?.m === 256);
+  let state = initialState();
+  const step = (observation) => {
+    const result = nextAction(state, observation);
+    state = result.state;
+    return result.action;
+  };
+  assert.deepStrictEqual(trace.slice(0, switched).map(({ observation }) => step(observation)),
+    trace.slice(0, switched).map(({ action }) => action));
+  // From the switch on, each recorded screen stays until the policy turns away from it, as the reader does.
+  const saved = new Set();
+  let action;
+  for (const { observation } of trace.slice(switched)) {
+    action = step(observation);
+    if (action === 'save') {
+      saved.add(observation.sha);
+      action = step(observation);
+    }
+  }
+  assert.deepStrictEqual(saved, new Set(trace.slice(switched).map(({ observation }) => observation.sha)));
+  assert.strictEqual(action, 'done:page 256 of 256');
+});

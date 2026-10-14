@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import capture_book
+import layout
 from check_book import Check, check_folder
 from img2txt import SOURCES
 
@@ -605,3 +606,17 @@ def test_the_recorded_contents_of_three_parked_books_find_their_headings(tmp_pat
         dropped = [heading for heading in record['headings'] if heading not in ('PART TWO', 'EXILE', '日中の対比', '代替医療の未来')]
         (folder / f'{asin}.md').write_text('\n\n'.join(f'# {h}\n\nここからは本文です。' for h in dropped + ['参考文献']))
         assert not by_name(check_folder(folder))['contents_chapters'].ok, asin
+
+
+def test_the_landmarks_and_the_introduction_label_of_race_s_contents_need_no_heading_of_their_own():
+    # So You Want to Talk About Race (2026-10-14) was parked by contents_chapters: its contents list "Title Page"
+    # (a page with no heading) and "Introduction So you want to talk about race", which the book heads as "So you
+    # want to talk about race" with "introduction" a line above. Entries and headings are the ones the Mac recorded.
+    record = json.loads((Path(__file__).parent / 'fixtures' / 'contents' / 'B07QBQF4GS.entries.json').read_text())
+    entries = [entry for entry in record['entries'] if entry not in layout.LANDMARKS]
+    assert 'titiepage' not in entries and 'cover' not in entries
+    assert [entry for entry in entries if not layout.contents_covered(entry, record['headings'])] == []
+    # A chapter the book does not head still fails, label or not.
+    dropped = [heading for heading in record['headings'] if heading not in ('So you want to talk about race', 'What is racism?')]
+    assert [entry for entry in entries if not layout.contents_covered(entry, dropped)] == [
+        'introductionsoyouwanttotaikaboutrace', 'twowhatisracism']

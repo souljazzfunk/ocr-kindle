@@ -36,6 +36,7 @@
 | 戻る途中、先頭から遠くで止まった番号のない画面を本の先頭と見なさない | `extension/policy.js` の `edge`、`extension/policy.test.js::paging back, an unnumbered screen that stops turning far from page 1 is not taken for the start`（F143） |
 | 先頭へ跳んだ直後は、ページの画像が出るまで長めに待つ | `extension/policy.js`、`extension/policy.test.js::after the jump to the start, a screen without its image yet is waited for`（F110） |
 | どの手でもめくれなくなったら、2 分休んで最初の手からやり直す（1 冊 3 回まで） | `extension/policy.js` の `rest`、`extension/policy.test.js::a reader that stops turning mid-book both ways rests and starts over with the button before the capture gives up`（F108） |
+| フッターの単位が途中で変わったら、前の単位の番号と比べずに画面を保存する | `extension/policy.js` の `savedPages`、`extension/policy.test.js::screens past a change of the footer unit are saved, not taken for screens before the last saved page`（F147） |
 | 先頭から進み直すとき、開いた位置より前の画面を保存し直さない | `extension/policy.js`、`extension/policy.test.js::forward from page 1, a screen before the opening one is not saved again under a new hash`（F077） |
 | ページめくりは際限なく続けない。上限はページ数に合わせ、向きごとに数える | `extension/policy.js`、`extension/policy.test.js::turns past three per page stop the capture, each direction counted on its own`（F017 F019 F027） |
 | 止まった取り込みを 1 時間待たない。数分で理由を残して終える | `channel.py`、`test_channel.py::test_a_capture_with_no_page_and_no_event_for_the_stall_time_is_stalled`（F032 F039） |
@@ -90,6 +91,7 @@
 | 目次に載った章が 1 つでも見出しになっていなければ、本を落とす | `check_book.py` の `contents_chapters`、`test_check_book.py::test_a_chapter_the_contents_lists_without_a_heading_is_caught`（F082） |
 | 1 行に読まれた目次の数項目や、読み違えた章番号（第山章）も、見出しと照らせば通す | `layout.py` の `contents_covered`、`test_check_book.py::test_contents_lines_read_as_one_and_chapter_numerals_misread_still_find_their_headings`、`test_check_book.py::test_a_cut_contents_line_matches_its_headings`（F118） |
 | 目次の続きは英語の文でも止める。目次の項目は見出しの並びと近似で照らす | `layout.py` の `holds_prose`・`contents_covered`、`check_book.py` の `contents_unheaded`、`test_check_book.py::test_the_recorded_contents_of_three_parked_books_find_their_headings`（F130） |
+| 目次の表紙・扉は見出しを求めず、英語の Introduction などの前置きは外して見出しと照らす | `layout.py` の `LANDMARKS`・`SECTION_LABEL`、`test_check_book.py::test_the_landmarks_and_the_introduction_label_of_race_s_contents_need_no_heading_of_their_own`（F148） |
 | 日本語の本の節番号とその下の題は見出しにする。文の上の番号は章の始まりと数えない | `proofread.py` の `numbered_title`、`test_proofread.py::test_a_numbered_section_title_of_a_japanese_book_becomes_a_heading`、`test_check_book.py::test_a_number_over_a_japanese_sentence_is_not_a_chapter_opening`（F119） |
 | 章の見出しの番号は目次の番号に揃え、段落とつながった見出しは段落に戻す | `layout.py` の `contents_spelling`、`test_layout.py::test_a_chapter_number_read_as_a_symbol_takes_the_contents_number_and_a_run_on_title_stays_a_paragraph`（F084） |
 | 変換し直すとき、配置済みのページ（Live Text と Vision）も新しいコードで書き直す | `img2txt.py`、`test_img2txt.py::test_live_text_pages_laid_out_before_are_written_again_without_a_request`、`test_img2txt.py::test_vision_pages_laid_out_before_are_written_again_without_a_request`（F079 F131） |
