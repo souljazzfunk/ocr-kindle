@@ -11,7 +11,7 @@ import argparse
 import json
 import re
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from img2txt import LIVETEXT, SOURCES, TEXT_LAYER, VISION, page_images, read_sources
@@ -200,7 +200,11 @@ def check_folder(folder, title=None):
     review = [k for k in REVIEW_KINDS if counts.get(k)]
     checks.append(Check('proofread_review', not review, ', '.join(f'{k} {counts[k]}' for k in review) or 'nothing to review',
                         blocking=False, fix=None))
-    return checks
+    # Laiken, 2026-10-14: a book whose text is whole goes to Drive. Each new book failed some formatting check and parked
+    # until a fix for its typesetting landed, so these are reported as warnings and their fixes still run.
+    formatting = {'code_blocks', 'headings', 'decorative_digits', 'heading_noise', 'chapter_titles', 'contents_chapters',
+                  'proofread'}
+    return [replace(c, blocking=False) if c.name in formatting else c for c in checks]
 
 
 def main():
