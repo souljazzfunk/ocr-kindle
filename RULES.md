@@ -43,6 +43,7 @@
 | 工程ごとの秒数を report.json に残し、基準より遅い工程は speed の検査で落とす | `capture_book.py` の `speed`・`BUDGETS`、`channel.py`、`test_check_book.py::test_each_step_is_timed_in_the_report_and_a_slow_one_fails_the_speed_check`（F083） |
 | 1 冊の時間は最初の取り込みから Drive まで数え、基準を超えた本を名指す | `kc_run.py` の `publish`、`book.py` の `Book.start`、`test_kc_run.py::test_a_book_s_time_from_its_first_capture_to_drive_is_recorded_once_and_a_slow_one_is_named`（F089） |
 | 変換待ちの新しい本が 2 冊あれば、次の本を取り込まずに待つ | `kc_run.py` の `AHEAD`、`test_kc_run.py::test_the_capture_job_stays_at_most_two_new_books_ahead_of_the_convert_job`（F111） |
+| 変換の仕事が止まっている間は、取り込みの仕事は変換を待たない | `kc_run.py` の `_step`、`test_kc_run.py::test_a_paused_convert_job_does_not_hold_the_capture_job`（F150） |
 | 変換は、まだ公開していない本を先にし、公開済みの本の変換し直しは後にする | `kc_run.py` の `step`、`test_kc_run.py::test_a_new_book_is_converted_before_published_books_are_converted_again`（F112） |
 | 公開した本の report.json と時間を Drive に写し、結果の確認を Mac のセッションに頼まない | `test_kc_run.py::test_a_published_book_s_report_and_time_are_copied_to_drive_for_the_cloud_to_read`、`test_check_book.py::test_a_book_converted_by_hand_also_leaves_its_report_on_drive`（F090 F092） |
 | 変換の 1 歩ごとに全部の本の状態を Drive の `_books.json` に書き、一覧の様子を Mac に聞かない | `kc_run.py` の `step`・`describe`、`capture_book.py` の `publish_states`、`test_kc_run.py::test_each_convert_step_leaves_every_book_s_state_on_drive_for_the_cloud_to_read`（F117） |
