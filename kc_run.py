@@ -157,7 +157,9 @@ def _step(job, root, lists, downloads, model, checkout, sleep, now, config):
     # work, waiting behind captured books for the convert job; so a new capture waits while two new books do.
     waiting = sum(isinstance(s, Ready) and s.stage not in JOBS['capture'] and (b.folder / 'start.json').exists()
                   and not b.record('publish') for b, s in states)
-    if job == 'capture' and waiting >= AHEAD:
+    # The wait is for the convert job to catch up. A paused convert job does not catch up until new code comes, so the
+    # capture job goes on: on 2026-10-14 a convert pause held the new capture of So You Want to Talk About Race (F150).
+    if job == 'capture' and waiting >= AHEAD and not library.active_pause('convert', current, moment):
         sleep(IDLE_S)
         return 'waiting for the convert job'
     # A book never published goes before one published already that is ready again (a new capture). After #107 the
