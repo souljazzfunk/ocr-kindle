@@ -273,3 +273,15 @@ test('a reader that froze in a hidden window rests until the window comes to the
   assert.ok(!actions.some((x) => x.startsWith('done:') && x.includes('275')));
   assert.ok('d' in state.saved);
 });
+
+test('a hidden reader that stops turning near the end rests instead of ending the capture', () => {
+  // The History of Jazz (2026-10-13 23:10 JST, 2.15): the display went off, the window was hidden, and the reader stopped
+  // turning on an unnumbered screen after 389 of 389. The capture ended there without its Acknowledgments and Index.
+  const hidden = (s) => ({ ...s, hidden: true });
+  const a = screen('a', 1, 389), y = screen('y', 389, 389), z = screen('z', null, null), ix = screen('ix', null, null);
+  const { actions, state } = replay([a, a, a, a, y, ...Array(40).fill(hidden(z)), z, ix, ix, ix, ix, ix, ix, ix, ix, ix, ix]);
+  const ended = actions.findIndex((x) => x.startsWith('done:'));
+  assert.ok(actions.slice(0, ended).includes('rest'));
+  assert.ok('ix' in state.saved);
+  assert.ok(actions[ended].startsWith('done:'));
+});
