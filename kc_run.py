@@ -171,7 +171,7 @@ def _step(job, root, lists, downloads, model, checkout, sleep, now, config):
             try:
                 outcome = STEPS[state.stage](library, listed, book, state, current, options)
             except Exception as e:  # recorded like any other failure, so the book is parked with the reason
-                outcome = record_failure(library, listed, book, state.stage, ['crash'], f'{type(e).__name__}: {e}',
+                outcome = record_failure(library, listed, book, state.stage, ['crash'], capture_book.failure_text(e),
                                          upstream=_upstream(book, state.stage), current=current, now=moment,
                                          config=config)
             return f'{outcome}: {book.asin}'
