@@ -92,7 +92,7 @@
 | Live Text の見出しから節の印を外し、目次の項目は見出しにせず、目次で階層を揃える | `layout.py` の `section_mark`・`livetext_contents`、`test_layout.py::test_live_text_titles_lose_the_section_mark_and_take_their_level_from_the_contents`（F078） |
 | 節の印は、読み違えた字（十・＋・+）の仲間ごと見出しから外す | `layout.py` の `SECTION_MARKS`、`test_layout.py::test_titles_read_with_a_plus_lose_it_and_a_line_the_contents_lists_becomes_a_chapter`（F080） |
 | 目次に載った短い行は、Gemini が段落にしても章の見出しにする | `layout.py` の `listed`、`test_layout.py::test_titles_read_with_a_plus_lose_it_and_a_line_the_contents_lists_becomes_a_chapter`（F081） |
-| 目次に載った章が 1 つでも見出しになっていなければ、本を落とす | `check_book.py` の `contents_chapters`、`test_check_book.py::test_a_chapter_the_contents_lists_without_a_heading_is_caught`（F082） |
+| 本を止めるのは中身の欠け（ページ・始まりと終わり・本文・配置）だけ。見出し・目次・コード・校正は警告にして Drive に置く | `check_book.py` の `check_folder`、`test_check_book.py::test_a_book_whose_text_is_whole_goes_to_drive_with_its_formatting_failures_as_warnings`（F082） |
 | 1 行に読まれた目次の数項目や、読み違えた章番号（第山章）も、見出しと照らせば通す | `layout.py` の `contents_covered`、`test_check_book.py::test_contents_lines_read_as_one_and_chapter_numerals_misread_still_find_their_headings`、`test_check_book.py::test_a_cut_contents_line_matches_its_headings`（F118） |
 | 目次の続きは英語の文でも止める。目次の項目は見出しの並びと近似で照らす | `layout.py` の `holds_prose`・`contents_covered`、`check_book.py` の `contents_unheaded`、`test_check_book.py::test_the_recorded_contents_of_three_parked_books_find_their_headings`（F130） |
 | 目次の表紙・扉は見出しを求めず、英語の Introduction などの前置きは外して見出しと照らす | `layout.py` の `LANDMARKS`・`SECTION_LABEL`、`test_check_book.py::test_the_landmarks_and_the_introduction_label_of_race_s_contents_need_no_heading_of_their_own`（F148） |

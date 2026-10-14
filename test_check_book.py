@@ -60,6 +60,19 @@ def test_the_defects_of_how_to_write_a_lot_are_each_named_with_a_fix(tmp_path):
     assert checks['pages'].ok
 
 
+def test_a_book_whose_text_is_whole_goes_to_drive_with_its_formatting_failures_as_warnings(tmp_path):
+    # Laiken, 2026-10-14: "最低限の手間で取り込みができるように". Pages, start, end and text decide; formatting is reported.
+    folder = book(tmp_path, [BODY + 'Z\n\nDiscussion-this is it.', BODY2 + 'More.'],
+                  md='# Z\n\nZ\n\n' + BODY + 'Discussion-this is it.')
+    checks = check_folder(folder, title='How to Write a Lot')
+    failed = {c.name: c.blocking for c in checks if not c.ok}
+    assert failed == {'text_layer': False, 'decorative_digits': False, 'proofread': False}
+    held = capture_book.correct(folder, 'How to Write a Lot', rounds=1, runner=lambda c: None)[0]
+    assert not [c.name for c in held if not c.ok and c.blocking]
+    unread = book(tmp_path, [BODY, None], md='# One\n\n' + BODY, name='Unread')
+    assert [c.name for c in check_folder(unread, title='Unread') if not c.ok and c.blocking] == ['text']
+
+
 def test_decorative_digit_headings_and_gaps_are_caught(tmp_path):
     folder = book(tmp_path, [BODY, BODY2], md='# Z\n\n# Chapter &\n\n' + BODY)
     (folder / 'page_0002.png').rename(folder / 'page_0004.png')
@@ -80,11 +93,11 @@ def test_missing_text_and_text_layer_hint(tmp_path):
 
 
 def test_cli_exit_code_follows_blocking_checks(tmp_path):
-    folder = book(tmp_path, [BODY], md=BODY)  # no headings: blocking
+    folder = book(tmp_path, [None], md=BODY)  # a page without text: blocking
     env = {**os.environ, 'KINDLE_OCR_CONFIG': '/nonexistent/config.env'}
     result = subprocess.run([sys.executable, 'check_book.py', str(folder), '--json'], capture_output=True, text=True, env=env, cwd=Path(__file__).parent)
     assert result.returncode == 1, result.stderr
-    assert {c['name']: c['ok'] for c in json.loads(result.stdout)}['headings'] is False
+    assert {c['name']: c['ok'] for c in json.loads(result.stdout)}['text'] is False
 
 
 def test_correct_runs_each_fix_once_and_stops_when_clean(tmp_path, monkeypatch):
@@ -109,13 +122,13 @@ def test_correct_gives_up_after_the_round_limit(tmp_path):
     calls = []
     checks, rounds = capture_book.correct(folder, None, rounds=2, runner=lambda c: calls.append(c))
     assert rounds == 2 and len(calls) == 2
-    assert [c.name for c in checks if not c.ok and c.blocking] == ['layout', 'headings']
+    assert [c.name for c in checks if not c.ok and c.blocking] == ['layout']
 
 
 def test_report_lists_failures_and_warnings(tmp_path):
-    folder = book(tmp_path, [BODY], md=BODY, name='kindle-book')
+    folder = book(tmp_path, [BODY], md=BODY, name='kindle-book', laid=False)
     data = capture_book.report(folder, check_folder(folder), {'asin': 'X'})
-    assert data['blocking_failures'] == ['headings'] and 'title' in data['warnings']
+    assert data['blocking_failures'] == ['layout'] and {'title', 'headings'} <= set(data['warnings'])
     assert json.loads((folder / 'report.json').read_text())['asin'] == 'X'
 
 
@@ -456,7 +469,7 @@ def test_a_chapter_the_contents_lists_without_a_heading_is_caught(tmp_path):
     md = '\n\n'.join([contents, chapter5, chapter6])
     folder = book(tmp_path, [contents, chapter5, chapter6], sources='livetext', md=md, name='英語教育幻想')
     check = by_name(check_folder(folder))['contents_chapters']
-    assert not check.ok and check.blocking and check.detail == '1 contents entries without a heading: "幻想英語ができれば世界中だれとでも意思疎通できる"'
+    assert not check.ok and not check.blocking and check.detail == '1 contents entries without a heading: "幻想英語ができれば世界中だれとでも意思疎通できる"'
     (folder / '英語教育幻想.md').write_text(md.replace('\n\n幻想6 英語', '\n\n# 幻想6 英語'))
     assert by_name(check_folder(folder))['contents_chapters'].ok
 
@@ -532,7 +545,7 @@ def test_a_cut_contents_line_matches_its_headings(tmp_path):
     missing = ALT_PAGES[0].replace('科学的根拠にもとづく医療', '本文にない節の題')
     folder = _japanese_contents_book(tmp_path, '欠落', [missing, ALT_PAGES[1]], ALT_HEADINGS, lines=False)
     check = by_name(check_folder(folder))['contents_chapters']
-    assert not check.ok and check.blocking and '本文にない節の題' in check.detail
+    assert not check.ok and not check.blocking and '本文にない節の題' in check.detail
 
 
 def test_a_number_over_a_japanese_sentence_is_not_a_chapter_opening(tmp_path):
