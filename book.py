@@ -145,11 +145,12 @@ BOOK_FAULT = Rule(BOOK)
 # changes. A name the checkout does not define stands for the whole file (function_source), so a stub checkout
 # still notices an edit of that file. None means the whole file even when it defines other functions.
 TOUCH = {
-    'headings': (('check_book.py', 'check_folder'),),
-    'heading_noise': (('check_book.py', 'check_folder'), ('proofread.py', 'find_all')),
-    'decorative_digits': (('check_book.py', 'check_folder'),),
-    'chapter_titles': (('check_book.py', 'check_folder'),),
+    'headings': (('check_book.py', 'check_folder'), ('check_book.py', 'as_warnings')),
+    'heading_noise': (('check_book.py', 'check_folder'), ('check_book.py', 'as_warnings'), ('proofread.py', 'find_all')),
+    'decorative_digits': (('check_book.py', 'check_folder'), ('check_book.py', 'as_warnings')),
+    'chapter_titles': (('check_book.py', 'check_folder'), ('check_book.py', 'as_warnings')),
     'contents_chapters': (
+        ('check_book.py', 'as_warnings'),  # whether it blocks (Snow Crash, 2026-10-15)
         ('check_book.py', 'contents_unheaded'),
         ('layout.py', 'contents_for_check'),
         ('layout.py', 'contents_covered'),
@@ -165,9 +166,9 @@ TOUCH = {
         ('img2txt.py', 'main'),  # which laid-out pages are written again (近代中国史, 2026-10-13)
         ('proofread.py', 'not_a_title'),  # which titles the runner's proofreading takes back (近代中国史, 2026-10-13)
     ),
-    'code_blocks': (('check_book.py', 'check_folder'), ('layout.py', 'code_pages'),
+    'code_blocks': (('check_book.py', 'check_folder'), ('check_book.py', 'as_warnings'), ('layout.py', 'code_pages'),
                     ('proofread.py', 'loose_code')),  # fences the code the layout left loose (Automate the Boring Stuff, 2026-10-13)
-    'proofread': (('proofread.py', None),),
+    'proofread': (('proofread.py', None), ('check_book.py', 'as_warnings')),
     'layout': (('layout.py', 'mark_layout'), ('check_book.py', 'check_folder')),
     'gemini': (
         ('layout.py', 'mark_layout'),

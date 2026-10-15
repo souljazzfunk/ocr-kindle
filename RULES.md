@@ -70,6 +70,7 @@
 | 拡張の再読み込みを人に頼まない。版が変われば拡張が自分で読み込み直す | `extension/job.js` の `pollStep`、`extension/job.test.js::an idle worker on another version than the checkout reloads itself, at most once a minute`（F022） |
 | 取り込めた本は取り直さない。通った本は変換のコードが変わってもやり直さない | `book.py` の `Book.state`、`test_kc_run.py::test_a_passed_book_stays_done_when_the_converter_changes_and_a_capture_is_not_redone`（F036） |
 | 止まった本は、その検査のコードが変わったときだけやり直す | `book.py` の `touch_of`、`test_kc_run.py::test_a_parked_check_and_its_pause_rerun_only_when_that_check_s_code_changes`、`test_book.py::test_a_checks_code_is_the_functions_that_decide_it`（F127） |
+| 検査を警告に変えたら、その検査で止まっていた本は次の 1 歩でやり直す | `check_book.py` の `as_warnings`、`book.py` の `TOUCH`、`test_book.py::test_a_park_on_a_formatting_check_is_retried_when_it_stops_blocking`（F158） |
 | 一覧の進み具合は本のフォルダから出し、別のファイルに写さない | `book.py`、`test_kc_run.py::test_books_progress_json_is_carried_over_once_and_stale_results_are_redone`（F020 F031） |
 | 1 冊のフォルダに同時に書くのは 1 つの変換だけ。checkout の git も 1 つずつ | `locks.py`、`test_locks.py::test_a_second_run_on_the_same_book_waits_for_the_first`、`test_locks.py::test_git_calls_on_the_checkout_wait_for_each_other_as_on_2026_10_11`（F038） |
 | 1 冊を変換している間に次の本を取り込む。2 つの仕事は同じファイルに書かない | `kc_run.py`、`test_kc_run.py::test_the_convert_job_makes_no_book_folders`、`test_kc_run.py::test_the_launchd_jobs_run_one_step_of_each_job_and_are_started_again`（F063） |
