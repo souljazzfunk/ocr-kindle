@@ -614,7 +614,9 @@ def learn_reading(script, sleep, clock, found):
             continue
         i = moved[0]
         on = after[i] > before[i]
-        pick = i if i == 0 else i - len(after)
+        # A lone number is the knob over the mark (保守とは何だろうか, 2026-10-15 23:19: "knob number 1 of 1", then the
+        # mark came back at the left and was read as the position): its side follows the way the book turns.
+        pick = (0 if on == (code == 124) else -1) if len(after) == 1 else i if i == 0 else i - len(after)
         reading = LTR._replace(pick=pick) if on == (code == 124) else Reading('rtl', 124, 123, pick)
         if on:
             bring_front(script, sleep)

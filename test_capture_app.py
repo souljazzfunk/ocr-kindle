@@ -667,20 +667,21 @@ class Knob(App):
     Japanese book (外国語学習に成功する人 and 英語独習法, 2026-10-15 22:09) turns to the next page with ←, and its
     position stood at the right of the row: the leftmost number, 699 and 163, never moved while ← was pressed."""
 
-    def __init__(self, at, last, rtl=True, mark=699):
+    def __init__(self, at, last, rtl=True, mark=699, near=0):
         super().__init__([READER])
-        self.at, self.last, self.rtl, self.mark, self.chrome = at, last, rtl, mark, True
+        self.at, self.last, self.rtl, self.mark, self.near, self.chrome = at, last, rtl, mark, near, True
 
     def screen(self):
         if not self.chrome:
             return READER
         left, right = (self.mark, self.at) if self.rtl else (self.at, self.mark)
+        row = [f'element|AXStaticText|||{left}||431,956|18,12\n', f'element|AXStaticText|||{right}||1600,956|18,12\n']
+        if abs(self.at - self.mark) <= self.near:  # the knob's number covers the mark: only the position is in the tree
+            row = [f'element|AXStaticText|||{self.at}||1000,956|18,12\n']
         return ('frontmost=true\nwindow|Kindle|340,173|1370,880\n'
                 'element|AXButton|||Close Book||360,195|40,40\n'
                 'element|AXButton|||Table of Contents||400,195|40,40\n'
-                "element|AXButton|||Bird's Eye View||360,964|37,37\n"
-                f'element|AXStaticText|||{left}||431,956|18,12\n'
-                f'element|AXStaticText|||{right}||1600,956|18,12\n')
+                "element|AXButton|||Bird's Eye View||360,964|37,37\n" + ''.join(row))
 
     def __call__(self, text):
         self.calls.append(text)
@@ -724,3 +725,19 @@ def test_a_vertical_book_is_paged_back_with_the_right_arrow_and_captured_right_t
     shown = {}
     assert capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock, shown=shown) == ''
     assert app.at == 1 and shown['reading'].name == 'ltr'
+
+
+def test_a_vertical_book_whose_knob_covers_the_mark_is_read_from_the_right_once_both_numbers_show(capsys):
+    # 2026-10-15 23:19, 保守とは何だろうか: "reading: rtl, the position is knob number 1 of 1", then "paged back 20 times
+    # and the footer stayed at Location 458". The knob stood over the mark, so the row held one number; once → moved
+    # the knob away the mark came back at the left, and the leftmost number, the mark, was read as the position.
+    app = Knob(at=457, last=600, mark=458, near=5)
+    shown = {}
+    assert capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock, shown=shown) == ''
+    assert app.at == 1 and shown['reading'].name == 'rtl' and shown['reading'].pick == -1
+    assert 'reading: rtl, the position is knob number 1 of 1' in capsys.readouterr().out
+    # A horizontal book in the same spot keeps its leftmost number.
+    app = Knob(at=457, last=600, rtl=False, mark=458, near=5)
+    shown = {}
+    assert capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock, shown=shown) == ''
+    assert app.at == 1 and shown['reading'].name == 'ltr' and shown['reading'].pick == 0
