@@ -17,6 +17,7 @@ While a book is captured the Kindle window must stay in front, so the Mac's scre
 import argparse
 import json
 import os
+import plistlib
 import re
 import subprocess
 import sys
@@ -823,7 +824,18 @@ def capture_pages(asin, title, folder, open_=open_book, start=go_to_start, take=
     return folder, None
 
 
-def main(argv=None, env=os.environ, capture=capture_pages):
+def screen_locked(run=subprocess.run):
+    """Whether the Mac's screen is locked: then the app shows only "Kindle, Kindle, ..." to the Accessibility API and
+    every book would be parked as app_open with its pages moved aside (F171, 2026-10-15 17:45 JST)."""
+    try:
+        done = run(['ioreg', '-n', 'Root', '-d1', '-a'], capture_output=True)
+        users = plistlib.loads(done.stdout).get('IOConsoleUsers', []) if done.returncode == 0 else []
+    except (OSError, plistlib.InvalidFileException, ValueError):
+        return False  # not a Mac
+    return any(u.get('CGSSessionScreenIsLocked') for u in users)
+
+
+def main(argv=None, env=os.environ, capture=capture_pages, locked=screen_locked):
     parser = argparse.ArgumentParser(description='Capture the Kindle-app-only books of a list from the Kindle app')
     parser.add_argument('list', type=Path, help='ASIN<TAB>title per line, a list the capture job reads')
     parser.add_argument('--root', type=Path, default=books.ROOT, help='where the book folders live')
@@ -832,6 +844,9 @@ def main(argv=None, env=os.environ, capture=capture_pages):
     args = parser.parse_args(argv)
     if env.get(OK_ENV) != '1':
         sys.exit(f'Not starting: the Kindle app is used only when Laiken asks for it; run with {OK_ENV}=1.')
+    if locked():
+        sys.exit('Not starting: the Mac\'s screen is locked, so the Kindle app cannot be read or turned. '
+                 'Unlock it, then run the same command.')
     if args.probe:
         titles = {asin: title for asin, title, _ in books.read_tsv(args.list)}
         folder = probe(args.probe, titles.get(args.probe, args.probe), args.downloads / 'kindle-probe' / args.probe)
