@@ -638,27 +638,35 @@ def flipped(reading):
     return Reading('rtl' if reading.name == 'ltr' else 'ltr', reading.next, reading.back, reading.pick)
 
 
-def turn_at_start(script, sleep, clock, reading):
-    """At the start, which key turns the book on: press reading's next once and read the footer, then the other key
-    when it did not move on (保守とは何だろうか, 2026-10-16 00:23: a footer of "Location 1" in words never asked
-    learn_reading, so the vertical book was paged with → from Location 1 and ended there, 2 pages). The press that
-    turned the book on is undone. Returns the reading, or the one given and a line saying neither key moved."""
+def turn_at_start(script, sleep, clock, reading, tries=15):
+    """At the start, which key turns the book on: press reading's next until the footer moves on, then the other key
+    when it never did (保守とは何だろうか, 2026-10-16 00:23: a footer of "Location 1" in words never asked
+    learn_reading, so the vertical book was paged with → from Location 1 and ended there, 2 pages). The cover, title
+    page and the pages after them can all read Location 1 (00:49: one press either way moved nothing), so up to
+    `tries` presses are made each way. The key found is then pressed back as often as all presses made, which stops
+    at the cover. Returns the reading, or the one given and a line saying neither key moved."""
+    pressed = 0
     for r in (reading, flipped(reading)):
-        before = location_of(show_chrome(script, sleep, clock), r)
-        bring_front(script, sleep)
-        hide_chrome(script, sleep, clock)
-        script(key(r.next))
-        sleep(0.5)
         found = show_chrome(script, sleep, clock)
-        after = location_of(found, r)
-        if before is not None and after is not None and after[0] > before[0]:
+        before = location_of(found, r)
+        for n in range(1, tries + 1):
             bring_front(script, sleep)
             hide_chrome(script, sleep, clock)
-            script(key(r.back))
+            script(key(r.next))
             sleep(0.5)
-            show_chrome(script, sleep, clock)
-            print(f'reading: {r.name}, {"→" if r.next == 124 else "←"} turned the book on from its start', flush=True)
-            return r
+            pressed += 1
+            found = show_chrome(script, sleep, clock)
+            after = location_of(found, r)
+            if before is not None and after is not None and after[0] > before[0]:
+                bring_front(script, sleep)
+                hide_chrome(script, sleep, clock)
+                for _ in range(pressed):
+                    script(key(r.back))
+                    sleep(0.5)
+                show_chrome(script, sleep, clock)
+                print(f'reading: {r.name}, {"→" if r.next == 124 else "←"} turned the book on from its start '
+                      f'after {n} presses', flush=True)
+                return r
     print(f'reading: neither ← nor → moved the footer on from the start; numbers on screen: {numbers_shown(found)}',
           flush=True)
     return reading

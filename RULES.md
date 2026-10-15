@@ -27,6 +27,7 @@
 | つまみの数字が 1 つしか出ないときは、それが位置。縦書きなら後から右端の数字を、横書きなら左端の数字を位置として読む | `capture_app.py` の `learn_reading`、`test_capture_app.py::test_a_vertical_book_whose_knob_covers_the_mark_is_read_from_the_right_once_both_numbers_show`（F175） |
 | 先頭でつまみが印に重なり、← で数字が 1 つから 2 つになったら、元の数字でない方をつまみとして向きを決める | `capture_app.py` の `learn_reading`、`test_capture_app.py::test_a_vertical_book_opened_at_its_start_with_the_knob_over_the_mark_is_still_read_right_to_left`（F176） |
 | 先頭で総数のない「Location N」の本は、→ で進まなければ ← を試し、進んだ方の向きで取り込む | `capture_app.py` の `turn_at_start`、`test_capture_app.py::test_a_vertical_book_opened_at_its_start_with_its_location_in_words_is_still_read_right_to_left`（F180） |
+| 先頭の数ページが同じ Location のときは、数字が動くまで最大 15 回押して向きを決める | `capture_app.py` の `turn_at_start`、`test_capture_app.py::test_a_vertical_book_whose_first_pages_all_read_location_1_is_still_read_right_to_left`（F181） |
 | アプリで書名を検索するときは、検索欄に貼り付けて Return を押す | `capture_app.py` の `SEARCH`、`test_capture_app.py::test_a_cover_off_screen_is_searched_for_first`（F174） |
 | アプリで読み終わり画面が出なければ、→ を押してもフッターの位置が動かないことを本の終わりの証拠にする | `capture_app.py` の `capture`・`footer_end`、`test_capture_app.py::test_a_book_that_ends_without_the_sheet_is_ended_when_the_footer_stops_moving`（F170） |
 | アプリのライブラリに戻るのは Close Book ボタンだけ。File > Close や Cmd+W は使わない | `capture_app.py`、`test_capture_app.py::test_a_reader_left_open_is_closed_with_its_close_book_button_never_file_close`（F059） |

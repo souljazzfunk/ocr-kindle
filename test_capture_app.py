@@ -759,7 +759,12 @@ def test_a_vertical_book_opened_at_its_start_with_the_knob_over_the_mark_is_stil
 
 
 class Slider(Knob):
-    """A book whose footer says its position in words ("Location N , P%" on the progress bar) and turns either way."""
+    """A book whose footer says its position in words ("Location N , P%" on the progress bar) and turns either way.
+    Its first `flat` pages past `at` still read Location 1, as the cover, title page and those after it did."""
+
+    def __init__(self, at, last, rtl=True, flat=0):
+        super().__init__(at, last, rtl=rtl)
+        self.flat = flat
 
     def screen(self):
         if not self.chrome:
@@ -767,7 +772,7 @@ class Slider(Knob):
         return ('frontmost=true\nwindow|Kindle|340,173|1370,880\n'
                 'element|AXButton|||Close Book||360,195|40,40\n'
                 'element|AXButton|||Table of Contents||400,195|40,40\n'
-                f'element|AXSlider|||Reading Progress Bar|Location {self.at} , 0%|533,954|980,46\n')
+                f'element|AXSlider|||Reading Progress Bar|Location {max(1, self.at - self.flat)} , 0%|533,954|980,46\n')
 
 
 def test_a_vertical_book_opened_at_its_start_with_its_location_in_words_is_still_read_right_to_left(capsys):
@@ -789,6 +794,21 @@ def test_a_vertical_book_opened_at_its_start_with_its_location_in_words_is_still
     shown = {}
     assert capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock, shown=shown) == ''
     assert 'reading: neither' in capsys.readouterr().out
+
+
+def test_a_vertical_book_whose_first_pages_all_read_location_1_is_still_read_right_to_left(capsys):
+    # 2026-10-16 00:49, 保守とは何だろうか after F180: "reading: neither ← nor → moved the footer on from the start;
+    # numbers on screen: 1", then 3 pages from the title page back to the cover. The cover, title page and the pages
+    # after them all read Location 1, so one press either way moved nothing; ← is pressed on until the footer moves.
+    app = Slider(at=2, last=600, flat=5)
+    shown = {}
+    assert capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock, shown=shown) == ''
+    assert app.at == 1 and shown['reading'].name == 'rtl'
+    assert 'reading: rtl' in capsys.readouterr().out
+    app = Slider(at=2, last=600, rtl=False, flat=5)
+    shown = {}
+    assert capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock, shown=shown) == ''
+    assert app.at <= 2 and shown['reading'].name == 'ltr'
 
 
 def test_a_done_app_book_asked_again_in_recapture_tsv_is_captured_again_in_the_app_only_once(tmp_path, monkeypatch):
