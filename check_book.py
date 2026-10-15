@@ -131,8 +131,13 @@ def check_folder(folder, title=None):
         start, end = captured.get('start'), captured.get('end')
         checks.append(Check('start_position', bool(start), f'the Kindle app began at {start}' if start else
                             'start not recorded', fix=None))
-        checks.append(Check('end_position', bool(end), f'the Kindle app showed {end}' if end else 'end not recorded',
-                            fix=None))
+        # An end read where the capture began is no end (保守とは何だろうか, 2026-10-15 23:40: start "Location 1",
+        # end "Location 1, where → moved the footer no further", one page, published).
+        began = re.match(r'Location (\d+)', start or '')
+        stayed = began and re.match(rf'Location {began.group(1)}\b', end or '')
+        checks.append(Check('end_position', bool(end) and not stayed,
+                            f'the Kindle app showed {end}, where the capture began' if stayed else
+                            f'the Kindle app showed {end}' if end else 'end not recorded', fix=None))
     else:
         first = positions[0] if positions else None
         # A screen shows one page number or less, so page N cannot be reached in fewer than N - 1 screens.

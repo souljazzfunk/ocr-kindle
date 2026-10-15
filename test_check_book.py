@@ -215,6 +215,18 @@ def test_a_kindle_app_capture_passes_start_and_end_on_what_the_app_showed(tmp_pa
     assert checks['end_position'].detail == 'end not recorded'
 
 
+def test_a_kindle_app_capture_that_ended_where_it_began_fails_end_position(tmp_path):
+    # 2026-10-15 23:40, 保守とは何だろうか: start "Location 1", end "Location 1, where → moved the footer no further",
+    # one page, and the checks passed it to Drive. A footer that never left the start is no evidence of the end.
+    folder = book(tmp_path, [BODY], md='# A\n\n' + BODY, numbered=False)
+    (folder / 'capture.json').write_text(json.dumps({'via': 'kindle_app', 'start': 'Location 1',
+                                                     'end': 'Location 1, where → moved the footer no further',
+                                                     'stopped': ''}))
+    checks = by_name(check_folder(folder))
+    assert not checks['end_position'].ok and checks['end_position'].blocking
+    assert 'where the capture began' in checks['end_position'].detail
+
+
 def test_heading_noise_missed_chapters_and_digits_in_the_text_are_caught(tmp_path):
     # How to Write a Lot after the first heading rule: cover words, a photo, a mid-sentence line as headings,
     # chapter numbers and titles left as plain text, and Z for 7 in a chapter reference.
