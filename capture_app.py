@@ -863,14 +863,19 @@ def app_books(listed):
     """The listed books Cloud Reader refused as app-only, or that an earlier app run parked: the same command resumes
     at a book the app did not open (on 2026-10-11 a resume skipped For 91 Days In Tokyo once its record said app_open).
     An app capture the checks refused is captured again here, since the capture job's extension cannot open it, and so
-    is one the extension refused after moving its app pages aside (F169: イスラム飲酒紀行, 2026-10-15, before F167)."""
+    is one the extension refused after moving its app pages aside (F169: イスラム飲酒紀行, 2026-10-15, before F167), and a
+    passed one recapture.tsv asks for again (F179)."""
     def app_only(book):
         failure = book.failure('capture') or {}
         state = book.state()
         again = isinstance(state, books.Parked) and state.stage != 'capture' and \
             (book.record('capture') or {}).get('via') == 'kindle_app'
+        captured = book.record('capture') or {}
+        # A passed app capture stays Done for the capture job; recapture.tsv asks the app for it again (保守とは何だろうか,
+        # 2026-10-15: 1 page passed the checks of the time), and the new capture answers the ask.
+        asked = captured.get('via') == 'kindle_app' and captured.get('at', '') < books.asked(book.asin)
         return capture_book.APP_ONLY in failure.get('checks', []) or failure.get('via') == 'kindle_app' or again or \
-            ('capture_refused' in failure.get('checks', []) and app_pages_aside(book.folder))
+            asked or ('capture_refused' in failure.get('checks', []) and app_pages_aside(book.folder))
     return [book for book in listed if app_only(book)]
 
 
