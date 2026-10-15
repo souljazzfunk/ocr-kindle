@@ -140,6 +140,16 @@ def test_a_contents_park_is_retried_when_proofreading_stops_taking_titles_back(t
     assert book.versions(tmp_path)['touch']['contents_chapters'] != first['touch']['contents_chapters']
 
 
+def test_a_park_on_a_formatting_check_is_retried_when_it_stops_blocking():
+    # 2026-10-15: #142 made check_folder report the formatting checks as warnings, but Snow Crash and three more books
+    # parked on contents_chapters stayed parked: what made it a warning was not among the functions that decide it.
+    import check_book
+    for check in book.TOUCH:
+        [warned] = check_book.as_warnings([check_book.Check(check, False, '')])
+        if not warned.blocking:
+            assert ('check_book.py', 'as_warnings') in book.TOUCH[check], check
+
+
 def test_a_book_in_skip_tsv_is_never_captured_or_converted_even_with_its_folder_left(tmp_path):
     # Laiken, 2026-10-13: "The Real R&B Book は楽譜なので変換しなくていいよ。無理だから". It was listed and had a folder,
     # so every new capture code put it back in line.
