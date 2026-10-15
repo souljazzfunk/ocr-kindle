@@ -21,6 +21,7 @@ from proofread import CODE_BLOCK, DECORATIVE_REF, Book, find_all, load_pages
 PROBE = 'dom-probe.json'
 CAPTURE = 'capture.json'
 POSITIONS = 'positions.json'
+LOCATION_SLACK = 5  # locations before the first numbered screen that the cover and title pages may take
 POSITION = re.compile(r'(?:位置|ページ|Location|Page)\D{0,3}(\d+)\s*(?:/|of)\s*(\d+)')
 DEFAULT_TITLES = re.compile(r'^(kindle-book|[A-Z0-9]{10})$')
 DECORATIVE_HEADING = re.compile(r'(?m)^#+\s*(?:Chapter\s+|Part\s+)?[Z&]+(?:\s.*)?$', re.I)
@@ -77,6 +78,17 @@ def page_positions(folder):
     return sorted(found), False
 
 
+def reached_start(positions):
+    """Whether the first numbered screen is front matter numbered by location before a body that starts at page 1.
+
+    マニャーナの法則 (2026-10-14) opened at location 3 of 2389 and showed page 1 of 246 two screens later; Steve Jobs
+    (2026-10-12) numbered its front matter 3 .. 117 of 11824 and its body from 1 of 568. A location series that begins
+    within LOCATION_SLACK of 1 is the start when a later series in another numbering begins at page 1."""
+    first = positions[0]
+    later = next((p for p in positions if p[2] != first[2]), None)
+    return bool(later) and later[1] == 1 and first[1] - 1 <= first[0] + LOCATION_SLACK
+
+
 def end_tolerance(total):
     """Pages at the end the reader may not number (end matter), or the last turn may skip."""
     return max(2, round(total * 0.02))
@@ -113,7 +125,7 @@ def check_folder(folder, title=None):
     # A screen shows one page number or less, so page N cannot be reached in fewer than N - 1 screens.
     # No numbered screen is no evidence of the start: Steve Jobs (2026-10-12) was published from 52 of its pages
     # because a missing start and end passed.
-    late = not first or first[1] - 1 > first[0]
+    late = not first or (first[1] - 1 > first[0] and not reached_start(positions))
     checks.append(Check('start_position', not late,
                         f'first numbered screen {first[0] + 1} shows page {first[1]} of {first[2]}' if first else 'start not recorded',
                         fix=None))
