@@ -29,7 +29,7 @@ import ax
 import capture_book
 import book as books
 import check_book
-from channel import set_aside
+from channel import awake, set_aside
 
 HERE = Path(__file__).resolve().parent
 OK_ENV = 'KINDLE_APP_OK'
@@ -825,8 +825,8 @@ def capture_pages(asin, title, folder, open_=open_book, start=go_to_start, take=
 
 
 def screen_locked(run=subprocess.run):
-    """Whether the Mac's screen is locked: then the app shows only "Kindle, Kindle, ..." to the Accessibility API and
-    every book would be parked as app_open with its pages moved aside (F171, 2026-10-15 17:45 JST)."""
+    """Whether the console session says its screen is locked. macOS says so while the display is asleep, too: then the
+    app shows only "Kindle, Kindle, ..." to the Accessibility API and every book would be parked as app_open (F172)."""
     try:
         done = run(['ioreg', '-n', 'Root', '-d1', '-a'], capture_output=True)
         users = plistlib.loads(done.stdout).get('IOConsoleUsers', []) if done.returncode == 0 else []
@@ -835,7 +835,15 @@ def screen_locked(run=subprocess.run):
     return any(u.get('CGSSessionScreenIsLocked') for u in users)
 
 
-def main(argv=None, env=os.environ, capture=capture_pages, locked=screen_locked):
+def wake_display(run=subprocess.run):
+    """Turn the display on as a keypress would (caffeinate -u), and give the session a moment to say it is unlocked."""
+    try:
+        run(['caffeinate', '-u', '-t', '2'])
+    except OSError:
+        pass  # not a Mac
+
+
+def main(argv=None, env=os.environ, capture=capture_pages, locked=screen_locked, wake=wake_display):
     parser = argparse.ArgumentParser(description='Capture the Kindle-app-only books of a list from the Kindle app')
     parser.add_argument('list', type=Path, help='ASIN<TAB>title per line, a list the capture job reads')
     parser.add_argument('--root', type=Path, default=books.ROOT, help='where the book folders live')
@@ -844,9 +852,16 @@ def main(argv=None, env=os.environ, capture=capture_pages, locked=screen_locked)
     args = parser.parse_args(argv)
     if env.get(OK_ENV) != '1':
         sys.exit(f'Not starting: the Kindle app is used only when Laiken asks for it; run with {OK_ENV}=1.')
-    if locked():
-        sys.exit('Not starting: the Mac\'s screen is locked, so the Kindle app cannot be read or turned. '
-                 'Unlock it, then run the same command.')
+    with awake():  # the display stays on while the app turns the pages (F145, F172)
+        if locked():
+            wake()
+        if locked():
+            sys.exit('Not starting: the display is on but the Mac still shows its lock screen, so the Kindle app cannot '
+                     'be read or turned. Unlock it, then run the same command.')
+        capture_list(args, capture)
+
+
+def capture_list(args, capture):
     if args.probe:
         titles = {asin: title for asin, title, _ in books.read_tsv(args.list)}
         folder = probe(args.probe, titles.get(args.probe, args.probe), args.downloads / 'kindle-probe' / args.probe)
