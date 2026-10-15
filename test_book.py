@@ -183,3 +183,26 @@ def test_a_parked_book_listed_in_recapture_tsv_after_its_failure_is_captured_onc
     assert one.state(current) == book.Ready('convert')
     one.fail('convert', {'checks': ['contents_chapters'], 'retry': False, 'version': 'v1'}, upstream=captured['at'])
     assert isinstance(one.state(current), book.Parked)
+
+
+def test_a_done_book_listed_in_reconvert_tsv_after_its_conversion_is_converted_and_published_once_more(tmp_path,
+                                                                                                         monkeypatch):
+    # A converter fix does not redo a published book (F036). イスラム飲酒紀行 went to Drive with 168 of its 254 pages
+    # reduced to an image note (F182); a line in reconvert.tsv converts it again from the same pages, once.
+    (tmp_path / 'books.tsv').write_text('B1\tOne\n')
+    [one] = book.Library(tmp_path / 'kindle').add([tmp_path / 'books.tsv'])
+    current = {'capture': 'c1', 'convert': 'v1', 'publish': 'v1'}
+    captured = one.succeed('capture', {'pages': str(one.folder / 'pages'), 'attempt': 1, 'version': 'c1'})
+    converted = one.succeed('convert', {'version': 'v1'}, upstream=captured['at'])
+    one.succeed('publish', {'version': 'v1'}, upstream=converted['at'])
+    asks = tmp_path / 'reconvert.tsv'
+    monkeypatch.setattr(book, 'RECONVERT', asks)
+    asks.write_text('# asin\tasked at\treason\nB1\t2000-01-01T00:00:00\tan ask older than the conversion\n')
+    assert one.state(current) == book.Done()
+    asks.write_text(f'B1\t{converted["at"]}Z\tF182: pages reduced to an image note\n')
+    assert one.state(current) == book.Ready('convert')
+    # The new conversion answers the ask, and publishing it again ends at Done.
+    converted = one.succeed('convert', {'version': 'v1'}, upstream=captured['at'])
+    assert one.state(current) == book.Ready('publish')
+    one.succeed('publish', {'version': 'v1'}, upstream=converted['at'])
+    assert one.state(current) == book.Done()

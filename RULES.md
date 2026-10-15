@@ -75,6 +75,7 @@
 | 取り込めない本（アプリ専用・サンプル）は、その本だけを失敗にして次へ進む | `book.py` の `RULES`、`test_kc_run.py::test_kindle_app_only_parks_only_that_book_and_new_extension_code_does_not_retry_it`、`test_check_book.py::test_a_book_the_reader_opens_as_its_sample_fails_as_sample_only`（F033 F066） |
 | 止まった本を取り直すときは recapture.tsv に書き、Mac の本のフォルダを手で直さない | `recapture.tsv`、`book.py` の `asked`・`Book.state`、`test_book.py::test_a_parked_book_listed_in_recapture_tsv_after_its_failure_is_captured_once_more`（F152） |
 | 通ったアプリの本を取り直すときも recapture.tsv に書く。取り込みの仕事には Done のまま、capture_app.py が 1 回だけ取り直す | `capture_app.py` の `app_books`、`test_capture_app.py::test_a_done_app_book_asked_again_in_recapture_tsv_is_captured_again_in_the_app_only_once`（F179） |
+| 変換の不具合を直したあと、公開済みの本を変換し直すときは reconvert.tsv に書く。同じページから 1 回だけ変換し直し、Drive の版を差し替える | `reconvert.tsv`、`book.py` の `asked`・`Book.state`、`test_book.py::test_a_done_book_listed_in_reconvert_tsv_after_its_conversion_is_converted_and_published_once_more`（F182） |
 | 取り込まない本 (楽譜集など) は skip.tsv に書き、一覧からもフォルダからも外す | `skip.tsv`、`book.py` の `Library.add`、`test_book.py::test_a_book_in_skip_tsv_is_never_captured_or_converted_even_with_its_folder_left`（F142） |
 | 落ちた本だけを止め、一覧は人に聞かずに次の本へ進む | `book.py` の `RULES`、`kc_run.py`、`test_kc_run.py::test_a_book_that_fails_its_checks_is_parked_and_the_list_goes_on`（F005 F020） |
 | どの本でも落ちる失敗は、その仕事だけを止めて自分で再開する | `book.py` の `record_failure`、`test_kc_run.py::test_an_unreachable_extension_pauses_captures_for_every_book_and_resumes_by_itself`（F014） |
@@ -99,6 +100,7 @@
 | コードの本でコードを見出し・箇条書き・地の文にしない | `layout.py`、`test_layout.py::test_code_is_fenced_line_by_line_and_never_a_title`、`test_check_book.py::test_a_code_book_without_code_blocks_is_caught_and_its_pages_read_again`（F044） |
 | 配置がコードを段落や箇条書きに残したら、校正がコードブロックに入れ、つながったプロンプトを 1 行ずつに分ける | `proofread.py` の `loose_code`、`book.py` の `TOUCH`、`test_proofread.py::test_code_left_as_paragraphs_and_bullets_is_fenced_and_its_joined_prompts_split`（F141） |
 | Vision のページの構造を、位置と大きさだけで当て推量しない | `layout.py`、`test_layout.py::test_titles_quotes_lists_and_art_take_their_place`（F016 F024） |
+| 図の中の短い語かどうかは、日本語の字を 2 字に数えた幅で決める。2 段組の本文を図の印にしない | `layout.py` の `width`、`test_layout.py::test_a_two_column_japanese_page_keeps_its_words_and_scattered_short_words_are_still_a_picture`（F182） |
 | 同じ読み直しを修正として繰り返さない | `layout.py`、`test_layout.py::test_layout_is_asked_once_per_page_in_batches`（F021 F024） |
 | 縦書きの日本語は Live Text で読む。Vision が 1 行も返さないページを空で通さない | `img2txt.py`、`test_check_book.py::test_a_page_vision_finds_no_lines_on_is_read_by_live_text`（F068） |
 | Vision が空白だけで読んだ行は捨て、ページの変換を止めない | `img2txt.py` の `vision_transcribe`、`test_img2txt.py::test_a_blank_line_vision_reads_does_not_crash_the_page`（F136） |

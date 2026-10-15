@@ -991,3 +991,17 @@ def test_pages_live_text_read_before_its_reading_was_kept_are_read_again(tmp_pat
     (tmp_path / 'kept.txt').rename(tmp_path / f'page_0001{img2txt.LIVE}')
     assert (tmp_path / f'page_0001{img2txt.LIVE}').read_text(encoding='utf-8') == 'read page_0001'
     assert (tmp_path / f'page_0002{img2txt.LIVE}').read_text(encoding='utf-8') == 'kept'
+
+
+def test_a_two_column_japanese_page_keeps_its_words_and_scattered_short_words_are_still_a_picture():
+    # イスラム飲酒紀行 page_0100 (2026-10-16): 34 lines of running text in two columns, each under 30 characters but
+    # a full line wide, and no figure from the layout; the page came out as one image note and its words were lost.
+    # 168 of its 254 pages, 108 of 英語独習法's 184 and 370 of アジャイルデータモデリング's 654 went the same way.
+    words = ['ハーンでのアリーの家で彼はたんまり飲酒の写真を撮っていた', 'の敏感な秘密察の男に嗅ぎつけられていたかもしれない。',
+             'にびゅうびゅうと吹かれながらひたすら待つ。氷雨が強くなり、', 'カスピ海は黒っぽく濁り、荒波が立って、東京人のイメージ']
+    boxes = page(*[(0.093 if i < 17 else 0.520, 0.099 + (i % 17) * 0.044, 0.031, words[i % 4]) for i in range(34)])
+    text = page_markdown(boxes, {'titles': [], 'quotes': [], 'figures': [], 'art': [], 'code': []})
+    assert '![' not in text and text.count('カスピ海は黒っぽく濁り') == 8
+    # AI for Educators' infographic, which the layout missed, is still one note: short labels scattered on a page.
+    labels = page(*[(0.1 + 0.25 * (i % 4), 0.1 + 0.05 * i, 0.02, f'Idea {i}') for i in range(16)])
+    assert page_markdown(labels, {}) == '![Figure]()'

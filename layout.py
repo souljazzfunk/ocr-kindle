@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -1206,6 +1207,12 @@ if __name__ == '__main__':
     main()
 
 
+def width(text):
+    """A line's width in Latin letters: a Japanese character takes two. イスラム飲酒紀行's lines of 26 to 28 characters fill
+    their column, and counted as letters they read as the scattered words of a picture (F182)."""
+    return sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in text)
+
+
 def page_markdown(boxes, page, chapters=()):
     """A page's Markdown from Vision's line boxes (sorted by top, as numbered for Gemini) and Gemini's layout.
 
@@ -1235,7 +1242,7 @@ def page_markdown(boxes, page, chapters=()):
             member.update((i, lines[0]) for i in lines)
     # A title right above a figure's text is the figure's own (AI for Educators: the infographic's "30 WAYS AI CAN
     # SUPPORT TEACHING AND LEARNING" came back as the chapter title again), so it joins the figure's note.
-    short = [i for i in range(n) if i not in art | code and i not in levels and len(texts[i]) < BODY_LINE_CHARS]
+    short = [i for i in range(n) if i not in art | code and i not in levels and width(texts[i]) < BODY_LINE_CHARS]
     if not member and len(short) >= PICTURE_PIECES and sum(len(texts[i]) for i in short) >= FIGURE_PAGE * sum(
             len(texts[i]) for i in range(n) if i not in art):
         # Gemini can miss a page that is a picture full of words (AI for Educators' infographic came back as six
