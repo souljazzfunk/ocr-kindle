@@ -22,7 +22,7 @@ def write_list(tmp_path, app_only=('B2', 'B3')):
 
 def run(books, capture, *extra):
     return capture_app.main([str(books), '--root', str(books.parent / 'kindle'), *extra], env={'KINDLE_APP_OK': '1'},
-                            capture=capture, locked=lambda: False)
+                            capture=capture, locked=lambda: False, wake=lambda: None)
 
 
 def test_it_will_not_start_without_laikens_word(tmp_path):
@@ -91,15 +91,55 @@ def test_a_book_the_app_does_not_open_is_parked_the_run_goes_on_and_the_same_com
     assert seen == ['For 91 Days In Tokyo']
 
 
+def test_a_dark_display_is_woken_and_the_run_goes_on(tmp_path):
+    # 2026-10-15 17:41 JST: the display had been off since 14:20, macOS marked the session locked, and the app showed
+    # only "Kindle, Kindle, ..." so all five books were parked as app_open. There was no password lock (F172).
+    books, library = write_list(tmp_path)
+    dark, seen = [True], []
+    capture_app.main([str(books), '--root', str(tmp_path / 'kindle')], env={'KINDLE_APP_OK': '1'},
+                     capture=fake_app(seen), locked=lambda: dark[0], wake=lambda: dark.clear() or dark.append(False))
+    assert seen == ['For 91 Days In Tokyo', 'Japan Travel Planner']
+
+
 def test_a_locked_screen_stops_the_run_before_any_book_is_opened_or_parked(tmp_path):
     books, library = write_list(tmp_path)
-    # 2026-10-15 17:45 JST: with the Mac's screen locked the app showed only "Kindle, Kindle, ...", and the run parked
-    # all five books as app_open and moved their pages aside (F171).
+    woken = []
     with pytest.raises(SystemExit) as stop:
         capture_app.main([str(books), '--root', str(tmp_path / 'kindle')], env={'KINDLE_APP_OK': '1'},
-                         capture=lambda *a: pytest.fail('drove a locked screen'), locked=lambda: True)
-    assert 'locked' in str(stop.value.code)
+                         capture=lambda *a: pytest.fail('drove a locked screen'), locked=lambda: True,
+                         wake=lambda: woken.append(1))
+    assert woken == [1] and 'lock screen' in str(stop.value.code)
     assert library.book('B2').failure('capture')['checks'] == ['kindle_app_only']
+
+
+def test_the_display_is_kept_awake_while_the_app_turns_the_pages_and_let_go_after(tmp_path, monkeypatch):
+    # 2026-10-15: nothing touched the Mac from 14:20 JST, the display slept and the Mac locked itself, and the 17:41 run
+    # found no Kindle window for any book (F172). The extension's capture already held caffeinate (F145); the app's did not.
+    import channel
+    held = []
+
+    class Keeper:
+        def __init__(self, args):
+            held.append(['on', args])
+
+        def terminate(self):
+            held.append(['off'])
+
+        def wait(self):
+            pass
+
+    monkeypatch.setattr(channel.shutil, 'which', lambda name: '/usr/bin/' + name)
+    monkeypatch.setattr(channel.subprocess, 'Popen', Keeper)
+    books, _ = write_list(tmp_path)
+    seen = []
+
+    def capture(asin, title, folder):
+        held.append(['page', title])
+        return fake_app(seen)(asin, title, folder)
+
+    run(books, capture)
+    assert held == [['on', ['caffeinate', '-d', '-i']], ['page', 'For 91 Days In Tokyo'],
+                    ['page', 'Japan Travel Planner'], ['off']]
 
 
 def test_the_lock_is_read_from_the_console_session(tmp_path):
