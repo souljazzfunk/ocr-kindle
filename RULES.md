@@ -72,6 +72,7 @@
 | 同じ本を取り直すのは、取り込みが使えないと分かったときの 1 回だけ | `book.py` の `RULES`、`test_kc_run.py::test_an_unusable_capture_is_captured_once_more_then_the_book_is_parked`、`test_kc_run.py::test_a_stalled_capture_is_tried_once_more_then_parked`（F031） |
 | 取り込めない本（アプリ専用・サンプル）は、その本だけを失敗にして次へ進む | `book.py` の `RULES`、`test_kc_run.py::test_kindle_app_only_parks_only_that_book_and_new_extension_code_does_not_retry_it`、`test_check_book.py::test_a_book_the_reader_opens_as_its_sample_fails_as_sample_only`（F033 F066） |
 | 止まった本を取り直すときは recapture.tsv に書き、Mac の本のフォルダを手で直さない | `recapture.tsv`、`book.py` の `asked`・`Book.state`、`test_book.py::test_a_parked_book_listed_in_recapture_tsv_after_its_failure_is_captured_once_more`（F152） |
+| 通ったアプリの本を取り直すときも recapture.tsv に書く。取り込みの仕事には Done のまま、capture_app.py が 1 回だけ取り直す | `capture_app.py` の `app_books`、`test_capture_app.py::test_a_done_app_book_asked_again_in_recapture_tsv_is_captured_again_in_the_app_only_once`（F179） |
 | 取り込まない本 (楽譜集など) は skip.tsv に書き、一覧からもフォルダからも外す | `skip.tsv`、`book.py` の `Library.add`、`test_book.py::test_a_book_in_skip_tsv_is_never_captured_or_converted_even_with_its_folder_left`（F142） |
 | 落ちた本だけを止め、一覧は人に聞かずに次の本へ進む | `book.py` の `RULES`、`kc_run.py`、`test_kc_run.py::test_a_book_that_fails_its_checks_is_parked_and_the_list_goes_on`（F005 F020） |
 | どの本でも落ちる失敗は、その仕事だけを止めて自分で再開する | `book.py` の `record_failure`、`test_kc_run.py::test_an_unreachable_extension_pauses_captures_for_every_book_and_resumes_by_itself`（F014） |

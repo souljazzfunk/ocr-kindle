@@ -756,3 +756,30 @@ def test_a_vertical_book_opened_at_its_start_with_the_knob_over_the_mark_is_stil
     shown = {}
     assert capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock, shown=shown) == ''
     assert app.at == 1 and shown['reading'].name == 'ltr' and shown['reading'].pick == 0
+
+
+def test_a_done_app_book_asked_again_in_recapture_tsv_is_captured_again_in_the_app_only_once(tmp_path, monkeypatch):
+    # 保守とは何だろうか (2026-10-15): the app captured 1 page, the checks of the time passed it and it went to Drive.
+    # A passed book is not redone when the checks change (F036), so Laiken's ask goes through recapture.tsv; the
+    # capture job's extension cannot open an app-only book, so the book stays Done for it and the app captures it.
+    books, library = write_list(tmp_path, app_only=())
+    tokyo = library.book('B2')
+    pages = tokyo.folder / 'pages'
+    pages.mkdir()
+    (pages / 'page_0001.png').write_bytes(b'')
+    current = book.versions()
+    upstream = None
+    for stage, extra in (('capture', {'pages': str(pages), 'title': 'For 91 Days In Tokyo', 'attempt': 1,
+                                      'via': 'kindle_app'}), ('convert', {}), ('publish', {'drive': 'tokyo.md'})):
+        upstream = tokyo.succeed(stage, {**extra, 'version': current[stage]}, upstream=upstream)['at']
+    asks = tmp_path / 'recapture.tsv'
+    monkeypatch.setattr(book, 'RECAPTURE', asks)
+    asks.write_text(f'B2\t{book.now_id()}\tthe app captured 1 page\n')
+    assert isinstance(tokyo.state(), book.Done)  # the capture job leaves it to the app
+    seen = []
+    run(books, fake_app(seen))
+    assert seen == ['For 91 Days In Tokyo']
+    assert tokyo.state() == book.Ready('convert') and tokyo.record('capture')['attempt'] == 2
+    assert [p.name for p in tokyo.folder.glob('pages (before *)')]
+    run(books, fake_app(seen))
+    assert seen == ['For 91 Days In Tokyo']  # the ask is answered by the new capture
