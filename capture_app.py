@@ -27,6 +27,8 @@ from pathlib import Path
 import ax
 import capture_book
 import book as books
+import check_book
+from channel import set_aside
 
 HERE = Path(__file__).resolve().parent
 OK_ENV = 'KINDLE_APP_OK'
@@ -586,10 +588,11 @@ def page_back(script=osascript, sleep=time.sleep, clock=time.monotonic, batch=20
     return f'paged back {presses} times'
 
 
-def go_to_start(script=osascript, sleep=time.sleep, clock=time.monotonic, scroll=None, press=None):
+def go_to_start(script=osascript, sleep=time.sleep, clock=time.monotonic, scroll=None, press=None, shown=None):
     """Back to the start of the open book: close the details sheet, show the toolbar, open the Table of Contents and
     press its topmost entry, else page back with ← until the start; read the footer's "Location N of M", then hide
-    the toolbar again. Returns '' or why it could not. Written from the probes of 2026-10-11 17:56 and 19:20.
+    the toolbar again. Returns '' or why it could not, and puts the footer read at the start into shown['start'].
+    Written from the probes of 2026-10-11 17:56 and 19:20.
     The Reading Progress Bar is not used: writing its value, clicking its track and dragging its knob all left the
     book where it was (runs of 2026-10-11 19:02 and 19:11)."""
     began = clock()
@@ -616,6 +619,8 @@ def go_to_start(script=osascript, sleep=time.sleep, clock=time.monotonic, scroll
         return (f'could not go to the start (tried: {", ".join(tried)}, footer: '
                 f'{"Location %d of %d" % where if where else "no location; numbers on screen: " + numbers_shown(found)})')
     print(f'start: Location {where[0]} after {clock() - began:.0f} s: {", ".join(tried) or "not needed"}', flush=True)
+    if shown is not None:
+        shown['start'] = f'Location {where[0]}' + (f' of {where[1]}' if where[1] else '')
     bring_front(script, sleep)
     if chrome_shown(hide_chrome(script, sleep, clock)):
         return 'the toolbar stayed over the page after a click to hide it'
@@ -636,14 +641,15 @@ def capture(folder, script_path=HERE / 'kindle2img.applescript', run=capture_boo
             sleep=time.sleep):
     """Page through the book with kindle2img.applescript. When the end-of-book sheet is up afterwards, the last image
     is that sheet, not a page, so it is dropped, and the sheet is closed with Escape (never Enter or space: the
-    focus sits on the rating's stars)."""
+    focus sits on the rating's stars). Returns the pages and whether the sheet was up: the evidence of the end."""
     run(['osascript', str(script_path), 'ltr', str(folder)])
     pages = sorted(folder.glob('page_*.png'))
-    if pages and end_sheet_shown(elements(script)):
+    ended = bool(pages) and end_sheet_shown(elements(script))
+    if ended:
         pages.pop().unlink()
         dismiss_overlays(script, sleep)
         print(f'end: the end-of-book sheet was closed and its image dropped; {len(pages)} pages', flush=True)
-    return pages
+    return pages, ended
 
 
 # What the app's window holds, read through System Events: role, title, description and value of every element, plus
@@ -742,27 +748,37 @@ def probe(asin, title, folder, script=osascript, run=capture_book.run, sleep=tim
 
 def app_books(listed):
     """The listed books Cloud Reader refused as app-only, or that an earlier app run parked: the same command resumes
-    at a book the app did not open (on 2026-10-11 a resume skipped For 91 Days In Tokyo once its record said app_open)."""
+    at a book the app did not open (on 2026-10-11 a resume skipped For 91 Days In Tokyo once its record said app_open).
+    An app capture the checks refused is captured again here, since the capture job's extension cannot open it."""
     def app_only(book):
         failure = book.failure('capture') or {}
-        return capture_book.APP_ONLY in failure.get('checks', []) or failure.get('via') == 'kindle_app'
+        state = book.state()
+        again = isinstance(state, books.Parked) and state.stage != 'capture' and \
+            (book.record('capture') or {}).get('via') == 'kindle_app'
+        return capture_book.APP_ONLY in failure.get('checks', []) or failure.get('via') == 'kindle_app' or again
     return [book for book in listed if app_only(book)]
 
 
 def capture_pages(asin, title, folder, open_=open_book, start=go_to_start, take=capture):
-    """Open one book in the app, page it to its start and capture it into folder: (folder, None), or (None, the failure)."""
+    """Open one book in the app, page it to its start and capture it into folder: (folder, None), or (None, the failure).
+    The app writes no positions.json, so capture.json keeps what it showed at the start and the end for check_book
+    (F167: three app captures of 2026-10-15 failed "start not recorded" and "end not recorded")."""
     if list(folder.glob('page_*.png')):
         # kindle2img.applescript numbers on from the highest page, so pages already here would be captured twice.
         return None, {'asin': asin, 'blocking_failures': ['app_folder'], 'warnings': [],
                       'error': f'{folder} already holds page images; move them away to capture this book again'}
-    for step in (lambda: open_(asin, title), start):
+    shown = {}
+    for step in (lambda: open_(asin, title), lambda: start(shown=shown)):
         problem = step()
         if problem:
             return None, {'asin': asin, 'blocking_failures': ['app_open'], 'warnings': [], 'error': problem}
     folder.mkdir(parents=True, exist_ok=True)
-    pages = take(folder)
+    pages, ended = take(folder)
     if not pages:
         return None, {'asin': asin, 'blocking_failures': ['app_capture'], 'warnings': [], 'error': 'no page was captured'}
+    (folder / check_book.CAPTURE).write_text(json.dumps({'via': 'kindle_app', 'start': shown.get('start', ''),
+                                                        'end': 'the end-of-book sheet' if ended else '', 'stopped': ''}),
+                                            encoding='utf-8')
     return folder, None
 
 
@@ -788,18 +804,21 @@ def main(argv=None, env=os.environ, capture=capture_pages):
     current = books.versions()
     for book in todo:
         title = book.title or book.asin
-        print(f'=== {title} ({book.asin}) from the Kindle app', flush=True)
+        attempt = book.attempt() + 1 if book.record('capture') else 1
+        print(f'=== {title} ({book.asin}) from the Kindle app' + (' again' if attempt > 1 else ''), flush=True)
+        if attempt > 1:
+            set_aside(book.folder / 'pages')  # the refused capture's pages stay beside the new ones
         try:
             folder, failure = capture(book.asin, title, book.folder / 'pages')
         except Exception as e:  # recorded like any other failure, so the next run says why
             folder, failure = None, {'blocking_failures': ['crash'], 'error': str(e)}
         if failure:
-            book.fail('capture', {'checks': failure['blocking_failures'], 'error': failure.get('error'), 'attempt': 1,
+            book.fail('capture', {'checks': failure['blocking_failures'], 'error': failure.get('error'), 'attempt': attempt,
                                   'retry': False, 'via': 'kindle_app', 'version': current['capture']})
             print(f'\nStopped: {title}: {", ".join(failure["blocking_failures"])}: {failure.get("error") or ""}. '
                   'Fix the cause, then run the same command to resume.', flush=True)
             sys.exit(2)
-        book.succeed('capture', {'pages': str(folder), 'title': title, 'attempt': 1, 'via': 'kindle_app',
+        book.succeed('capture', {'pages': str(folder), 'title': title, 'attempt': attempt, 'via': 'kindle_app',
                                  'version': current['capture']})
         print(f'=== captured {title}; the convert job converts it', flush=True)
     print(f'\nAll {len(todo)} Kindle-app-only books captured.')

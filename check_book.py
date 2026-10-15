@@ -123,20 +123,30 @@ def check_folder(folder, title=None):
                         fix=['img2txt.py', str(folder)] if missing else None))
 
     positions, complete = page_positions(folder)
-    first = positions[0] if positions else None
-    # A screen shows one page number or less, so page N cannot be reached in fewer than N - 1 screens.
-    # No numbered screen is no evidence of the start: Steve Jobs (2026-10-12) was published from 52 of its pages
-    # because a missing start and end passed.
-    late = not first or (first[1] - 1 > first[0] and not reached_start(positions))
-    checks.append(Check('start_position', not late,
-                        f'first numbered screen {first[0] + 1} shows page {first[1]} of {first[2]}' if first else 'start not recorded',
-                        fix=None))
-    last = positions[-1] if complete and positions else None
-    short = not last or last[1] < last[2] - end_tolerance(last[2])
-    checks.append(Check('end_position', not short,
-                        f'last page {last[1]} of {last[2]}' if last else 'end not recorded', fix=None))
     capture = folder / CAPTURE
-    stopped = json.loads(capture.read_text(encoding='utf-8')).get('stopped') if capture.exists() else ''
+    captured = json.loads(capture.read_text(encoding='utf-8')) if capture.exists() else {}
+    if not complete and captured.get('via') == 'kindle_app':
+        # The Kindle app numbers no screen it captures; capture_app.py keeps the footer it read at the start and
+        # whether the end-of-book sheet came up (F167).
+        start, end = captured.get('start'), captured.get('end')
+        checks.append(Check('start_position', bool(start), f'the Kindle app began at {start}' if start else
+                            'start not recorded', fix=None))
+        checks.append(Check('end_position', bool(end), f'the Kindle app showed {end}' if end else 'end not recorded',
+                            fix=None))
+    else:
+        first = positions[0] if positions else None
+        # A screen shows one page number or less, so page N cannot be reached in fewer than N - 1 screens.
+        # No numbered screen is no evidence of the start: Steve Jobs (2026-10-12) was published from 52 of its pages
+        # because a missing start and end passed.
+        late = not first or (first[1] - 1 > first[0] and not reached_start(positions))
+        checks.append(Check('start_position', not late,
+                            f'first numbered screen {first[0] + 1} shows page {first[1]} of {first[2]}' if first else 'start not recorded',
+                            fix=None))
+        last = positions[-1] if complete and positions else None
+        short = not last or last[1] < last[2] - end_tolerance(last[2])
+        checks.append(Check('end_position', not short,
+                            f'last page {last[1]} of {last[2]}' if last else 'end not recorded', fix=None))
+    stopped = captured.get('stopped') or ''
     checks.append(Check('capture_stop', not stopped, f'a turn cap ended the capture: {stopped}' if stopped
                         else 'the capture ran to the end of the book', fix=None))
     checks.append(Check('positions', complete, f'{POSITIONS} ' + ('present' if complete else
