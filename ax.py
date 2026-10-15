@@ -5,6 +5,7 @@ The AppleScript dump (entire contents of window 1, then eight properties of ever
 114 s for 234 lines on 2026-10-11 20:02: each property read is an Apple event the app answers slowly, and the open
 of a book read the tree several times, so a book took 3-4 minutes to open (Laiken, 19:59: far too long). In-process
 AX calls answer in milliseconds."""
+import math
 import sys
 
 BUNDLE = 'com.amazon.Lassen'
@@ -80,6 +81,8 @@ def dump(bundle=BUNDLE, api=api, max_depth=60):
         if val is None:
             return ''
         parts = (val.x, val.y) if kind == POINT else (val.width, val.height)
+        if not all(math.isfinite(p) for p in parts):
+            return ''  # inf mid window animation (2026-10-15 19:14); read as no position, like a missing one
         return ','.join(str(int(round(p))) for p in parts)
 
     err, windows = attr(root, 'AXWindows')

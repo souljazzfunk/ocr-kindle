@@ -78,6 +78,18 @@ def test_the_dump_walks_the_windows_depth_first_in_the_lines_the_parser_reads():
     assert capture_app.elements(lambda s: (0, ax.dump(api=fake_api({'AXWindows': [window]}, active=False)), ''))
 
 
+def test_a_position_the_api_gives_as_infinity_is_left_blank_and_the_read_goes_on():
+    # 2026-10-15 19:14: mid window animation the API gave a position of inf, and int(round(inf)) stopped the run.
+    moving = {'AXRole': 'AXButton', 'AXDescription': 'Close Book', 'AXPosition': Pt(float('inf'), 10.0),
+              'AXSize': Sz(float('nan'), 20.0)}
+    window = {'AXTitle': 'Kindle', 'AXPosition': Pt(-float('inf'), 0), 'AXSize': Sz(1024, 843), 'AXChildren': [moving]}
+    lines = ax.dump(api=fake_api({'AXWindows': [window]})).splitlines()
+    assert lines[2] == 'window|Kindle||1024,843'
+    assert lines[3] == 'element|AXButton|||Close Book|||'
+    found = capture_app.elements(lambda s: (0, '\n'.join(lines) + '\n', ''))
+    assert found[0]['description'] == 'Close Book'
+
+
 def test_a_refused_api_is_named_and_a_missing_one_returns_nothing():
     with pytest.raises(RuntimeError, match='Accessibility permission'):
         ax.dump(api=fake_api({}))
