@@ -634,6 +634,36 @@ def learn_reading(script, sleep, clock, found):
     return LTR, found
 
 
+def flipped(reading):
+    return Reading('rtl' if reading.name == 'ltr' else 'ltr', reading.next, reading.back, reading.pick)
+
+
+def turn_at_start(script, sleep, clock, reading):
+    """At the start, which key turns the book on: press reading's next once and read the footer, then the other key
+    when it did not move on (保守とは何だろうか, 2026-10-16 00:23: a footer of "Location 1" in words never asked
+    learn_reading, so the vertical book was paged with → from Location 1 and ended there, 2 pages). The press that
+    turned the book on is undone. Returns the reading, or the one given and a line saying neither key moved."""
+    for r in (reading, flipped(reading)):
+        before = location_of(show_chrome(script, sleep, clock), r)
+        bring_front(script, sleep)
+        hide_chrome(script, sleep, clock)
+        script(key(r.next))
+        sleep(0.5)
+        found = show_chrome(script, sleep, clock)
+        after = location_of(found, r)
+        if before is not None and after is not None and after[0] > before[0]:
+            bring_front(script, sleep)
+            hide_chrome(script, sleep, clock)
+            script(key(r.back))
+            sleep(0.5)
+            show_chrome(script, sleep, clock)
+            print(f'reading: {r.name}, {"→" if r.next == 124 else "←"} turned the book on from its start', flush=True)
+            return r
+    print(f'reading: neither ← nor → moved the footer on from the start; numbers on screen: {numbers_shown(found)}',
+          flush=True)
+    return reading
+
+
 def page_back(script=osascript, sleep=time.sleep, clock=time.monotonic, batch=20, cap=3000, reading=LTR):
     """Press ← until the footer reads Location 1 or stops falling. Laiken, 2026-10-11 19:27: when no reader tool
     works, page back one screen at a time rather than stop. The toolbar is hidden before each batch so the keys
@@ -673,9 +703,10 @@ def go_to_start(script=osascript, sleep=time.sleep, clock=time.monotonic, scroll
     found = show_chrome(script, sleep, clock, tries=RENDER_TRIES)
     if not chrome_shown(found):
         return 'the reader shows no toolbar after clicks on the page; it shows: ' + describe(found)
-    reading = LTR
+    reading, learned = LTR, False
     if footer_text(found) is None and knob_row(found):
         reading, found = learn_reading(script, sleep, clock, found)
+        learned = reading is not LTR
     where = location_of(found, reading)
     tried = []
     for move in (toc_first, page_back):
@@ -693,6 +724,9 @@ def go_to_start(script=osascript, sleep=time.sleep, clock=time.monotonic, scroll
         return (f'could not go to the start (tried: {", ".join(tried)}, footer: '
                 f'{"Location %d of %d" % where if where else "no location; numbers on screen: " + numbers_shown(found)})')
     print(f'start: Location {where[0]} after {clock() - began:.0f} s: {", ".join(tried) or "not needed"}', flush=True)
+    if not learned and not where[1]:
+        # A footer with its total ("Location 1 of 2594") is a horizontal book's, which → turns (probes of 2026-10-11).
+        reading = turn_at_start(script, sleep, clock, reading)
     if shown is not None:
         shown['start'] = f'Location {where[0]}' + (f' of {where[1]}' if where[1] else '')
         shown['reading'] = reading
