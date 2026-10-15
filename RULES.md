@@ -11,6 +11,7 @@
 | Kindle for Mac アプリは、ユーザー本人が頼んだときだけ使う | `.claude/hooks/guard_capture.py`、`test_guard_capture.py::test_kindle_app_needs_laikens_ask`、`test_capture_app.py::test_it_will_not_start_without_laikens_word`（F002 F015） |
 | アプリで取り込むのは `kindle_app_only` の本だけ。取り込んだら変換の仕事に渡す | `capture_app.py`、`test_capture_app.py::test_only_the_app_only_books_are_captured_and_handed_to_the_convert_job`（F063）。経緯は `docs/kindle-app.md` |
 | アプリの 1 回の実行で取り込むのは、渡した一覧の本だけ | `capture_app.py` の `main`、`test_capture_app.py::test_only_the_books_of_the_given_list_are_captured`（F163） |
+| アプリで開かない本はその本だけを止めて次の本へ進み、最後に終了コード 2 で知らせる | `capture_app.py` の `main`、`test_capture_app.py::test_a_book_the_app_does_not_open_is_parked_the_run_goes_on_and_the_same_command_resumes_it`（F168） |
 | アプリで開かない本は、タブバーから開くか、もう 1 回押して待つ | `capture_app.py`、`test_capture_app.py::test_a_cover_not_downloaded_is_pressed_again_and_waited_for_as_laiken_said`、`test_capture_app.py::test_the_recent_book_whose_cover_has_no_frame_is_opened_from_the_tab_bar`（F060） |
 | アプリで先頭に戻るのは、目次を一番上まで戻してその項目を押す | `capture_app.py` の `go_to_start`、`test_capture_app.py::test_the_start_is_reached_through_the_table_of_contents_and_read_from_the_footer`（F061） |
 | 目次で先頭に戻れなければ、1 ページずつ先頭まで戻る | `capture_app.py` の `go_to_start`、`test_capture_app.py::test_when_the_table_of_contents_does_not_move_the_book_pages_are_turned_back_one_at_a_time`（F061） |

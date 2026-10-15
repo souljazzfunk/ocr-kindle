@@ -802,6 +802,7 @@ def main(argv=None, env=os.environ, capture=capture_pages):
     todo = app_books([b for b in books.Library(args.root).add([args.list], write=False) if b.asin in asins])
     print(f'{len(todo)} Kindle-app-only books', flush=True)
     current = books.versions()
+    unopened = []
     for book in todo:
         title = book.title or book.asin
         attempt = book.attempt() + 1 if book.record('capture') else 1
@@ -815,12 +816,20 @@ def main(argv=None, env=os.environ, capture=capture_pages):
         if failure:
             book.fail('capture', {'checks': failure['blocking_failures'], 'error': failure.get('error'), 'attempt': attempt,
                                   'retry': False, 'via': 'kindle_app', 'version': current['capture']})
+            if failure['blocking_failures'] == ['app_open']:  # this book only: one not downloaded holds no other back
+                print(f'=== skipped {title}: app_open: {failure.get("error") or ""}', flush=True)
+                unopened.append(title)
+                continue
             print(f'\nStopped: {title}: {", ".join(failure["blocking_failures"])}: {failure.get("error") or ""}. '
                   'Fix the cause, then run the same command to resume.', flush=True)
             sys.exit(2)
         book.succeed('capture', {'pages': str(folder), 'title': title, 'attempt': attempt, 'via': 'kindle_app',
                                  'version': current['capture']})
         print(f'=== captured {title}; the convert job converts it', flush=True)
+    if unopened:
+        print(f'\nNot opened in the app: {", ".join(unopened)}. Download them in the app, then run the same command.',
+              flush=True)
+        sys.exit(2)
     print(f'\nAll {len(todo)} Kindle-app-only books captured.')
 
 
