@@ -22,7 +22,7 @@ def write_list(tmp_path, app_only=('B2', 'B3')):
 
 def run(books, capture, *extra):
     return capture_app.main([str(books), '--root', str(books.parent / 'kindle'), *extra], env={'KINDLE_APP_OK': '1'},
-                            capture=capture)
+                            capture=capture, locked=lambda: False)
 
 
 def test_it_will_not_start_without_laikens_word(tmp_path):
@@ -89,6 +89,29 @@ def test_a_book_the_app_does_not_open_is_parked_the_run_goes_on_and_the_same_com
     seen.clear()
     run(books, fake_app(seen))
     assert seen == ['For 91 Days In Tokyo']
+
+
+def test_a_locked_screen_stops_the_run_before_any_book_is_opened_or_parked(tmp_path):
+    books, library = write_list(tmp_path)
+    # 2026-10-15 17:45 JST: with the Mac's screen locked the app showed only "Kindle, Kindle, ...", and the run parked
+    # all five books as app_open and moved their pages aside (F171).
+    with pytest.raises(SystemExit) as stop:
+        capture_app.main([str(books), '--root', str(tmp_path / 'kindle')], env={'KINDLE_APP_OK': '1'},
+                         capture=lambda *a: pytest.fail('drove a locked screen'), locked=lambda: True)
+    assert 'locked' in str(stop.value.code)
+    assert library.book('B2').failure('capture')['checks'] == ['kindle_app_only']
+
+
+def test_the_lock_is_read_from_the_console_session(tmp_path):
+    plist = lambda locked: (
+        '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>IOConsoleUsers</key><array><dict>'
+        '<key>kCGSSessionOnConsoleKey</key><true/><key>CGSSessionScreenIsLocked</key><' + locked + '/></dict></array>'
+        '</dict></plist>')
+    answer = lambda out: lambda *a, **k: type('Done', (), {'returncode': 0, 'stdout': out.encode()})()
+    assert capture_app.screen_locked(run=answer(plist('true')))
+    assert not capture_app.screen_locked(run=answer(plist('false')))
+    unlocked = plist('false').replace('<key>CGSSessionScreenIsLocked</key><false/>', '')
+    assert not capture_app.screen_locked(run=answer(unlocked))
 
 
 def test_a_failure_other_than_opening_the_book_still_stops_the_run(tmp_path):
