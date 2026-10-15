@@ -21,6 +21,7 @@
 | アプリの画面は Accessibility API で読み、決め打ちの秒数でなく部品が出るまで待つ | `ax.py`、`capture_app.py` の `wait_for`、`test_ax.py::test_the_tree_is_read_through_the_api_only_for_the_real_osascript`、`test_capture_app.py::test_the_run_path_waits_for_elements_not_for_fixed_seconds`（F062） |
 | アプリの画面の読み方は、Mac で記録した木（`fixtures/kindle/`）で検査する | `capture_app.py`、`test_fixtures.py::test_each_recorded_tree_reads_as_expected`、`test_fixtures.py::test_each_flag_is_seen_true_and_false_in_the_recordings`（F059） |
 | アプリの読み終わり画面は、最後の画像ごと捨てて Escape で閉じる | `capture_app.py` の `end_sheet_shown`、`test_capture_app.py::test_the_end_of_book_sheet_is_closed_and_its_image_dropped_after_a_capture`（F059） |
+| アプリで読み終わり画面が出なければ、→ を押してもフッターの位置が動かないことを本の終わりの証拠にする | `capture_app.py` の `capture`・`footer_end`、`test_capture_app.py::test_a_book_that_ends_without_the_sheet_is_ended_when_the_footer_stops_moving`（F170） |
 | アプリのライブラリに戻るのは Close Book ボタンだけ。File > Close や Cmd+W は使わない | `capture_app.py`、`test_capture_app.py::test_a_reader_left_open_is_closed_with_its_close_book_button_never_file_close`（F059） |
 | 本は 1 ページ目から最後まで取り込む。開いた位置からそのまま取り込まない | `extension/policy.js`、`extension/policy.test.js::opened mid-book: pages back to page 1 saving each screen, then forward past them to the end`、`test_check_book.py::test_a_capture_that_began_mid_book_is_caught`（F007） |
 | 始まりと終わりの位置が記録されていない取り込みは落とす。記録なしを通さない | `check_book.py` の `check_folder`、`test_check_book.py::test_a_capture_with_no_recorded_start_or_end_fails_both`（F128） |

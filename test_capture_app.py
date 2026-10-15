@@ -105,7 +105,7 @@ def test_a_book_is_opened_paged_to_the_start_and_captured(tmp_path):
     def take(folder):
         steps.append('capture')
         (folder / 'page_0001.png').write_bytes(b'')
-        return [folder / 'page_0001.png'], True
+        return [folder / 'page_0001.png'], 'the end-of-book sheet'
 
     started = lambda shown: steps.append('start') or shown.update(start='Location 1 of 2389') or ''
     folder, failure = capture_app.capture_pages('B2', 'For 91 Days In Tokyo', tmp_path / 'pages',
@@ -199,14 +199,14 @@ def test_the_end_of_book_sheet_is_closed_and_its_image_dropped_after_a_capture(t
     for n in (1, 2, 3):
         (tmp_path / f'page_000{n}.png').write_bytes(b'')
     app = App([END_SHEET, READER])
-    pages, ended = capture_app.capture(tmp_path, run=lambda cmd: None, script=app, sleep=lambda s: None)
+    pages, ended = capture_app.capture(tmp_path, run=lambda cmd: None, script=app, sleep=lambda s: None, clock=app.clock)
     assert [p.name for p in pages] == ['page_0001.png', 'page_0002.png'] and not (tmp_path / 'page_0003.png').exists()
     assert ended
     assert sum('key code 53' in c for c in app.calls) == 2 and not any('key code 36' in c or 'key code 49' in c for c in app.calls)
     # A book that ends on a plain page keeps every image.
     (tmp_path / 'page_0003.png').write_bytes(b'')
     app = App([READER])
-    pages, ended = capture_app.capture(tmp_path, run=lambda cmd: None, script=app, sleep=lambda s: None)
+    pages, ended = capture_app.capture(tmp_path, run=lambda cmd: None, script=app, sleep=lambda s: None, clock=app.clock)
     assert len(pages) == 3 and not ended
     assert not capture_app.end_sheet_shown(capture_app.elements(App([CHROME.format(at=1)])))
 
@@ -572,3 +572,23 @@ def test_an_app_book_the_extension_refused_after_moving_its_app_pages_aside_is_c
     run(books, fake_app(seen))
     assert seen == ['For 91 Days In Tokyo']  # Japan Travel Planner's old pages are the extension's: it stays for it
     assert tokyo.state() == book.Ready('convert') and tokyo.record('capture')['via'] == 'kindle_app'
+
+
+def test_a_book_that_ends_without_the_sheet_is_ended_when_the_footer_stops_moving(tmp_path):
+    # アジャイルデータモデリング and イスラム飲酒紀行 (2026-10-15 14:04, 14:14): both captured to their last page, yet
+    # no end-of-book sheet came up, so capture.json said end "" and end_position would fail them again.
+    for n in (1, 2, 3):
+        (tmp_path / f'page_000{n}.png').write_bytes(b'')
+    app = App([READER, READER, CHROME.format(at=2590), READER, CHROME.format(at=2590), READER])
+    pages, ended = capture_app.capture(tmp_path, run=lambda cmd: None, script=app, sleep=lambda s: None,
+                                       clock=app.clock)
+    assert len(pages) == 3 and ended == 'Location 2590 of 2594, where → moved the footer no further'
+    assert any('key code 124' in c for c in app.calls)
+    # A footer that still moves is no end: the capture stopped short of it.
+    app = App([READER, READER, CHROME.format(at=1200), READER, CHROME.format(at=1205), READER])
+    _, ended = capture_app.capture(tmp_path, run=lambda cmd: None, script=app, sleep=lambda s: None, clock=app.clock)
+    assert ended == ''
+    folder = tmp_path / 'book'
+    _, failure = capture_app.capture_pages('B2', 'Tokyo', folder, open_=lambda a, t: '', start=lambda shown: '',
+                                           take=lambda f: ([f / 'page_0001.png'], 'Location 9 of 9, where → moved the footer no further'))
+    assert failure is None and json.loads((folder / 'capture.json').read_text())['end'].startswith('Location 9 of 9')
