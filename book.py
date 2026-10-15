@@ -350,10 +350,15 @@ class Book:
     def state(self, current=None):
         current = current or versions()
         upstream = None
+        # The capture job's extension cannot open a book the Kindle app captured (イスラム飲酒紀行, 2026-10-15): such
+        # a book waits parked for capture_app.py, which Laiken runs.
+        by_app = (self.record('capture') or {}).get('via') == 'kindle_app'
         for stage in STAGES:
             failure = self.failure(stage.name)
             rule = classify((failure or {}).get('checks', []))
             if failure and failure.get('upstream') == upstream:
+                if by_app and rule.blame == 'capture' and stage.name != 'capture':
+                    return Parked(stage.name, failure)
                 if rule.final or same_block(failure, current, stage.name):
                     again = failure.get('retry') or failure.get('at', '') < asked(self.asin)
                     return Ready('capture', recapture=True) if again else Parked(stage.name, failure)

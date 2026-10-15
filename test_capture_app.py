@@ -94,12 +94,15 @@ def test_a_book_is_opened_paged_to_the_start_and_captured(tmp_path):
     def take(folder):
         steps.append('capture')
         (folder / 'page_0001.png').write_bytes(b'')
-        return [folder / 'page_0001.png']
+        return [folder / 'page_0001.png'], True
 
+    started = lambda shown: steps.append('start') or shown.update(start='Location 1 of 2389') or ''
     folder, failure = capture_app.capture_pages('B2', 'For 91 Days In Tokyo', tmp_path / 'pages',
-                                                open_=lambda a, t: steps.append('open') or '',
-                                                start=lambda: steps.append('start') or '', take=take)
+                                                open_=lambda a, t: steps.append('open') or '', start=started, take=take)
     assert steps == ['open', 'start', 'capture'] and folder == tmp_path / 'pages' and failure is None
+    # What the app showed at the start and the end is the capture's evidence for check_book (F167).
+    shown = json.loads((folder / 'capture.json').read_text())
+    assert shown == {'via': 'kindle_app', 'start': 'Location 1 of 2389', 'end': 'the end-of-book sheet', 'stopped': ''}
     # Pages already in the folder would be numbered on from, so the book is not captured over them.
     folder, again = capture_app.capture_pages('B2', 'For 91 Days In Tokyo', tmp_path / 'pages',
                                               open_=lambda a, t: pytest.fail('opened'), take=take)
@@ -168,8 +171,9 @@ def test_the_table_of_contents_is_scrolled_to_its_top_and_its_button_row_pressed
     assert capture_app.location_of(capture_app.elements(App([pages]))) == (114, 0)
     at_page_1 = pages.replace('Page 114', 'Page 1').replace('|114|', '|1|')
     app = App([at_page_1, READER])
-    assert capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock) == ''
-    assert 'start: Location 1 after' in capsys.readouterr().out
+    shown = {}
+    assert capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock, shown=shown) == ''
+    assert 'start: Location 1 after' in capsys.readouterr().out and shown == {'start': 'Location 1'}
     # Without the API's press (a fake script), the button row is pressed by AppleScript as a button, not a text.
     app = App([SCROLLED_TOC, COVER])
     how = capture_app.toc_first(app, sleep=lambda s: None, clock=app.clock)
@@ -184,13 +188,15 @@ def test_the_end_of_book_sheet_is_closed_and_its_image_dropped_after_a_capture(t
     for n in (1, 2, 3):
         (tmp_path / f'page_000{n}.png').write_bytes(b'')
     app = App([END_SHEET, READER])
-    pages = capture_app.capture(tmp_path, run=lambda cmd: None, script=app, sleep=lambda s: None)
+    pages, ended = capture_app.capture(tmp_path, run=lambda cmd: None, script=app, sleep=lambda s: None)
     assert [p.name for p in pages] == ['page_0001.png', 'page_0002.png'] and not (tmp_path / 'page_0003.png').exists()
+    assert ended
     assert sum('key code 53' in c for c in app.calls) == 2 and not any('key code 36' in c or 'key code 49' in c for c in app.calls)
     # A book that ends on a plain page keeps every image.
     (tmp_path / 'page_0003.png').write_bytes(b'')
     app = App([READER])
-    assert len(capture_app.capture(tmp_path, run=lambda cmd: None, script=app, sleep=lambda s: None)) == 3
+    pages, ended = capture_app.capture(tmp_path, run=lambda cmd: None, script=app, sleep=lambda s: None)
+    assert len(pages) == 3 and not ended
     assert not capture_app.end_sheet_shown(capture_app.elements(App([CHROME.format(at=1)])))
 
 
@@ -514,3 +520,24 @@ def test_the_run_path_waits_for_elements_not_for_fixed_seconds():
     run_path = src[:src.index('def probe(')]
     fixed = re.findall(r'sleep\((?:[2-9]|\d{2,})\b', run_path)
     assert not fixed, f'{len(fixed)} fixed sleeps on the run path; wait with wait_for(ready, script, sleep, clock) instead'
+
+
+def test_an_app_capture_the_checks_refuse_is_parked_for_the_app_and_captured_again_beside_the_old_pages(tmp_path):
+    # 2026-10-15: two app captures failed start_position and end_position, and the capture job sent イスラム飲酒紀行 to
+    # the extension, which cannot open an app-only book; it moved the 254 pages aside and was refused.
+    books, library = write_list(tmp_path, app_only=('B2',))
+    tokyo = library.book('B2')
+    pages = tokyo.folder / 'pages'
+    pages.mkdir()
+    (pages / 'page_0001.png').write_bytes(b'')
+    captured = tokyo.succeed('capture', {'pages': str(pages), 'title': 'For 91 Days In Tokyo', 'attempt': 1,
+                                         'via': 'kindle_app', 'version': book.versions()['capture']})
+    tokyo.fail('convert', {'checks': ['start_position', 'end_position'], 'error': 'start not recorded', 'attempt': 1,
+                           'version': book.versions()['convert']}, upstream=captured['at'])
+    state = tokyo.state()
+    assert isinstance(state, book.Parked) and state.stage == 'convert'  # not Ready('capture'): the extension cannot
+    seen = []
+    run(books, fake_app(seen))
+    assert seen == ['For 91 Days In Tokyo']
+    assert tokyo.state() == book.Ready('convert') and tokyo.record('capture')['attempt'] == 2
+    assert [p.name for p in tokyo.folder.glob('pages (before *)')] and (pages / 'page_0001.png').exists()

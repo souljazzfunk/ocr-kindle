@@ -199,6 +199,22 @@ def test_a_capture_with_no_recorded_start_or_end_fails_both(tmp_path):
     assert not checks['end_position'].ok and checks['end_position'].detail == 'end not recorded'
 
 
+def test_a_kindle_app_capture_passes_start_and_end_on_what_the_app_showed(tmp_path):
+    # 2026-10-15: イスラム飲酒紀行 and two more app captures failed "start not recorded" and "end not recorded"; the app
+    # writes no positions.json, so its evidence is the footer at the start and the end-of-book sheet, in capture.json.
+    folder = book(tmp_path, [BODY] * 3, md='# A\n\n' + BODY, numbered=False)
+    (folder / 'capture.json').write_text(json.dumps({'via': 'kindle_app', 'start': 'Location 1 of 2389',
+                                                     'end': 'the end-of-book sheet', 'stopped': ''}))
+    checks = by_name(check_folder(folder))
+    assert checks['start_position'].ok and 'Location 1 of 2389' in checks['start_position'].detail
+    assert checks['end_position'].ok and 'end-of-book sheet' in checks['end_position'].detail
+    # No end-of-book sheet is no evidence of the end.
+    (folder / 'capture.json').write_text(json.dumps({'via': 'kindle_app', 'start': 'Location 1 of 2389', 'end': ''}))
+    checks = by_name(check_folder(folder))
+    assert checks['start_position'].ok and not checks['end_position'].ok
+    assert checks['end_position'].detail == 'end not recorded'
+
+
 def test_heading_noise_missed_chapters_and_digits_in_the_text_are_caught(tmp_path):
     # How to Write a Lot after the first heading rule: cover words, a photo, a mid-sentence line as headings,
     # chapter numbers and titles left as plain text, and Z for 7 in a chapter reference.
