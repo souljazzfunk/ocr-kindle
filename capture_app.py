@@ -24,6 +24,7 @@ import sys
 import time
 import unicodedata
 from pathlib import Path
+from typing import NamedTuple
 
 import ax
 import capture_book
@@ -239,6 +240,8 @@ tell application "System Events" to tell process "Kindle"
     return "none"
 end tell
 '''
+# The title is pasted, not set as the field's value: the value set through AX showed "Clear text" and left the grid
+# unfiltered (保守とは何だろうか, 2026-10-15 22:09), and keystroke cannot type Japanese through the input method.
 SEARCH = '''
 tell application "System Events" to tell process "Kindle"
     set elems to entire contents of window 1
@@ -246,8 +249,15 @@ tell application "System Events" to tell process "Kindle"
         set e to contents of e
         try
             if role of e is "AXTextField" and subrole of e is "AXSearchField" then
+                set the clipboard to {title}
                 set focused of e to true
-                set value of e to {title}
+                set {{x, y}} to position of e
+                set {{w, h}} to size of e
+                click at {{x + (w div 2), y + (h div 2)}}
+                delay 0.3
+                keystroke "a" using command down
+                keystroke "v" using command down
+                delay 0.5
                 keystroke return
                 return "searched"
             end if
@@ -342,7 +352,28 @@ def chrome_shown(found):
                or (e['role'] == 'AXButton' and CLOSE_BOOK in (e['title'], e['description'])) for e in found)
 
 
-def location_of(found):
+class Reading(NamedTuple):
+    """How a book turns: kindle2img's direction, the key codes that page back and on, and which bare number on the
+    footer's knob row is the position (its index, left to right)."""
+    name: str
+    back: int
+    next: int
+    pick: int
+
+
+LTR = Reading('ltr', 123, 124, 0)
+
+
+def key(code):
+    return f'tell application "System Events" to tell process "Kindle" to key code {code}'
+
+
+def location_of(found, reading=LTR):
+    """(position, of) from the footer's text, else from the bare number over the knob, or None."""
+    return footer_text(found) or knob_label(found, reading.pick)
+
+
+def footer_text(found):
     """(position, of) from the footer's "Location N of M , P%" or a page-numbered book's "Page N , P%", or None. M
     came back as 0 in the probe of 2026-10-11 18:04 ("Location 1 of 0 , 1%") and is absent with page numbers, so
     only N says whether the start was reached."""
@@ -353,27 +384,31 @@ def location_of(found):
             return int(m.group(1)), int(m.group(2))
         if m and partial is None:
             partial = (int(m.group(1)), 0)
-    return partial or knob_label(found)
+    return partial
 
 
 BIRDS_EYE = "Bird's Eye View"
 
 
-def knob_label(found):
+def knob_label(found, pick=0):
     """(N, 0) from a footer that shows its position as a bare number over the slider's knob, or None. A Japanese book
     (イスラム飲酒紀行, recorded 2026-10-15 12:24) has no "Location" or "Page" text and no slider in the tree: only "1"
     at the left of the footer row, beside the Bird's Eye View button, and "688", a mark further along that stayed put
-    while → and ← moved the first through 1, 2 and 4. So the leftmost bare number on that row is the position."""
+    while → and ← moved the first through 1, 2 and 4. So the leftmost bare number on that row is the position, unless
+    learn_reading found another one moving (a vertical book's stands at the right)."""
+    row = knob_row(found)
+    return (row[pick], 0) if row else None
+
+
+def knob_row(found):
+    """The bare numbers on the footer's row beside the Bird's Eye View button, left to right."""
     anchor = next((e for e in found if e['role'] == 'AXButton' and BIRDS_EYE in (e['title'], e['description'])), None)
     if anchor is None:
-        return None
+        return []
     _, y, _, h = _frame(anchor)
     row = [e for e in found if e['role'] == 'AXStaticText' and re.fullmatch(r'\d+', e['title'] or e['description'] or '')
            and y - h <= _frame(e)[1] <= y + h]
-    if not row:
-        return None
-    first = min(row, key=lambda e: _frame(e)[0])
-    return int(first['title'] or first['description']), 0
+    return [int(e['title'] or e['description']) for e in sorted(row, key=lambda e: _frame(e)[0])]
 
 
 HOVER_WAIT_S = 3  # after each pointer move to the top edge, before the move is repeated
@@ -560,16 +595,44 @@ def toc_first(script=osascript, sleep=time.sleep, clock=time.monotonic, scroll=N
     return how
 
 
-PAGE_BACK = 'tell application "System Events" to tell process "Kindle" to key code 123'  # ← previous page; kindle2img
-# turns forward with 124
+def learn_reading(script, sleep, clock, found):
+    """Which way a book turns and which knob number is its position, for a footer that shows only bare numbers: press
+    ← once and compare the row, then → if nothing moved. A vertical Japanese book turns on with ← and stands its
+    position at the row's right (外国語学習に成功する人 and 英語独習法, 2026-10-15 22:09: "paged back 20 times and the
+    footer stayed at Location 699", the mark). A press that turned the book on is undone. Returns the reading and the
+    footer as read last; LTR and the footer given when nothing moved."""
+    before = knob_row(found)
+    for code in (123, 124):
+        bring_front(script, sleep)
+        hide_chrome(script, sleep, clock)
+        script(key(code))
+        sleep(0.5)
+        shown = show_chrome(script, sleep, clock)
+        after = knob_row(shown)
+        moved = [i for i, (a, b) in enumerate(zip(before, after)) if a != b] if len(after) == len(before) else []
+        if not moved:
+            continue
+        i = moved[0]
+        on = after[i] > before[i]
+        pick = i if i == 0 else i - len(after)
+        reading = LTR._replace(pick=pick) if on == (code == 124) else Reading('rtl', 124, 123, pick)
+        if on:
+            bring_front(script, sleep)
+            hide_chrome(script, sleep, clock)
+            script(key(reading.back))
+            sleep(0.5)
+            shown = show_chrome(script, sleep, clock)
+        print(f'reading: {reading.name}, the position is knob number {i + 1} of {len(after)}', flush=True)
+        return reading, shown
+    return LTR, found
 
 
-def page_back(script=osascript, sleep=time.sleep, clock=time.monotonic, batch=20, cap=3000):
+def page_back(script=osascript, sleep=time.sleep, clock=time.monotonic, batch=20, cap=3000, reading=LTR):
     """Press ← until the footer reads Location 1 or stops falling. Laiken, 2026-10-11 19:27: when no reader tool
     works, page back one screen at a time rather than stop. The toolbar is hidden before each batch so the keys
     reach the page, then shown again to read the footer."""
     found = show_chrome(script, sleep, clock)
-    where = location_of(found)
+    where = location_of(found, reading)
     if where is None:
         return 'no location in the footer to page back from'
     presses = 0
@@ -578,11 +641,11 @@ def page_back(script=osascript, sleep=time.sleep, clock=time.monotonic, batch=20
         if chrome_shown(found):
             hide_chrome(script, sleep, clock)
         for _ in range(batch):
-            script(PAGE_BACK)
+            script(key(reading.back))
             sleep(0.15)
             presses += 1
         found = show_chrome(script, sleep, clock)
-        now = location_of(found)
+        now = location_of(found, reading)
         if now is None or now[0] >= where[0]:
             return f'paged back {presses} times and the footer stayed at Location {where[0]}'
         where = now
@@ -603,16 +666,19 @@ def go_to_start(script=osascript, sleep=time.sleep, clock=time.monotonic, scroll
     found = show_chrome(script, sleep, clock, tries=RENDER_TRIES)
     if not chrome_shown(found):
         return 'the reader shows no toolbar after clicks on the page; it shows: ' + describe(found)
-    where = location_of(found)
+    reading = LTR
+    if footer_text(found) is None and knob_row(found):
+        reading, found = learn_reading(script, sleep, clock, found)
+    where = location_of(found, reading)
     tried = []
     for move in (toc_first, page_back):
         if where is not None and where[0] <= 1:
             break
         bring_front(script, sleep)
         started = clock()
-        how = move(script, sleep, clock, scroll=scroll, press=press) if move is toc_first else move(script, sleep, clock)
+        how = move(script, sleep, clock, scroll=scroll, press=press) if move is toc_first else move(script, sleep, clock, reading=reading)
         found = show_chrome(script, sleep, clock)
-        where = location_of(found)
+        where = location_of(found, reading)
         tried.append(f'{how} ({clock() - started:.0f} s)')
         # A pressed entry with no readable footer is not taken as the start: that rule (#81) let Japan Travel
         # Planner pass at section 1.5 (2026-10-11 20:58). The cover does show the footer (Sri Lanka, 20:51).
@@ -622,6 +688,7 @@ def go_to_start(script=osascript, sleep=time.sleep, clock=time.monotonic, scroll
     print(f'start: Location {where[0]} after {clock() - began:.0f} s: {", ".join(tried) or "not needed"}', flush=True)
     if shown is not None:
         shown['start'] = f'Location {where[0]}' + (f' of {where[1]}' if where[1] else '')
+        shown['reading'] = reading
     bring_front(script, sleep)
     if chrome_shown(hide_chrome(script, sleep, clock)):
         return 'the toolbar stayed over the page after a click to hide it'
@@ -638,36 +705,35 @@ def end_sheet_shown(found):
                    for mark in END_SHEET) for e in found)
 
 
-PAGE_NEXT = 'tell application "System Events" to tell process "Kindle" to key code 124'  # → next page, as kindle2img's ltr
 SHEET_LATE_S = 3  # after the script ends, before the tree is read again for a sheet that came up late
 END_PRESSES = 5
 
 
-def footer_end(script=osascript, sleep=time.sleep, clock=time.monotonic):
+def footer_end(script=osascript, sleep=time.sleep, clock=time.monotonic, reading=LTR):
     """The end as the footer shows it: read it, press → a few times and read it again. A footer that stays put is the
     last page, said as "Location N of M, where → moved the footer no further"; one that moves, or none read, is ''.
     The app's footer gives no usable total ("of 0", a bare knob number), so only the stop says where the book ends."""
-    before = location_of(show_chrome(script, sleep, clock))
+    before = location_of(show_chrome(script, sleep, clock), reading)
     bring_front(script, sleep)
     hide_chrome(script, sleep, clock)
     for _ in range(END_PRESSES):
-        script(PAGE_NEXT)
+        script(key(reading.next))
         sleep(0.3)
-    after = location_of(show_chrome(script, sleep, clock))
+    after = location_of(show_chrome(script, sleep, clock), reading)
     hide_chrome(script, sleep, clock)
     if before is None or after is None or after[0] != before[0]:
         return ''
-    return f'Location {after[0]}' + (f' of {after[1]}' if after[1] else '') + ', where → moved the footer no further'
+    return f'Location {after[0]}' + (f' of {after[1]}' if after[1] else '') + f', where {"→" if reading.next == 124 else "←"} moved the footer no further'
 
 
-def capture(folder, script_path=HERE / 'kindle2img.applescript', run=capture_book.run, script=osascript,
+def capture(folder, reading=LTR, script_path=HERE / 'kindle2img.applescript', run=capture_book.run, script=osascript,
             sleep=time.sleep, clock=time.monotonic):
     """Page through the book with kindle2img.applescript. When the end-of-book sheet is up afterwards, the last image
     is that sheet, not a page, so it is dropped, and the sheet is closed with Escape (never Enter or space: the
     focus sits on the rating's stars). Returns the pages and the evidence of the end, or '' when there is none.
     No sheet came up at the end of アジャイルデータモデリング or イスラム飲酒紀行 (2026-10-15, F170), nor once a
     second read later: then the footer that → no longer moves is the evidence."""
-    run(['osascript', str(script_path), 'ltr', str(folder)])
+    run(['osascript', str(script_path), reading.name, str(folder)])
     pages = sorted(folder.glob('page_*.png'))
     if not pages:
         return pages, ''
@@ -680,7 +746,7 @@ def capture(folder, script_path=HERE / 'kindle2img.applescript', run=capture_boo
         dismiss_overlays(script, sleep)
         print(f'end: the end-of-book sheet was closed and its image dropped; {len(pages)} pages', flush=True)
         return pages, 'the end-of-book sheet'
-    end = footer_end(script, sleep, clock)
+    end = footer_end(script, sleep, clock, reading)
     print(f'end: {end or "not shown: no sheet, and the footer still moved or was not read"}; {len(pages)} pages', flush=True)
     return pages, end
 
@@ -815,7 +881,7 @@ def capture_pages(asin, title, folder, open_=open_book, start=go_to_start, take=
         if problem:
             return None, {'asin': asin, 'blocking_failures': ['app_open'], 'warnings': [], 'error': problem}
     folder.mkdir(parents=True, exist_ok=True)
-    pages, ended = take(folder)
+    pages, ended = take(folder, shown.get('reading', LTR))
     if not pages:
         return None, {'asin': asin, 'blocking_failures': ['app_capture'], 'warnings': [], 'error': 'no page was captured'}
     (folder / check_book.CAPTURE).write_text(json.dumps({'via': 'kindle_app', 'start': shown.get('start', ''),

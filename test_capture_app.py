@@ -165,7 +165,7 @@ def test_a_failure_other_than_opening_the_book_still_stops_the_run(tmp_path):
 def test_a_book_is_opened_paged_to_the_start_and_captured(tmp_path):
     steps = []
 
-    def take(folder):
+    def take(folder, reading):
         steps.append('capture')
         (folder / 'page_0001.png').write_bytes(b'')
         return [folder / 'page_0001.png'], 'the end-of-book sheet'
@@ -247,7 +247,7 @@ def test_the_table_of_contents_is_scrolled_to_its_top_and_its_button_row_pressed
     app = App([at_page_1, READER])
     shown = {}
     assert capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock, shown=shown) == ''
-    assert 'start: Location 1 after' in capsys.readouterr().out and shown == {'start': 'Location 1'}
+    assert 'start: Location 1 after' in capsys.readouterr().out and shown == {'start': 'Location 1', 'reading': capture_app.LTR}
     # Without the API's press (a fake script), the button row is pressed by AppleScript as a button, not a text.
     app = App([SCROLLED_TOC, COVER])
     how = capture_app.toc_first(app, sleep=lambda s: None, clock=app.clock)
@@ -307,7 +307,7 @@ class App:
             return 0, 'set', ''
         if 'entire contents' in text and 'AXPress' not in text and 'keystroke' not in text:
             return 0, self.screens.pop(0) if len(self.screens) > 1 else self.screens[0], ''
-        if 'click at' in text:
+        if 'click at' in text and 'keystroke' not in text:
             return 0, 'pressed', ''  # the fake answers every action alike
         return 0, 'pressed' if 'AXPress' in text else 'searched', ''
 
@@ -364,6 +364,11 @@ def test_a_cover_off_screen_is_searched_for_first():
     assert capture_app.open_book('B3', 'Japan Travel Planner', script=app, run=lambda c: None,
                                  clock=lambda: next(clock), sleep=lambda s: None) == ''
     assert any('keystroke return' in c and '"Japan Travel Planner"' in c for c in app.calls)
+    # The field's value set through AX showed "Clear text" yet left the grid unfiltered (保守とは何だろうか,
+    # 2026-10-15 22:09), and keystroke cannot type Japanese through the input method: the title is pasted instead.
+    search = next(c for c in app.calls if 'keystroke return' in c)
+    assert 'set the clipboard to "Japan Travel Planner"' in search and 'keystroke "v" using command down' in search
+    assert 'set value of e to' not in search
     app = App([LIBRARY, LIBRARY])
     problem = capture_app.open_book('B9', 'Drive', script=app, run=lambda c: None, clock=lambda: next(clock), sleep=lambda s: None)
     assert problem.startswith('no cover for this title') and 'Search Kindle' in problem
@@ -653,5 +658,69 @@ def test_a_book_that_ends_without_the_sheet_is_ended_when_the_footer_stops_movin
     assert ended == ''
     folder = tmp_path / 'book'
     _, failure = capture_app.capture_pages('B2', 'Tokyo', folder, open_=lambda a, t: '', start=lambda shown: '',
-                                           take=lambda f: ([f / 'page_0001.png'], 'Location 9 of 9, where → moved the footer no further'))
+                                           take=lambda f, reading: ([f / 'page_0001.png'], 'Location 9 of 9, where → moved the footer no further'))
     assert failure is None and json.loads((folder / 'capture.json').read_text())['end'].startswith('Location 9 of 9')
+
+
+class Knob(App):
+    """A book whose footer shows its position as a bare number over the knob, beside a mark that stays put. A vertical
+    Japanese book (外国語学習に成功する人 and 英語独習法, 2026-10-15 22:09) turns to the next page with ←, and its
+    position stood at the right of the row: the leftmost number, 699 and 163, never moved while ← was pressed."""
+
+    def __init__(self, at, last, rtl=True, mark=699):
+        super().__init__([READER])
+        self.at, self.last, self.rtl, self.mark, self.chrome = at, last, rtl, mark, True
+
+    def screen(self):
+        if not self.chrome:
+            return READER
+        left, right = (self.mark, self.at) if self.rtl else (self.at, self.mark)
+        return ('frontmost=true\nwindow|Kindle|340,173|1370,880\n'
+                'element|AXButton|||Close Book||360,195|40,40\n'
+                'element|AXButton|||Table of Contents||400,195|40,40\n'
+                "element|AXButton|||Bird's Eye View||360,964|37,37\n"
+                f'element|AXStaticText|||{left}||431,956|18,12\n'
+                f'element|AXStaticText|||{right}||1600,956|18,12\n')
+
+    def __call__(self, text):
+        self.calls.append(text)
+        on, back = ('key code 123', 'key code 124') if self.rtl else ('key code 124', 'key code 123')
+        if on in text:
+            self.at = min(self.last, self.at + 1)
+        elif back in text:
+            self.at = max(1, self.at - 1)
+        elif 'click at' in text:
+            self.chrome = not self.chrome
+            return 0, 'pressed', ''
+        elif 'entire contents' in text and 'AXPress' not in text and 'keystroke' not in text:
+            return 0, self.screen(), ''
+        return 0, 'pressed' if 'AXPress' in text else 'searched', ''
+
+
+def test_a_vertical_book_is_paged_back_with_the_right_arrow_and_captured_right_to_left(tmp_path, capsys):
+    # 2026-10-15 22:09: both books failed "paged back 20 times and the footer stayed at Location 699" (and 163): ←
+    # turned them on, not back, and the number read was the mark. One ← tells which way the book turns and which
+    # number moved; the book is then paged back with → and captured with kindle2img's rtl.
+    app = Knob(at=163, last=300)
+    shown = {}
+    assert capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock, shown=shown) == ''
+    assert app.at == 1 and shown['start'] == 'Location 1' and shown['reading'].name == 'rtl'
+    assert sum('key code 124' in c for c in app.calls) > 100
+    assert 'reading: rtl' in capsys.readouterr().out
+    (tmp_path / 'page_0001.png').write_bytes(b'')
+    runs = []
+
+    def run(cmd):
+        runs.append(cmd)
+        app.at = app.last
+    app.calls.clear()
+    pages, ended = capture_app.capture(tmp_path, shown['reading'], run=run, script=app, sleep=lambda s: None,
+                                       clock=app.clock)
+    assert runs[0][2] == 'rtl' and len(pages) == 1
+    assert ended == 'Location 300, where ← moved the footer no further'
+    assert any('key code 123' in c for c in app.calls) and not any('key code 124' in c for c in app.calls)
+    # A horizontal book with the same footer keeps ← for back and its leftmost number.
+    app = Knob(at=30, last=300, rtl=False)
+    shown = {}
+    assert capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock, shown=shown) == ''
+    assert app.at == 1 and shown['reading'].name == 'ltr'
