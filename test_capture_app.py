@@ -758,6 +758,39 @@ def test_a_vertical_book_opened_at_its_start_with_the_knob_over_the_mark_is_stil
     assert app.at == 1 and shown['reading'].name == 'ltr' and shown['reading'].pick == 0
 
 
+class Slider(Knob):
+    """A book whose footer says its position in words ("Location N , P%" on the progress bar) and turns either way."""
+
+    def screen(self):
+        if not self.chrome:
+            return READER
+        return ('frontmost=true\nwindow|Kindle|340,173|1370,880\n'
+                'element|AXButton|||Close Book||360,195|40,40\n'
+                'element|AXButton|||Table of Contents||400,195|40,40\n'
+                f'element|AXSlider|||Reading Progress Bar|Location {self.at} , 0%|533,954|980,46\n')
+
+
+def test_a_vertical_book_opened_at_its_start_with_its_location_in_words_is_still_read_right_to_left(capsys):
+    # 2026-10-16 00:23, 保守とは何だろうか after F179: "start: Location 1 after 5 s: not needed", again no "reading:"
+    # line, then "end: Location 1, where → moved the footer no further; 2 pages". The footer read Location 1 without
+    # "of M", so the way the book turns was never asked: only a footer of bare numbers was. At the start one press of
+    # → that does not move the footer on is tried with ← instead.
+    app = Slider(at=1, last=600)
+    shown = {}
+    assert capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock, shown=shown) == ''
+    assert app.at == 1 and shown['reading'].name == 'rtl'
+    assert 'reading: rtl' in capsys.readouterr().out
+    app = Slider(at=1, last=600, rtl=False)
+    shown = {}
+    assert capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock, shown=shown) == ''
+    assert app.at == 1 and shown['reading'].name == 'ltr'
+    # A book neither key moves says so, so the next failure shows why.
+    app = Slider(at=1, last=1)
+    shown = {}
+    assert capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock, shown=shown) == ''
+    assert 'reading: neither' in capsys.readouterr().out
+
+
 def test_a_done_app_book_asked_again_in_recapture_tsv_is_captured_again_in_the_app_only_once(tmp_path, monkeypatch):
     # 保守とは何だろうか (2026-10-15): the app captured 1 page, the checks of the time passed it and it went to Drive.
     # A passed book is not redone when the checks change (F036), so Laiken's ask goes through recapture.tsv; the
