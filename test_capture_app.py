@@ -73,19 +73,30 @@ def test_only_the_books_of_the_given_list_are_captured(tmp_path):
     assert library.book('B9').failure('capture')['checks'] == ['kindle_app_only']
 
 
-def test_the_first_book_the_app_does_not_open_stops_the_run_and_the_same_command_resumes_there(tmp_path):
+def test_a_book_the_app_does_not_open_is_parked_the_run_goes_on_and_the_same_command_resumes_it(tmp_path):
     books, library = write_list(tmp_path)
     seen = []
-    refuse = lambda title: {'blocking_failures': ['app_open'], 'error': 'front window: "Library"'}
+    refuse = lambda title: title == 'For 91 Days In Tokyo' and {'blocking_failures': ['app_open'],
+                                                                 'error': 'front window: "Library"'}
     with pytest.raises(SystemExit) as stop:
         run(books, fake_app(seen, refuse))
-    assert stop.value.code == 2 and seen == ['For 91 Days In Tokyo']
+    # 2026-10-15: a book not downloaded to the app stopped the run before the books after it (F168).
+    assert stop.value.code == 2 and seen == ['For 91 Days In Tokyo', 'Japan Travel Planner']
     parked = library.book('B2').state()
     assert parked.stage == 'capture' and parked.failure['checks'] == ['app_open'] and 'Library' in parked.failure['error']
+    assert library.book('B3').record('capture')['via'] == 'kindle_app'
     # 2026-10-11: a resume skipped Tokyo once its record said app_open instead of kindle_app_only.
     seen.clear()
     run(books, fake_app(seen))
-    assert seen == ['For 91 Days In Tokyo', 'Japan Travel Planner']
+    assert seen == ['For 91 Days In Tokyo']
+
+
+def test_a_failure_other_than_opening_the_book_still_stops_the_run(tmp_path):
+    books, _ = write_list(tmp_path)
+    seen = []
+    with pytest.raises(SystemExit) as stop:
+        run(books, fake_app(seen, lambda title: {'blocking_failures': ['app_capture'], 'error': 'no page was captured'}))
+    assert stop.value.code == 2 and seen == ['For 91 Days In Tokyo']
 
 
 def test_a_book_is_opened_paged_to_the_start_and_captured(tmp_path):
