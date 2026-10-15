@@ -20,6 +20,7 @@
 | 日本語の本も書名で表紙を探し、位置はつまみの上の数字から読む | `capture_app.py` の `comparable`・`knob_label`、`test_capture_app.py::test_a_japanese_book_is_found_by_its_title_and_its_footer_read_from_the_bare_number_over_the_knob`（F166） |
 | アプリのツールバーはポインタを窓の上端に置いて出す。ページはクリックしない | `capture_app.py` の `hover_window`、`test_capture_app.py::test_the_toolbar_is_brought_by_resting_the_pointer_on_the_top_edge_never_by_a_click`（F064） |
 | アプリの画面は Accessibility API で読み、決め打ちの秒数でなく部品が出るまで待つ | `ax.py`、`capture_app.py` の `wait_for`、`test_ax.py::test_the_tree_is_read_through_the_api_only_for_the_real_osascript`、`test_capture_app.py::test_the_run_path_waits_for_elements_not_for_fixed_seconds`（F062） |
+| アプリの部品の位置が inf などの数でなければ、位置なしとして読み、取り込みを止めない | `ax.py` の `dump`、`test_ax.py::test_a_position_the_api_gives_as_infinity_is_left_blank_and_the_read_goes_on`（F173） |
 | アプリの画面の読み方は、Mac で記録した木（`fixtures/kindle/`）で検査する | `capture_app.py`、`test_fixtures.py::test_each_recorded_tree_reads_as_expected`、`test_fixtures.py::test_each_flag_is_seen_true_and_false_in_the_recordings`（F059） |
 | アプリの読み終わり画面は、最後の画像ごと捨てて Escape で閉じる | `capture_app.py` の `end_sheet_shown`、`test_capture_app.py::test_the_end_of_book_sheet_is_closed_and_its_image_dropped_after_a_capture`（F059） |
 | アプリで読み終わり画面が出なければ、→ を押してもフッターの位置が動かないことを本の終わりの証拠にする | `capture_app.py` の `capture`・`footer_end`、`test_capture_app.py::test_a_book_that_ends_without_the_sheet_is_ended_when_the_footer_stops_moving`（F170） |
