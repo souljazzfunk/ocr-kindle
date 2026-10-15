@@ -32,9 +32,10 @@ const JUMP_FROM = 10;
 // Second Brain (19 of 262) showed no position on their first screen and theirs a second later (2026-10-13), so they
 // paged back from there instead of jumping. The first screen is observed again, once a second, this many times for it.
 const FIRST_POSITION_WAITS = 3;
-// Locations before the first numbered screen that the cover and title pages may take (check_book.py LOCATION_SLACK),
-// and never more than 1% of the book.
-const NEAR_START = 5;
+// Locations before the first numbered screen that the cover and title pages may take, and never more than 1% of the
+// book. In the Plex reopened at location 7 of 10362 and no way paged back from it (2026-10-15); check_book.py still
+// judges the start against the page numbering shown later.
+const NEAR_START = 10;
 const APP_ONLY_REASON = 'kindle app required: Cloud Reader cannot open this book';
 
 function initialState() {

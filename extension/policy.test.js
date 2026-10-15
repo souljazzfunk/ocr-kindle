@@ -345,6 +345,15 @@ test('a screen within a few locations of 1 that no way pages back from is the st
   assert.strictEqual(state.start, 'opened at 3/2389; 0 earlier screens saved back to 3/2389 (the last ones by the right arrow key)');
 });
 
+test('a screen at location 7 of 10362 that no way pages back from is the start of a book that long', () => {
+  // 2026-10-15: In the Plex reopened at location 7 of 10362, where its last capture had stopped, and never showed page 1
+  // of 456; the capture failed with one screen saved, 6 locations from 1 being past the 5 allowed.
+  const loc7 = screen('loc7', 7, 10362), loc8 = screen('loc8', 8, 10362), one = screen('one', 1, 456), end = screen('end', 456, 456);
+  const { state, actions } = replay([loc7, loc7, loc7, loc7, loc7, loc7, loc7, loc7, loc7, loc7, loc8, one, end, end, end, end]);
+  assert.strictEqual(actions.at(-1), 'done:page 456 of 456');
+  assert.deepStrictEqual(order(state.saved), ['loc7', 'loc8', 'one', 'end']);
+});
+
 test('the turn cap counts the finer numbering once the reader has shown it', () => {
   // 2026-10-15: In the Plex paged forward from location 7 of 10362 through 456 pages at about 3 screens a page and was
   // stopped by the cap for 456 pages (1418 turns) at page 441. A book numbered by location gets 3 turns a location.
