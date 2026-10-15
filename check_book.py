@@ -83,10 +83,12 @@ def reached_start(positions):
 
     マニャーナの法則 (2026-10-14) opened at location 3 of 2389 and showed page 1 of 246 two screens later; Steve Jobs
     (2026-10-12) numbered its front matter 3 .. 117 of 11824 and its body from 1 of 568. A location series that begins
-    within LOCATION_SLACK of 1 is the start when a later series in another numbering begins at page 1."""
+    within LOCATION_SLACK of 1 is the start when a later series in another numbering begins at page 1. In the Plex
+    (2026-10-15) began at location 7 of 10362 before page 1 of 456: a series that begins within the locations one page
+    holds is on the first page too."""
     first = positions[0]
     later = next((p for p in positions if p[2] != first[2]), None)
-    return bool(later) and later[1] == 1 and first[1] - 1 <= first[0] + LOCATION_SLACK
+    return bool(later) and later[1] == 1 and first[1] - 1 <= first[0] + max(LOCATION_SLACK, first[2] / later[2])
 
 
 def end_tolerance(total):

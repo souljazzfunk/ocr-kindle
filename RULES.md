@@ -23,7 +23,7 @@
 | 先頭から遠くで開いた本は、最初にスクラバーで先頭へ跳ぶ。本を丸ごと逆にめくらない | `policy.js` の `JUMP_FROM`、`extension/main.js`、`extension/policy.test.js::a book opened far from its start jumps to the start before it saves anything, and pages back as before when the jump does not move it`（F107） |
 | 前のページのボタンで戻れなくなったら矢印キーで戻り、止まった画面を記録する | `extension/policy.js`、`extension/policy.test.js::a reader stuck on Previous page pages back by the left arrow key`、`test_channel.py::test_the_screen_where_a_capture_stopped_is_kept_beside_the_trace`（F076） |
 | 戻るはずのめくりで先のページに出たら、次の手（左キー、右キー）に替え、その画面は保存しない | `extension/policy.js` の `WAYS`、`extension/policy.test.js::a book read right to left, whose left arrow key turns forward, pages back by the right arrow key`（F093） |
-| 戻る途中で 1 ページ目を見たあと、位置番号の前付けで止まったら、そこを先頭とする | `extension/policy.js` の `edge`、`check_book.py` の `reached_start`、`test_check_book.py::test_front_matter_numbered_by_location_before_page_1_is_the_start`（F159） |
+| 戻る途中で 1 ページ目を見たあとの位置番号の前付け、または 1 に近い位置で止まったら、そこを先頭とする | `extension/policy.js` の `edge`、`check_book.py` の `reached_start`、`test_check_book.py::test_front_matter_within_the_first_pages_worth_of_locations_is_the_start`（F159 F161） |
 | 次のページのボタンで進めなくなったら、終わり近くでない限り矢印キーで進む | `extension/policy.js` の `WAYS`・`nearEnd`、`extension/policy.test.js::a reader stuck on Next page mid-book pages on by the right arrow key, then by the left in a book read right to left`（F105） |
 | 番号のない画面で進めなくなったら、最後に読めた番号で終わり近くかを決める | `extension/policy.js` の `edge`・`known`、`extension/policy.test.js::a reader stuck on an unnumbered screen far from the end pages on by the arrow key`（F132） |
 | 位置は隠れたフッターの文字から先に読み、ページの本文はその次に読む | `extension/pagemeta.js` の `readPosition`、`extension/pagemeta.test.js::the position is read from the footer the reader hides, then from the page text`（F138） |
@@ -39,7 +39,7 @@
 | どの手でもめくれなくなったら、2 分休んで最初の手からやり直す（1 冊 3 回まで） | `extension/policy.js` の `rest`、`extension/policy.test.js::a reader that stops turning mid-book both ways rests and starts over with the button before the capture gives up`（F108） |
 | フッターの単位が途中で変わったら、前の単位の番号と比べずに画面を保存する | `extension/policy.js` の `savedPages`、`extension/policy.test.js::screens past a change of the footer unit are saved, not taken for screens before the last saved page`（F147） |
 | 先頭から進み直すとき、開いた位置より前の画面を保存し直さない | `extension/policy.js`、`extension/policy.test.js::forward from page 1, a screen before the opening one is not saved again under a new hash`（F077） |
-| ページめくりは際限なく続けない。上限はページ数に合わせ、向きごとに数える | `extension/policy.js`、`extension/policy.test.js::turns past three per page stop the capture, each direction counted on its own`（F017 F019 F027） |
+| ページめくりは際限なく続けない。上限は見えた中で細かい方の数え方に合わせ、向きごとに数える | `extension/policy.js`、`extension/policy.test.js::the turn cap counts the finer numbering once the reader has shown it`（F017 F019 F027 F162） |
 | 止まった取り込みを 1 時間待たない。数分で理由を残して終える | `channel.py`、`test_channel.py::test_a_capture_with_no_page_and_no_event_for_the_stall_time_is_stalled`（F032 F039） |
 | 工程ごとの秒数を report.json に残し、基準より遅い工程は speed の検査で落とす | `capture_book.py` の `speed`・`BUDGETS`、`channel.py`、`test_check_book.py::test_each_step_is_timed_in_the_report_and_a_slow_one_fails_the_speed_check`（F083） |
 | 1 冊の時間は最初の取り込みから Drive まで数え、基準を超えた本を名指す | `kc_run.py` の `publish`、`book.py` の `Book.start`、`test_kc_run.py::test_a_book_s_time_from_its_first_capture_to_drive_is_recorded_once_and_a_slow_one_is_named`（F089） |

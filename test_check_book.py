@@ -158,6 +158,16 @@ def test_front_matter_numbered_by_location_before_page_1_is_the_start(tmp_path):
     assert not by_name(check_folder(folder))['start_position'].ok
 
 
+def test_front_matter_within_the_first_pages_worth_of_locations_is_the_start(tmp_path):
+    # In the Plex (2026-10-15): location 7 of 10362, then the body from page 1 of 456. A page holds about 23 of its
+    # locations, so location 7 is on the first page, though 6 past location 1 is more than LOCATION_SLACK.
+    folder = book(tmp_path, [BODY] * 4, md='# A\n\n' + BODY)
+    positions(folder, ['7/10362', '8/10362', '1/456', '456/456'])
+    assert by_name(check_folder(folder))['start_position'].ok
+    positions(folder, ['40/10362', '41/10362', '1/456', '456/456'])
+    assert not by_name(check_folder(folder))['start_position'].ok
+
+
 def test_a_capture_that_stopped_early_is_caught_but_end_matter_is_allowed(tmp_path):
     folder = book(tmp_path, [BODY] * 3, md='# A\n\n' + BODY)
     positions(folder, ['', '1/120', '60/120'])  # an unnumbered cover, then the book

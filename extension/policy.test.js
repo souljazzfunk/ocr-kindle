@@ -330,7 +330,27 @@ test('front matter numbered another way than the pages is the start once the rea
   assert.strictEqual(actions.at(-1), 'done:page 456 of 456');
   assert.deepStrictEqual(order(state.saved), ['cover', 'i', 'viii', 'one', 'two', 'three']);
   assert.strictEqual(state.start, 'opened at 1/456; 3 earlier screens saved back to 7/10362');
-  // Without page 1 shown, a screen that stops turning short of it is still no start.
-  const stuck = replay(Array(41).fill(screen('loc', 3, 2389))).actions;
-  assert.strictEqual(stuck.at(-1), 'fail:could not page back past page 3 of 2389 by button or key');
+  // Without page 1 shown, a screen that stops turning far from it is still no start.
+  const stuck = replay(Array(41).fill(screen('loc', 40, 2389))).actions;
+  assert.strictEqual(stuck.at(-1), 'fail:could not page back past page 40 of 2389 by button or key');
+});
+
+test('a screen within a few locations of 1 that no way pages back from is the start, page 1 shown or not', () => {
+  // 2026-10-15: マニャーナの法則 reopened at location 3 of 2389, where its last capture had stopped, so the reader never
+  // showed page 1 of 246 before it stuck; the capture failed with one screen saved. check_book.py still judges the start.
+  const loc3 = screen('loc3', 3, 2389), loc4 = screen('loc4', 4, 2389), one = screen('one', 1, 246), end = screen('end', 246, 246);
+  const { state, actions } = replay([loc3, loc3, loc3, loc3, loc3, loc3, loc3, loc3, loc3, loc3, loc4, one, end, end, end, end]);
+  assert.strictEqual(actions.at(-1), 'done:page 246 of 246');
+  assert.deepStrictEqual(order(state.saved), ['loc3', 'loc4', 'one', 'end']);
+  assert.strictEqual(state.start, 'opened at 3/2389; 0 earlier screens saved back to 3/2389 (the last ones by the right arrow key)');
+});
+
+test('the turn cap counts the finer numbering once the reader has shown it', () => {
+  // 2026-10-15: In the Plex paged forward from location 7 of 10362 through 456 pages at about 3 screens a page and was
+  // stopped by the cap for 456 pages (1418 turns) at page 441. A book numbered by location gets 3 turns a location.
+  const pages = 10;
+  const screens = Array.from({ length: TURNS_PER_PAGE * pages + EXTRA_TURNS + 20 }, (_, i) => screen(`s${i}`, 1 + Math.floor((i * pages) / (TURNS_PER_PAGE * pages + EXTRA_TURNS + 20)), pages));
+  const one = screen('one', 1, pages), loc = screen('loc', 2, 300), last = screens.at(-1);
+  const { actions } = replay([one, loc, loc, loc, loc, ...screens.slice(1), last, last, last]);
+  assert.strictEqual(actions.at(-1), `done:page ${pages} of ${pages}`);
 });
