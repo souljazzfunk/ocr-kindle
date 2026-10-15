@@ -146,6 +146,18 @@ def test_a_capture_that_began_mid_book_is_caught(tmp_path):
     assert checks['end_position'].ok and checks['positions'].ok
 
 
+def test_front_matter_numbered_by_location_before_page_1_is_the_start(tmp_path):
+    # マニャーナの法則 (2026-10-14): locations 3 and 4 of 2389, then the body from page 1 of 246.
+    folder = book(tmp_path, [BODY] * 4, md='# A\n\n' + BODY)
+    positions(folder, ['3/2389', '4/2389', '1/246', '246/246'])
+    assert by_name(check_folder(folder))['start_position'].ok
+    # Locations far from 1, or no page 1 after them, are still a late start.
+    positions(folder, ['300/2389', '301/2389', '1/246', '246/246'])
+    assert not by_name(check_folder(folder))['start_position'].ok
+    positions(folder, ['3/2389', '4/2389', '5/246', '246/246'])
+    assert not by_name(check_folder(folder))['start_position'].ok
+
+
 def test_a_capture_that_stopped_early_is_caught_but_end_matter_is_allowed(tmp_path):
     folder = book(tmp_path, [BODY] * 3, md='# A\n\n' + BODY)
     positions(folder, ['', '1/120', '60/120'])  # an unnumbered cover, then the book

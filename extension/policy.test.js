@@ -316,3 +316,21 @@ test('screens past a change of the footer unit are saved, not taken for screens 
   assert.deepStrictEqual(saved, new Set(trace.slice(switched).map(({ observation }) => observation.sha)));
   assert.strictEqual(action, 'done:page 256 of 256');
 });
+
+test('front matter numbered another way than the pages is the start once the reader has shown page 1', () => {
+  // 2026-10-14: In the Plex paged back from page 1 of 456 through its Roman pages to location 7 of 10362, which no turn
+  // moved; the right arrow key then went forward and the capture failed. マニャーナの法則 stuck the same way at location
+  // 3 of 2389 after page 1 of 246.
+  const roman = (sha, numeral) => ({ ...screen(sha), footer: `Page ${numeral} of 456 ● 0%` });
+  const cover = screen('cover', 7, 10362), i = roman('i', 'I'), viii = roman('viii', 'VIII');
+  const one = screen('one', 1, 456), two = screen('two', 2, 456), three = screen('three', 456, 456);
+  const { state, actions } = replay([one, viii, i, cover, cover, cover, cover, i, viii, one, two, three, three, three, three]);
+  assert.deepStrictEqual(actions.slice(0, 11), ['save', 'turn:prev', 'save', 'turn:prev', 'save', 'turn:prev', 'save',
+    'turn:prev', 'turn:prev', 'turn:prev', 'turn:next']);
+  assert.strictEqual(actions.at(-1), 'done:page 456 of 456');
+  assert.deepStrictEqual(order(state.saved), ['cover', 'i', 'viii', 'one', 'two', 'three']);
+  assert.strictEqual(state.start, 'opened at 1/456; 3 earlier screens saved back to 7/10362');
+  // Without page 1 shown, a screen that stops turning short of it is still no start.
+  const stuck = replay(Array(41).fill(screen('loc', 3, 2389))).actions;
+  assert.strictEqual(stuck.at(-1), 'fail:could not page back past page 3 of 2389 by button or key');
+});

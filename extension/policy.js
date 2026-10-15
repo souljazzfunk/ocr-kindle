@@ -36,7 +36,7 @@ const APP_ONLY_REASON = 'kindle app required: Cloud Reader cannot open this book
 
 function initialState() {
   return { phase: 'back', saved: {}, low: 1, high: 0, n: null, last: null, pending: false, tries: 0, turns: 0, limit: 0,
-    page: null, pages: null, same: 0, waits: 0, rests: 0, savedPage: null, savedPages: null, keyed: false, jumped: null, opened: '', openedAt: null, start: '', known: null };
+    page: null, pages: null, same: 0, waits: 0, rests: 0, savedPage: null, savedPages: null, keyed: false, jumped: null, opened: '', openedAt: null, start: '', known: null, one: null };
 }
 
 const limitFor = (position) => TURNS_PER_PAGE * (position?.m || UNKNOWN_LENGTH) + EXTRA_TURNS;
@@ -85,10 +85,14 @@ function edge(state, position) {
     // 英語教育幻想 (2026-10-12) opened at 2561 of 2566 and paged back to 784, where Previous page stopped moving it. Why
     // is not known yet; the left arrow key is tried before the capture fails, and dom-probe-stopped.json records the
     // reader's controls where it stuck.
-    if (position && position.n !== 1 && nextWay(state)) return turn({ ...state, keyed: nextWay(state), tries: 0 });
-    if (position && position.n !== 1 && canRest(state)) return rest(state);
-    if (position && position.n !== 1) return fail(state, `could not page back past page ${position.n} of ${position.m} by button or key`);
-    const start = `opened at ${state.opened}; ${-state.low} earlier screens saved back to ${position ? 'page 1' : 'the first screen'}`
+    // Front matter can be numbered another way than the pages: In the Plex (2026-10-14) paged back past page 1 of 456 and
+    // its Roman pages to location 7 of 10362, マニャーナの法則 past page 1 of 246 to location 3 of 2389, and each stuck
+    // there. Once the reader has shown page 1, a screen in another numbering that stops turning is the start.
+    const away = position && position.n !== 1 && !(state.one && position.m !== state.one);
+    if (away && nextWay(state)) return turn({ ...state, keyed: nextWay(state), tries: 0 });
+    if (away && canRest(state)) return rest(state);
+    if (away) return fail(state, `could not page back past page ${position.n} of ${position.m} by button or key`);
+    const start = `opened at ${state.opened}; ${-state.low} earlier screens saved back to ${!position ? 'the first screen' : position.n === 1 ? 'page 1' : where(position)}`
       + (state.keyed ? ` (the last ones by the ${state.keyed} arrow key)` : '');
     return turn({ ...state, phase: 'fwd', keyed: false, tries: 0, turns: 0, same: 0, start });
   }
@@ -124,7 +128,7 @@ function nextAction(state, observation) {
     return { state: { ...state, jumped: where(position) }, action: 'jump:start' };
   }
   const opened = state.jumped && state.jumped !== where(position) ? `${state.jumped}, jumped to ${where(position)}` : where(position);
-  if (state.last === null) return save({ ...state, opened, openedAt: position ? position.n : null, page: position ? position.n : null, pages: position ? position.m : null, known: position || frontMatter(footer), limit: limitFor(position) }, sha);
+  if (state.last === null) return save({ ...state, opened, openedAt: position ? position.n : null, page: position ? position.n : null, pages: position ? position.m : null, known: position || frontMatter(footer), one: position?.n === 1 ? position.m : null, limit: limitFor(position) }, sha);
   if (state.pending) return turn({ ...state, pending: false });
 
   const turns = state.turns + 1;
@@ -134,7 +138,8 @@ function nextAction(state, observation) {
   const n = position ? position.n : null;
   const same = n !== null && n === state.page && !fresh ? state.same + 1 : 0;
   if (same >= STUCK_TURNS) return fail(state, `the reader stayed on page ${n} for ${STUCK_TURNS} turns`);
-  const next = { ...state, turns, same, page: n, pages: position ? position.m : null, known: position || frontMatter(footer) || state.known };
+  const next = { ...state, turns, same, page: n, pages: position ? position.m : null, known: position || frontMatter(footer) || state.known,
+    one: n === 1 ? position.m : state.one };
   const wrongWay = n !== null && state.page !== null && position.m === state.pages
     && (state.phase === 'back' ? n > state.page : n < state.page);
   if (wrongWay) {
