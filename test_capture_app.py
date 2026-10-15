@@ -552,3 +552,23 @@ def test_an_app_capture_the_checks_refuse_is_parked_for_the_app_and_captured_aga
     assert seen == ['For 91 Days In Tokyo']
     assert tokyo.state() == book.Ready('convert') and tokyo.record('capture')['attempt'] == 2
     assert [p.name for p in tokyo.folder.glob('pages (before *)')] and (pages / 'page_0001.png').exists()
+
+
+def test_an_app_book_the_extension_refused_after_moving_its_app_pages_aside_is_captured_again_in_the_app(tmp_path):
+    # 2026-10-15, before F167: the capture job sent イスラム飲酒紀行 (an app capture) to the extension, which moved its 254
+    # pages to "pages (before ...)" and was refused, so its record lost via kindle_app. Pages without positions.json
+    # came from the app: the extension writes one beside every capture.
+    books, library = write_list(tmp_path, app_only=())
+    tokyo, planner = library.book('B2'), library.book('B3')
+    for one, positions in ((tokyo, False), (planner, True)):
+        before = one.folder / 'pages (before 20261015T130101)'
+        before.mkdir()
+        (before / 'page_0001.png').write_bytes(b'')
+        if positions:
+            (before / 'positions.json').write_text('[]')
+        one.fail('capture', {'checks': ['capture_refused'], 'error': 'refused', 'attempt': 2, 'retry': False,
+                             'version': book.versions()['capture']})
+    seen = []
+    run(books, fake_app(seen))
+    assert seen == ['For 91 Days In Tokyo']  # Japan Travel Planner's old pages are the extension's: it stays for it
+    assert tokyo.state() == book.Ready('convert') and tokyo.record('capture')['via'] == 'kindle_app'
