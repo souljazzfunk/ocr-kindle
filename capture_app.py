@@ -637,19 +637,51 @@ def end_sheet_shown(found):
                    for mark in END_SHEET) for e in found)
 
 
+PAGE_NEXT = 'tell application "System Events" to tell process "Kindle" to key code 124'  # → next page, as kindle2img's ltr
+SHEET_LATE_S = 3  # after the script ends, before the tree is read again for a sheet that came up late
+END_PRESSES = 5
+
+
+def footer_end(script=osascript, sleep=time.sleep, clock=time.monotonic):
+    """The end as the footer shows it: read it, press → a few times and read it again. A footer that stays put is the
+    last page, said as "Location N of M, where → moved the footer no further"; one that moves, or none read, is ''.
+    The app's footer gives no usable total ("of 0", a bare knob number), so only the stop says where the book ends."""
+    before = location_of(show_chrome(script, sleep, clock))
+    bring_front(script, sleep)
+    hide_chrome(script, sleep, clock)
+    for _ in range(END_PRESSES):
+        script(PAGE_NEXT)
+        sleep(0.3)
+    after = location_of(show_chrome(script, sleep, clock))
+    hide_chrome(script, sleep, clock)
+    if before is None or after is None or after[0] != before[0]:
+        return ''
+    return f'Location {after[0]}' + (f' of {after[1]}' if after[1] else '') + ', where → moved the footer no further'
+
+
 def capture(folder, script_path=HERE / 'kindle2img.applescript', run=capture_book.run, script=osascript,
-            sleep=time.sleep):
+            sleep=time.sleep, clock=time.monotonic):
     """Page through the book with kindle2img.applescript. When the end-of-book sheet is up afterwards, the last image
     is that sheet, not a page, so it is dropped, and the sheet is closed with Escape (never Enter or space: the
-    focus sits on the rating's stars). Returns the pages and whether the sheet was up: the evidence of the end."""
+    focus sits on the rating's stars). Returns the pages and the evidence of the end, or '' when there is none.
+    No sheet came up at the end of アジャイルデータモデリング or イスラム飲酒紀行 (2026-10-15, F170), nor once a
+    second read later: then the footer that → no longer moves is the evidence."""
     run(['osascript', str(script_path), 'ltr', str(folder)])
     pages = sorted(folder.glob('page_*.png'))
-    ended = bool(pages) and end_sheet_shown(elements(script))
+    if not pages:
+        return pages, ''
+    ended = end_sheet_shown(elements(script))
+    if not ended:
+        sleep(SHEET_LATE_S)
+        ended = end_sheet_shown(elements(script))
     if ended:
         pages.pop().unlink()
         dismiss_overlays(script, sleep)
         print(f'end: the end-of-book sheet was closed and its image dropped; {len(pages)} pages', flush=True)
-    return pages, ended
+        return pages, 'the end-of-book sheet'
+    end = footer_end(script, sleep, clock)
+    print(f'end: {end or "not shown: no sheet, and the footer still moved or was not read"}; {len(pages)} pages', flush=True)
+    return pages, end
 
 
 # What the app's window holds, read through System Events: role, title, description and value of every element, plus
@@ -786,7 +818,7 @@ def capture_pages(asin, title, folder, open_=open_book, start=go_to_start, take=
     if not pages:
         return None, {'asin': asin, 'blocking_failures': ['app_capture'], 'warnings': [], 'error': 'no page was captured'}
     (folder / check_book.CAPTURE).write_text(json.dumps({'via': 'kindle_app', 'start': shown.get('start', ''),
-                                                        'end': 'the end-of-book sheet' if ended else '', 'stopped': ''}),
+                                                        'end': ended, 'stopped': ''}),
                                             encoding='utf-8')
     return folder, None
 
