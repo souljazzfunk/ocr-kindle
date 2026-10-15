@@ -315,6 +315,17 @@ def describe(found):
     return ', '.join(names[:12]) + (' …' if len(names) > 12 else '')
 
 
+def numbers_shown(found):
+    """The texts on screen that hold a digit or a percent, for an error when no footer form is read: the first
+    Japanese book (イスラム飲酒紀行, 2026-10-15 11:31) failed with "footer: no location" and nothing to fix it from."""
+    texts = []
+    for e in found:
+        for text in (e['title'], e['description'], e['value']):
+            if re.search(r'[0-9０-９%％]', text) and text not in texts:
+                texts.append(text)
+    return '; '.join(texts[:12]) or 'none'
+
+
 def chrome_shown(found):
     """The toolbar is in the tree: its Close Book button, or the Reading Progress Bar. The reader's controls carry
     their names in the description, not the title (dump of 2026-10-11 18:04), and the run of 18:09 clicked the shown
@@ -580,7 +591,7 @@ def go_to_start(script=osascript, sleep=time.sleep, clock=time.monotonic, scroll
         # Planner pass at section 1.5 (2026-10-11 20:58). The cover does show the footer (Sri Lanka, 20:51).
     if where is None or where[0] > 1:
         return (f'could not go to the start (tried: {", ".join(tried)}, footer: '
-                f'{"Location %d of %d" % where if where else "no location"})')
+                f'{"Location %d of %d" % where if where else "no location; numbers on screen: " + numbers_shown(found)})')
     print(f'start: Location {where[0]} after {clock() - began:.0f} s: {", ".join(tried) or "not needed"}', flush=True)
     bring_front(script, sleep)
     if chrome_shown(hide_chrome(script, sleep, clock)):
@@ -747,7 +758,9 @@ def main(argv=None, env=os.environ, capture=capture_pages):
         print(f'Probe written to {folder}: open.txt, screen-<display>.png, chrome-<display>.png, ui-library.txt, ui-book.txt, '
               'ui-reader.txt, ui-chrome.txt, probe.json')
         return
-    todo = app_books(books.Library(args.root).add([args.list], write=False))
+    # Library.add returns the listed books and then every other folder; only the list's books are this run's.
+    asins = {asin for asin, _, _ in books.read_tsv(args.list)}
+    todo = app_books([b for b in books.Library(args.root).add([args.list], write=False) if b.asin in asins])
     print(f'{len(todo)} Kindle-app-only books', flush=True)
     current = books.versions()
     for book in todo:

@@ -32,11 +32,14 @@ const JUMP_FROM = 10;
 // Second Brain (19 of 262) showed no position on their first screen and theirs a second later (2026-10-13), so they
 // paged back from there instead of jumping. The first screen is observed again, once a second, this many times for it.
 const FIRST_POSITION_WAITS = 3;
+// Locations before the first numbered screen that the cover and title pages may take (check_book.py LOCATION_SLACK),
+// and never more than 1% of the book.
+const NEAR_START = 5;
 const APP_ONLY_REASON = 'kindle app required: Cloud Reader cannot open this book';
 
 function initialState() {
   return { phase: 'back', saved: {}, low: 1, high: 0, n: null, last: null, pending: false, tries: 0, turns: 0, limit: 0,
-    page: null, pages: null, same: 0, waits: 0, rests: 0, savedPage: null, savedPages: null, keyed: false, jumped: null, opened: '', openedAt: null, start: '', known: null, one: null };
+    page: null, pages: null, same: 0, waits: 0, rests: 0, savedPage: null, savedPages: null, keyed: false, jumped: null, opened: '', openedAt: null, openedIn: null, start: '', known: null, one: null };
 }
 
 const limitFor = (position) => TURNS_PER_PAGE * (position?.m || UNKNOWN_LENGTH) + EXTRA_TURNS;
@@ -88,10 +91,14 @@ function edge(state, position) {
     // Front matter can be numbered another way than the pages: In the Plex (2026-10-14) paged back past page 1 of 456 and
     // its Roman pages to location 7 of 10362, マニャーナの法則 past page 1 of 246 to location 3 of 2389, and each stuck
     // there. Once the reader has shown page 1, a screen in another numbering that stops turning is the start.
+    // マニャーナの法則 (2026-10-15) then reopened at location 3 of 2389 and never showed page 1: a screen within
+    // NEAR_START of 1 that no way pages back from is the start too, and check_book.py judges it. Forward from there, a
+    // page is skipped as saved on the way back only in the numbering the reader opened in.
     const away = position && position.n !== 1 && !(state.one && position.m !== state.one);
     if (away && nextWay(state)) return turn({ ...state, keyed: nextWay(state), tries: 0 });
-    if (away && canRest(state)) return rest(state);
-    if (away) return fail(state, `could not page back past page ${position.n} of ${position.m} by button or key`);
+    const stuck = away && position.n - 1 > Math.min(NEAR_START, position.m / 100);
+    if (stuck && canRest(state)) return rest(state);
+    if (stuck) return fail(state, `could not page back past page ${position.n} of ${position.m} by button or key`);
     const start = `opened at ${state.opened}; ${-state.low} earlier screens saved back to ${!position ? 'the first screen' : position.n === 1 ? 'page 1' : where(position)}`
       + (state.keyed ? ` (the last ones by the ${state.keyed} arrow key)` : '');
     return turn({ ...state, phase: 'fwd', keyed: false, tries: 0, turns: 0, same: 0, start });
@@ -128,7 +135,7 @@ function nextAction(state, observation) {
     return { state: { ...state, jumped: where(position) }, action: 'jump:start' };
   }
   const opened = state.jumped && state.jumped !== where(position) ? `${state.jumped}, jumped to ${where(position)}` : where(position);
-  if (state.last === null) return save({ ...state, opened, openedAt: position ? position.n : null, page: position ? position.n : null, pages: position ? position.m : null, known: position || frontMatter(footer), one: position?.n === 1 ? position.m : null, limit: limitFor(position) }, sha);
+  if (state.last === null) return save({ ...state, opened, openedAt: position ? position.n : null, openedIn: position ? position.m : null, page: position ? position.n : null, pages: position ? position.m : null, known: position || frontMatter(footer), one: position?.n === 1 ? position.m : null, limit: limitFor(position) }, sha);
   if (state.pending) return turn({ ...state, pending: false });
 
   const turns = state.turns + 1;
@@ -138,7 +145,9 @@ function nextAction(state, observation) {
   const n = position ? position.n : null;
   const same = n !== null && n === state.page && !fresh ? state.same + 1 : 0;
   if (same >= STUCK_TURNS) return fail(state, `the reader stayed on page ${n} for ${STUCK_TURNS} turns`);
-  const next = { ...state, turns, same, page: n, pages: position ? position.m : null, known: position || frontMatter(footer) || state.known,
+  // The cap is set by the first screen's numbering; a finer one shown later raises it: In the Plex (2026-10-15) paged
+  // forward from location 7 of 10362 at about 3 screens a page and was stopped at page 441 of 456 by the cap for 456 pages.
+  const next = { ...state, turns, same, page: n, limit: position ? Math.max(limit, limitFor(position)) : limit, pages: position ? position.m : null, known: position || frontMatter(footer) || state.known,
     one: n === 1 ? position.m : state.one };
   const wrongWay = n !== null && state.page !== null && position.m === state.pages
     && (state.phase === 'back' ? n > state.page : n < state.page);
@@ -155,7 +164,7 @@ function nextAction(state, observation) {
   if (sha in state.saved) return turn({ ...next, tries: 0, last: sha });
   // Forward from page 1, the screens before the opening one were all saved on the way back, though a canvas can draw
   // one again with other pixels: 英語教育幻想 (2026-10-12) saved 13 of them twice under new hashes.
-  if (state.phase === 'fwd' && n !== null && state.openedAt !== null && n < state.openedAt) return turn({ ...next, tries: 0, last: sha });
+  if (state.phase === 'fwd' && n !== null && state.openedAt !== null && position.m === state.openedIn && n < state.openedAt) return turn({ ...next, tries: 0, last: sha });
   // A turn the wrong way can carry the reader past screens never saved, and coming back through them they look fresh.
   // A screen beyond the last saved page is not saved out of order: back past it, forward short of it. Only a page in the
   // same unit compares: Race (2026-10-14) went from location 3080 of 3301 to "256 of 256" for its last 34 screens.

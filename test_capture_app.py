@@ -59,6 +59,20 @@ def test_only_the_app_only_books_are_captured_and_handed_to_the_convert_job(tmp_
     assert seen == ['For 91 Days In Tokyo', 'Japan Travel Planner']
 
 
+def test_only_the_books_of_the_given_list_are_captured(tmp_path):
+    # 2026-10-15: app-ja.tsv named 5 books, and the run counted 11 because every other parked folder came along.
+    books, library = write_list(tmp_path)
+    other = tmp_path / 'other.tsv'
+    other.write_text('B9\tFor 91 Days In Palermo\n')
+    library.add([other])
+    library.book('B9').fail('capture', {'checks': ['kindle_app_only'], 'error': 'kindle app required', 'attempt': 1,
+                                        'retry': False})
+    seen = []
+    run(books, fake_app(seen))
+    assert seen == ['For 91 Days In Tokyo', 'Japan Travel Planner']
+    assert library.book('B9').failure('capture')['checks'] == ['kindle_app_only']
+
+
 def test_the_first_book_the_app_does_not_open_stops_the_run_and_the_same_command_resumes_there(tmp_path):
     books, library = write_list(tmp_path)
     seen = []
@@ -143,6 +157,11 @@ def test_the_table_of_contents_is_scrolled_to_its_top_and_its_button_row_pressed
     problem = capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock, scroll=lambda x, y, n: None,
                                       press=lambda role, name: True)
     assert problem.startswith('could not go to the start') and 'no location' in problem
+    # What the footer showed instead goes into the error (イスラム飲酒紀行, 2026-10-15: no form of it was read).
+    assert problem.endswith('numbers on screen: ' + capture_app.numbers_shown(capture_app.elements(App([COVER])))
+                            + ')')
+    footer = [{'role': 'AXSlider', 'title': '', 'description': '', 'value': '位置No. 12/3456 , 1%'}]
+    assert capture_app.numbers_shown(footer) == '位置No. 12/3456 , 1%'
     assert sum('"Table of Contents"' in c and 'AXPress' in c for c in app.calls) == 1
     # A page-numbered book (Japan Travel Planner, probe of 21:06): "Page 114 , 100%" on the slider is the position.
     pages = (Path(__file__).parent / 'fixtures' / 'kindle' / 'ax-reader-pages-japan.txt').read_text()

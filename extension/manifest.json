@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Kindle Cloud Reader Capture",
-  "version": "2.18",
+  "version": "2.19",
   "description": "Pages through a Kindle Cloud Reader book for the ocr-kindle channel on 127.0.0.1 and sends every page image and text layer to it.",
   "permissions": ["storage", "alarms", "tabs", "idle"],
   "host_permissions": ["http://127.0.0.1/*"],
