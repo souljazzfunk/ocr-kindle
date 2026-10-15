@@ -242,6 +242,41 @@ def test_a_book_is_opened_by_pressing_its_cover_in_the_library_as_the_probe_show
     assert len(presses) == 1 and '"For 91 Days In Tokyo"' in presses[0] and not any('keystroke' in c for c in app.calls)
 
 
+# イスラム飲酒紀行, recorded on the Mac 2026-10-15 12:24: the cover's name and value as the library showed them (the
+# frames here are made up), and the reader's lines of fixtures/kindle/ax-reader-toolbar-islam.txt, whose footer
+# shows the position as a bare "1" over the knob and nothing says "Location".
+JA_LIBRARY = ('frontmost=true\nwindow|Kindle|340,173|1370,880\n'
+              'element|AXGroup||Library Grid View|||340,300|1370,700\n'
+              'element|AXButton|||イスラム飲酒紀行 (ＳＰＡ！ＢＯＯＫＳ) (Japanese Edition), 高野 秀行, RED, |Book Downloaded.|360,320|147,220\n'
+              'element|AXButton|||For 91 Days In Tokyo, Powell, Michael, New, |Book Downloaded.|520,320|147,220\n')
+JA_READER = ('frontmost=true\nwindow|Kindle|340,173|1370,880\n'
+             'element|AXButton|||Close Book||360,195|40,40\n'
+             'element|AXButton|||Table of Contents||400,195|40,40\n'
+             'element|AXHeading|||イスラム飲酒紀行 (ＳＰＡ！ＢＯＯＫＳ) (Japanese Edition)||859,208|331,14\n'
+             'element|AXButton|||More options||1648,195|40,40\n'
+             "element|AXButton|||Bird's Eye View||360,964|37,37\n"
+             'element|AXStaticText|||{at}||431,956|5,12\n'
+             'element|AXStaticText|||688||718,956|18,12\n'
+             'element|AXGenericElement||||Image|732,167|585,843\n')
+
+
+def test_a_japanese_book_is_found_by_its_title_and_its_footer_read_from_the_bare_number_over_the_knob():
+    found = capture_app.elements(App([JA_LIBRARY]))
+    cover = capture_app.cover_of('イスラム飲酒紀行', found)
+    assert cover is not None and cover['description'].startswith('イスラム飲酒紀行')
+    assert capture_app.cover_of('ｲｽﾗﾑ飲酒紀行 (SPA!BOOKS)', found) is cover  # full-width and half-width forms fold
+    assert capture_app.cover_of('外国語学習に成功する人', found) is None
+    assert capture_app.cover_of('For 91 Days In Tokyo', found)['description'].startswith('For 91')
+    for at in (1, 2, 4):
+        assert capture_app.location_of(capture_app.elements(App([JA_READER.format(at=at)]))) == (at, 0)
+    # At the start already: the book is not moved, and the run goes on to the capture.
+    app = App([JA_READER.format(at=1), READER])
+    assert go(app) == '' and not any('"Table of Contents"' in c for c in app.calls)
+    # Numbers elsewhere (a page's own digits) are not the footer.
+    stray = JA_READER.format(at=3).replace('431,956', '431,500').replace('718,956', '718,500')
+    assert capture_app.location_of(capture_app.elements(App([stray]))) is None
+
+
 def test_a_cover_off_screen_is_searched_for_first():
     japan = LIBRARY.replace('For 91 Days in Bolivia, Powell, Michael, ', 'Japan Travel Planner, Someone, ')
     app = App([LIBRARY, LIBRARY, LIBRARY, japan, READER])

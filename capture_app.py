@@ -21,6 +21,7 @@ import re
 import subprocess
 import sys
 import time
+import unicodedata
 from pathlib import Path
 
 import ax
@@ -72,7 +73,9 @@ def elements(script=osascript):
 
 
 def comparable(text):
-    return re.sub(r'[^a-z0-9]', '', (text or '').lower())
+    """Letters and digits of any script, full-width forms folded: [a-z0-9] alone made every Japanese title an empty key
+    that matched no cover (イスラム飲酒紀行, 2026-10-15 12:24: its cover was first in the library and not found)."""
+    return ''.join(c for c in unicodedata.normalize('NFKC', text or '').lower() if c.isalnum())
 
 
 def cover_of(title, found):
@@ -347,7 +350,27 @@ def location_of(found):
             return int(m.group(1)), int(m.group(2))
         if m and partial is None:
             partial = (int(m.group(1)), 0)
-    return partial
+    return partial or knob_label(found)
+
+
+BIRDS_EYE = "Bird's Eye View"
+
+
+def knob_label(found):
+    """(N, 0) from a footer that shows its position as a bare number over the slider's knob, or None. A Japanese book
+    (イスラム飲酒紀行, recorded 2026-10-15 12:24) has no "Location" or "Page" text and no slider in the tree: only "1"
+    at the left of the footer row, beside the Bird's Eye View button, and "688", a mark further along that stayed put
+    while → and ← moved the first through 1, 2 and 4. So the leftmost bare number on that row is the position."""
+    anchor = next((e for e in found if e['role'] == 'AXButton' and BIRDS_EYE in (e['title'], e['description'])), None)
+    if anchor is None:
+        return None
+    _, y, _, h = _frame(anchor)
+    row = [e for e in found if e['role'] == 'AXStaticText' and re.fullmatch(r'\d+', e['title'] or e['description'] or '')
+           and y - h <= _frame(e)[1] <= y + h]
+    if not row:
+        return None
+    first = min(row, key=lambda e: _frame(e)[0])
+    return int(first['title'] or first['description']), 0
 
 
 HOVER_WAIT_S = 3  # after each pointer move to the top edge, before the move is repeated

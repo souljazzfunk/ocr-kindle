@@ -1,0 +1,17 @@
+# イスラム飲酒紀行 (B0087KZHR6), Kindle for Mac, recorded 2026-10-15 12:24 JST through the Accessibility API with the
+# toolbar shown, on the cover just after the book opened (~/Downloads/kindle-probe/B0087KZHR6/manual-0-open.txt).
+# The lines that carry a name or a number, as the Mac session reported them; the rest of the tree is left out.
+# A Japanese book: no "Location N of M", no slider; the position is the bare "1" over the knob, "688" a mark.
+frontmost=true
+element|AXButton|||Close Book||360,195|40,40
+element|AXButton|||Table of Contents||400,195|40,40
+element|AXHeading|||イスラム飲酒紀行 (ＳＰＡ！ＢＯＯＫＳ) (Japanese Edition)||859,208|331,14
+element|AXButton|||In-book Search||1528,195|40,40
+element|AXButton|||Annotations||1568,195|40,40
+element|AXButton|||Reading Settings||1608,195|40,40
+element|AXButton|||More options||1648,195|40,40
+element|AXButton|||Add Bookmark||1648,235|40,40
+element|AXButton|||Bird's Eye View||360,964|37,37
+element|AXStaticText|||1||431,956|5,12
+element|AXStaticText|||688||718,956|18,12
+element|AXGenericElement||||Image|732,167|585,843
