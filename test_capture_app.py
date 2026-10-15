@@ -741,3 +741,18 @@ def test_a_vertical_book_whose_knob_covers_the_mark_is_read_from_the_right_once_
     shown = {}
     assert capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock, shown=shown) == ''
     assert app.at == 1 and shown['reading'].name == 'ltr' and shown['reading'].pick == 0
+
+
+def test_a_vertical_book_opened_at_its_start_with_the_knob_over_the_mark_is_still_read_right_to_left(capsys):
+    # 2026-10-15 23:40, 保守とは何だろうか after F175: "start: Location 1 after 5 s: not needed", no "reading:" line,
+    # then "end: Location 1, where → moved the footer no further; 1 pages". At the start the knob stood over the mark,
+    # so the row held one number; ← moved the knob off it and the row held two, which was taken for nothing moved.
+    app = Knob(at=1, last=600, mark=1)
+    shown = {}
+    assert capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock, shown=shown) == ''
+    assert app.at == 1 and shown['reading'].name == 'rtl' and shown['reading'].pick == -1
+    assert 'reading: rtl' in capsys.readouterr().out
+    app = Knob(at=1, last=600, rtl=False, mark=1)
+    shown = {}
+    assert capture_app.go_to_start(app, sleep=lambda s: None, clock=app.clock, shown=shown) == ''
+    assert app.at == 1 and shown['reading'].name == 'ltr' and shown['reading'].pick == 0

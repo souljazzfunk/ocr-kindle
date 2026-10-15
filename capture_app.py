@@ -610,6 +610,11 @@ def learn_reading(script, sleep, clock, found):
         shown = show_chrome(script, sleep, clock)
         after = knob_row(shown)
         moved = [i for i, (a, b) in enumerate(zip(before, after)) if a != b] if len(after) == len(before) else []
+        if len(before) == 1 and len(after) == 2 and before[0] in after:
+            # The knob left the mark it stood over (保守とは何だろうか at its start, 2026-10-15 23:40): the number that
+            # is not the old one is the knob.
+            moved = [after.index(before[0]) ^ 1]
+            before = [before[0]] * 2
         if not moved:
             continue
         i = moved[0]
