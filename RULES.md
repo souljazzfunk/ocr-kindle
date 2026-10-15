@@ -14,6 +14,7 @@
 | アプリで開かない本は、タブバーから開くか、もう 1 回押して待つ | `capture_app.py`、`test_capture_app.py::test_a_cover_not_downloaded_is_pressed_again_and_waited_for_as_laiken_said`、`test_capture_app.py::test_the_recent_book_whose_cover_has_no_frame_is_opened_from_the_tab_bar`（F060） |
 | アプリで先頭に戻るのは、目次を一番上まで戻してその項目を押す | `capture_app.py` の `go_to_start`、`test_capture_app.py::test_the_start_is_reached_through_the_table_of_contents_and_read_from_the_footer`（F061） |
 | 目次で先頭に戻れなければ、1 ページずつ先頭まで戻る | `capture_app.py` の `go_to_start`、`test_capture_app.py::test_when_the_table_of_contents_does_not_move_the_book_pages_are_turned_back_one_at_a_time`（F061） |
+| 日本語の本も書名で表紙を探し、位置はつまみの上の数字から読む | `capture_app.py` の `comparable`・`knob_label`、`test_capture_app.py::test_a_japanese_book_is_found_by_its_title_and_its_footer_read_from_the_bare_number_over_the_knob`（F166） |
 | アプリのツールバーはポインタを窓の上端に置いて出す。ページはクリックしない | `capture_app.py` の `hover_window`、`test_capture_app.py::test_the_toolbar_is_brought_by_resting_the_pointer_on_the_top_edge_never_by_a_click`（F064） |
 | アプリの画面は Accessibility API で読み、決め打ちの秒数でなく部品が出るまで待つ | `ax.py`、`capture_app.py` の `wait_for`、`test_ax.py::test_the_tree_is_read_through_the_api_only_for_the_real_osascript`、`test_capture_app.py::test_the_run_path_waits_for_elements_not_for_fixed_seconds`（F062） |
 | アプリの画面の読み方は、Mac で記録した木（`fixtures/kindle/`）で検査する | `capture_app.py`、`test_fixtures.py::test_each_recorded_tree_reads_as_expected`、`test_fixtures.py::test_each_flag_is_seen_true_and_false_in_the_recordings`（F059） |
