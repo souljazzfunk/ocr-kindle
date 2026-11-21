@@ -85,7 +85,7 @@
 | 別の工程のせいの検査で止めた仕事は、次の 1 歩で再開する | `book.py` の `Library.active_pause`、`test_kc_run.py::test_a_convert_pause_left_by_capture_failures_under_older_rules_is_lifted_on_the_next_step`（F096） |
 | 本や仕事を止めた失敗は、Mac なしで再生できる記録を Drive に残す | `cases.py`、`test_cases.py::test_every_capture_case_replays_through_policy_js_to_the_actions_it_recorded`、`test_kc_run.py::test_a_parked_book_leaves_a_case_on_drive_with_its_report_and_pages`（F059） |
 | 同じ本・同じチェック・同じ版の失敗の記録は 1 つだけ | `cases.py`、`test_cases.py::test_the_same_failure_with_the_same_versions_leaves_one_case_and_new_code_leaves_another`（F059） |
-| main に入った修正は、人に頼まず次の 1 歩から使う | `kc_run.py`、`test_kc_run.py::test_main_is_pulled_each_step_and_local_changes_pause_the_job_with_gits_message`（F022） |
+| main への修正は仕事がある次の 1 歩から使う。やることがなければ pull しない | `kc_run.py`、`test_kc_run.py::test_main_is_pulled_each_step_and_local_changes_pause_the_job_with_gits_message`（F022） |
 | 拡張の再読み込みを人に頼まない。版が変われば拡張が自分で読み込み直す | `extension/job.js` の `pollStep`、`extension/job.test.js::an idle worker on another version than the checkout reloads itself, at most once a minute`（F022） |
 | 取り込めた本は取り直さない。通った本は変換のコードが変わってもやり直さない | `book.py` の `Book.state`、`test_kc_run.py::test_a_passed_book_stays_done_when_the_converter_changes_and_a_capture_is_not_redone`（F036） |
 | 止まった本は、その検査のコードが変わったときだけやり直す | `book.py` の `touch_of`、`test_kc_run.py::test_a_parked_check_and_its_pause_rerun_only_when_that_check_s_code_changes`、`test_book.py::test_a_checks_code_is_the_functions_that_decide_it`（F127） |

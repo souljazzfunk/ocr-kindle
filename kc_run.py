@@ -135,6 +135,35 @@ def describe(state):
 def _step(job, root, lists, downloads, model, checkout, sleep, now, config):
     library = Library(root)
     library.root.mkdir(parents=True, exist_ok=True)
+    lists = lists or default_lists(root, downloads)
+    # Only the capture job makes book folders: it owns book.json and the capture records a migration writes.
+    listed = library.add(lists, progress_of(lists), write=job == 'capture')
+    current = books.versions(checkout)
+    moment = now()
+    options = argparse.Namespace(model=model, now=moment, config=config)
+    # A pause that waits for new code (version set) or a failed pull (checks == ['git']) can only be lifted by the
+    # pull below, so it is not a reason to skip the pull. Other pauses hold before any work or pull happens.
+    pause = library.active_pause(job, current, moment)
+    holds = pause and pause.get('version') is None and (library.pause(job) or {}).get('checks') != ['git']
+    if holds:
+        sleep(IDLE_S)
+        return f'paused: {pause["reason"]}'
+    states = [(book, book.state(current)) for book in listed]
+    work = any(isinstance(s, Ready) and s.stage in JOBS[job] for _, s in states)
+    # Nothing to do means nothing runs, so there is nothing main could update: the pull (and its DNS query) is
+    # skipped until a book is ready. New code on main is picked up on the first step that has work (2026-11-21).
+    if not work and pause is None:
+        sleep(IDLE_S)
+        return 'nothing to do'
+    # A book is timed from its first capture to Drive. How to Write a Lot (2026-10-12) took 85 minutes for 5 minutes of
+    # work, waiting behind captured books for the convert job; so a new capture waits while two new books do.
+    waiting = sum(isinstance(s, Ready) and s.stage not in JOBS['capture'] and (b.folder / 'start.json').exists()
+                  and not b.record('publish') for b, s in states)
+    # The wait is for the convert job to catch up. A paused convert job does not catch up until new code comes, so the
+    # capture job goes on: on 2026-10-14 a convert pause held the new capture of So You Want to Talk About Race (F150).
+    if job == 'capture' and work and waiting >= AHEAD and not library.active_pause('convert', current, moment):
+        sleep(IDLE_S)
+        return 'waiting for the convert job'
     problem = pull_main(checkout)
     if problem:
         library.set_pause(job, {'stage': None, 'checks': ['git'], 'reason': problem, 'version': None, 'until': None})
@@ -142,26 +171,13 @@ def _step(job, root, lists, downloads, model, checkout, sleep, now, config):
         return f'paused: {problem}'
     if (library.pause(job) or {}).get('checks') == ['git']:
         library.clear_pause(job)  # the pull works again
-    lists = lists or default_lists(root, downloads)
-    # Only the capture job makes book folders: it owns book.json and the capture records a migration writes.
-    listed = library.add(lists, progress_of(lists), write=job == 'capture')
+    # The pull may have changed what counts as ready or lifted a pause, so both are read again against the new code.
     current = books.versions(checkout)
-    moment = now()
     pause = library.active_pause(job, current, moment)
     if pause:
         sleep(IDLE_S)
         return f'paused: {pause["reason"]}'
-    options = argparse.Namespace(model=model, now=moment, config=config)
     states = [(book, book.state(current)) for book in listed]
-    # A book is timed from its first capture to Drive. How to Write a Lot (2026-10-12) took 85 minutes for 5 minutes of
-    # work, waiting behind captured books for the convert job; so a new capture waits while two new books do.
-    waiting = sum(isinstance(s, Ready) and s.stage not in JOBS['capture'] and (b.folder / 'start.json').exists()
-                  and not b.record('publish') for b, s in states)
-    # The wait is for the convert job to catch up. A paused convert job does not catch up until new code comes, so the
-    # capture job goes on: on 2026-10-14 a convert pause held the new capture of So You Want to Talk About Race (F150).
-    if job == 'capture' and waiting >= AHEAD and not library.active_pause('convert', current, moment):
-        sleep(IDLE_S)
-        return 'waiting for the convert job'
     # A book never published goes before one published already that is ready again (a new capture). After #107 the
     # convert job redid published books for minutes while How to Write a Lot waited (2026-10-12).
     for book, state in sorted(states, key=lambda bs: bool(bs[0].record('publish'))):
